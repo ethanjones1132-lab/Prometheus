@@ -1,0 +1,66 @@
+[package]
+name = "kalshi-monster"
+version = "0.8.0"
+description = "Kalshi Monster — AI-powered prediction market engine"
+authors = ["Ethan"]
+license = "MIT"
+edition = "2021"
+rust-version = "1.85.0"
+
+[lib]
+name = "kalshi_monster_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.6.1", features = [] }
+
+[dependencies]
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+log = "0.4"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+tauri = { version = "2.11.1", features = ["custom-protocol"] }
+tauri-plugin-log = "2"
+tauri-plugin-shell = "2"
+tauri-plugin-opener = "2.0.0-beta.0"
+tauri-plugin-notification = "2"
+
+# Async runtime
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync", "time"] }
+
+# HTTP client for OpenRouter API and football data
+reqwest = { version = "0.12", features = ["json", "blocking", "stream"] }
+futures = "0.3"
+
+# UUID generation
+uuid = { version = "1", features = ["v4"] }
+
+# Regex for text parsing
+regex = "1"
+
+# Markdown parsing (for structured prediction extraction)
+once_cell = "1.18"
+
+# Timestamps
+chrono = { version = "0.4", features = ["serde"] }
+urlencoding = "2"
+
+# Enum utilities
+strum = { version = "0.26", features = ["derive"] }
+
+# CSV export
+csv = "1.3"
+
+# Base64 encoding for file uploads
+base64 = "0.22"
+
+# SQLite for persistent prediction storage
+sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite", "chrono", "uuid"], default-features = false }
+
+# Shared prediction-evaluation engine (calibration, backtest, recalibration)
+edge-eval = { path = "../../edge-eval" }
+
+# Shared Monster-apps edge math (also used by the offline backtest CLI)
+monster-edge-core = { path = "../../monster-edge-core" }

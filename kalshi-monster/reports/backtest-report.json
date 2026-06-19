@@ -1,0 +1,2063 @@
+{
+  "n_input": 1008,
+  "n_invalid": 0,
+  "overall": {
+    "n": 1008,
+    "n_wins": 236,
+    "n_losses": 772,
+    "n_pushes": 0,
+    "n_voids": 0,
+    "sufficiency": "Adequate",
+    "win_rate": 0.23412698412698413,
+    "mean_predicted_prob": 0.20056547619047635,
+    "brier_score": 0.12914355158730165,
+    "brier_skill_score": 0.2797811451655392,
+    "log_loss": 0.4021852716206169,
+    "ece": 0.03709325396825391,
+    "reliability": [
+      {
+        "lo": 0.0,
+        "hi": 0.1,
+        "n": 383,
+        "mean_predicted": 0.0438120104438641,
+        "empirical": 0.0391644908616188
+      },
+      {
+        "lo": 0.1,
+        "hi": 0.2,
+        "n": 187,
+        "mean_predicted": 0.1407486631016043,
+        "empirical": 0.1497326203208556
+      },
+      {
+        "lo": 0.2,
+        "hi": 0.3,
+        "n": 185,
+        "mean_predicted": 0.24178378378378385,
+        "empirical": 0.2864864864864865
+      },
+      {
+        "lo": 0.3,
+        "hi": 0.4,
+        "n": 125,
+        "mean_predicted": 0.33847999999999995,
+        "empirical": 0.368
+      },
+      {
+        "lo": 0.4,
+        "hi": 0.5,
+        "n": 57,
+        "mean_predicted": 0.435438596491228,
+        "empirical": 0.5614035087719298
+      },
+      {
+        "lo": 0.5,
+        "hi": 0.6,
+        "n": 37,
+        "mean_predicted": 0.5232432432432432,
+        "empirical": 0.7567567567567568
+      },
+      {
+        "lo": 0.6,
+        "hi": 0.7,
+        "n": 8,
+        "mean_predicted": 0.645,
+        "empirical": 1.0
+      },
+      {
+        "lo": 0.7,
+        "hi": 0.8,
+        "n": 7,
+        "mean_predicted": 0.7528571428571429,
+        "empirical": 1.0
+      },
+      {
+        "lo": 0.8,
+        "hi": 0.9,
+        "n": 7,
+        "mean_predicted": 0.8514285714285714,
+        "empirical": 1.0
+      },
+      {
+        "lo": 0.9,
+        "hi": 1.0,
+        "n": 12,
+        "mean_predicted": 0.955,
+        "empirical": 1.0
+      }
+    ],
+    "brier_ci": {
+      "lo": 0.11632251984126984,
+      "hi": 0.14214603174603177
+    },
+    "ece_ci": {
+      "lo": 0.02729166666666661,
+      "hi": 0.06094246031746024
+    },
+    "win_rate_ci": {
+      "lo": 0.20734126984126985,
+      "hi": 0.25892857142857145
+    }
+  },
+  "roi": {
+    "n_decided": 1008,
+    "n_refunded": 0,
+    "total_staked_units": 1008.0,
+    "net_units": 48.007271952982826,
+    "roi": 0.047626261858117885,
+    "avg_units_per_bet": 0.047626261858117885,
+    "max_drawdown_units": 204.78454514542463,
+    "log_growth_total": -0.018360980912301678,
+    "log_growth_per_bet": -0.000018215258841569124,
+    "bankroll_fraction_per_unit": 0.01,
+    "clv": {
+      "n": 1008,
+      "mean_clv": 0.029712301587301555,
+      "pct_positive": 0.22817460317460317
+    }
+  },
+  "by_category": [
+    {
+      "key": "KXHIGHAUS",
+      "calibration": {
+        "n": 150,
+        "n_wins": 25,
+        "n_losses": 125,
+        "n_pushes": 0,
+        "n_voids": 0,
+        "sufficiency": "Thin",
+        "win_rate": 0.16666666666666666,
+        "mean_predicted_prob": 0.16793333333333327,
+        "brier_score": 0.12067133333333341,
+        "brier_skill_score": 0.13116639999999946,
+        "log_loss": 0.38304866691692124,
+        "ece": 0.0322,
+        "reliability": [
+          {
+            "lo": 0.0,
+            "hi": 0.1,
+            "n": 58,
+            "mean_predicted": 0.04155172413793104,
+            "empirical": 0.034482758620689655
+          },
+          {
+            "lo": 0.1,
+            "hi": 0.2,
+            "n": 31,
+            "mean_predicted": 0.14258064516129032,
+            "empirical": 0.0967741935483871
+          },
+          {
+            "lo": 0.2,
+            "hi": 0.3,
+            "n": 30,
+            "mean_predicted": 0.24833333333333335,
+            "empirical": 0.3
+          },
+          {
+            "lo": 0.3,
+            "hi": 0.4,
+            "n": 25,
+            "mean_predicted": 0.32919999999999994,
+            "empirical": 0.36
+          },
+          {
+            "lo": 0.4,
+            "hi": 0.5,
+            "n": 6,
+            "mean_predicted": 0.4466666666666666,
+            "empirical": 0.3333333333333333
+          },
+          {
+            "lo": 0.5,
+            "hi": 0.6,
+            "n": 0,
+            "mean_predicted": null,
+            "empirical": null
+          },
+          {
+            "lo": 0.6,
+            "hi": 0.7,
+            "n": 0,
+            "mean_predicted": null,
+            "empirical": null
+          },
+          {
+            "lo": 0.7,
+            "hi": 0.8,
+            "n": 0,
+            "mean_predicted": null,
+            "empirical": null
+          },
+          {
+            "lo": 0.8,
+            "hi": 0.9,
+            "n": 0,
+            "mean_predicted": null,
+            "empirical": null
+          },
+          {
+            "lo": 0.9,
+            "hi": 1.0,
+            "n": 0,
+            "mean_predicted": null,
+            "empirical": null
+          }
+        ],
+        "brier_ci": {
+          "lo": 0.08802933333333332,
+          "hi": 0.15595666666666663
+        },
+        "ece_ci": {
+          "lo": 0.026733333333333324,
+          "hi": 0.09733333333333333
+        },
+        "win_rate_ci": {
+          "lo": 0.11333333333333333,
+          "hi": 0.22
+        }
+      },
+      "roi": {
+        "n_decided": 150,
+        "n_refunded": 0,
+        "total_staked_units": 150.0,
+        "net_units": 2.8534315984149847,
+        "roi": 0.019022877322766564,
+        "avg_units_per_bet": 0.019022877322766564,
+        "max_drawdown_units": 32.67185592687254,
+        "log_growth_total": -0.08991387945384662,
+        "log_growth_per_bet": -0.0005994258630256441,
+        "bankroll_fraction_per_unit": 0.01,
+        "clv": {
+          "n": 150,
+          "mean_clv": 0.005399999999999998,
+          "pct_positive": 0.16666666666666666
+        }
+      }
+    },
+    {
+      "key": "KXHIGHCHI",
+      "calibration": {
+        "n": 150,
+        "n_wins": 25,
+        "n_losses": 125,
+        "n_pushes": 0,
+        "n_voids": 0,
+        "sufficiency": "Thin",
+        "win_rate": 0.16666666666666666,
+        "mean_predicted_prob": 0.1687333333333333,
+        "brier_score": 0.1194593333333334,
+        "brier_skill_score": 0.13989279999999948,
+        "log_loss": 0.385549425701022,
+        "ece": 0.027133333333333346,
+        "reliability": [
+          {
+            "lo": 0.0,
+            "hi": 0.1,
+            "n": 60,
+            "mean_predicted": 0.0495,
+            "empirical": 0.05
+          },
+          {
+            "lo": 0.1,
+            "hi": 0.2,
+            "n": 25,
+            "mean_predicted": 0.13960000000000003,
+            "empirical": 0.12
+          },
+          {
+            "lo": 0.2,
+            "hi": 0.3,
+            "n": 38,
+            "mean_predicted": 0.23552631578947372,
+            "empirical": 0.21052631578947367
+          },
+          {
+            "lo": 0.3,
+            "hi": 0.4,
+            "n": 20,
+            "mean_predicted": 0.33749999999999997,
+            "empirical": 0.3
+          },
+          {
+            "lo": 0.4,
+            "hi": 0.5,
+            "n": 6,
+            "mean_predicted": 0.43,
+            "empirical": 0.6666666666666666
+          },
+          {
+            "lo": 0.5,
+            "hi": 0.6,
+            "n": 1,
+            "mean_predicted": 0.57,
+            "empirical": 1.0
+          },
+          {
+            "lo": 0.6,
+            "hi": 0.7,
+            "n": 0,
+            "mean_predicted": null,
+            "empirical": null
+          },
+          {
+            "lo": 0.7,
+            "hi": 0.8,
+            "n": 0,
+            "mean_predicted": null,
+            "empirical": null
+          },
+          {
+            "lo": 0.8,
+            "hi": 0.9,
+            "n": 0,
+            "mean_predicted": null,
+            "empirical": null
+          },
+          {
+            "lo": 0.9,
+            "hi": 1.0,
+            "n": 0,
+            "mean_predicted": null,
+            "empirical": null
+          }
+        ],
+        "brier_ci": {
+          "lo": 0.08739600000000002,
+          "hi": 0.16984666666666665
+        },
+        "ece_ci": {
+          "lo": 0.022066666666666693,
+          "hi": 0.10079999999999999
+        },
+        "win_rate_ci": {
+          "lo": 0.10666666666666667,
+          "hi": 0.22
+        }
+      },
+      "roi": {
+        "n_decided": 150,
+        "n_refunded": 0,
+        "total_staked_units": 150.0,
+        "net_units": -9.392962064161495,
+        "roi": -0.06261974709440997,
+        "avg_units_per_bet": -0.06261974709440997,
+        "max_drawdown_units": 34.5008052014164,
+        "log_growth_total": -0.1545838915690389,
+        "log_growth_per_bet": -0.001030559277126926,
+        "bankroll_fraction_per_unit": 0.01,
+        "clv": {
+          "n": 150,
+          "mean_clv": 0.004599999999999998,
+          "pct_positive": 0.16666666666666666
+        }
+      }
+    },
+    {
+      "key": "KXHIGHDEN",
+      "calibration": {
+        "n": 150,
+        "n_wins": 25,
+        "n_losses": 125,
+        "n_pushes": 0,
+        "n_voids": 0,
+        "sufficiency": "Thin",
+        "win_rate": 0.16666666666666666,
+        "mean_predicted_prob": 0.1716,
+        "brier_score": 0.11525733333333332,
+        "brier_skill_score": 0.17014720000000016,
+        "log_loss": 0.3643223501540059,
+        "ece": 0.04946666666666668,
+        "reliability": [
+          {
+            "lo": 0.0,
+            "hi": 0.1,
+            "n": 53,
+            "mean_predicted": 0.044339622641509445,
+            "empirical": 0.018867924528301886
+          },
+          {
+            "lo": 0.1,
+            "hi": 0.2,
+            "n": 37,
+            "mean_predicted": 0.13702702702702704,
+            "empirical": 0.10810810810810811
+          },
+          {
+            "lo": 0.2,
+            "hi": 0.3,
+            "n": 33,
+            "mean_predicted": 0.23969696969696974,
+            "empirical": 0.24242424242424243
+          },
+          {
+            "lo": 0.3,
+            "hi": 0.4,
+            "n": 18,
+            "mean_predicted": 0.3388888888888888,
+            "empirical": 0.5
+          },
+          {
+            "lo": 0.4,
+            "hi": 0.5,
+            "n": 5,
+            "mean_predicted": 0.43,
+            "empirical": 0.2
+          },
+          {
+            "lo": 0.5,
+            "hi": 0.6,
+            "n": 3,
+            "mean_predicted": 0.5033333333333333,
+            "empirical": 0.3333333333333333
+          },
+          {
+            "lo": 0.6,
+            "hi": 0.7,
+            "n": 1,
+            "mean_predicted": 0.65,
+            "empirical": 1.0
+          },
+          {
+            "lo": 0.7,
+            "hi": 0.8,
+            "n": 0,
+            "mean_predicted": null,
+            "empirical": null
+          },
+          {
+            "lo": 0.8,
+            "hi": 0.9,
+            "n": 0,
+            "mean_predicted": null,
+            "empirical": null
+          },
+          {
+            "lo": 0.9,
+            "hi": 1.0,
+            "n": 0,
+            "mean_predicted": null,
+            "empirical": null
+          }
+        ],
+        "brier_ci": {
+          "lo": 0.0842,
+          "hi": 0.15114333333333327
+        },
+        "ece_ci": {
+          "lo": 0.03580000000000001,
+          "hi": 0.11200000000000002
+        },
+        "win_rate_ci": {
+          "lo": 0.11333333333333333,
+          "hi": 0.22666666666666666
+        }
+      },
+      "roi": {
+        "n_decided": 150,
+        "n_refunded": 0,
+        "total_staked_units": 150.0,
+        "net_units": -39.220430060927576,
+        "roi": -0.2614695337395172,
+        "avg_units_per_bet": -0.2614695337395172,
+        "max_drawdown_units": 58.15158948121744,
+        "log_growth_total": -0.42325073026683563,
+        "log_growth_per_bet": -0.0028216715351122375,
+        "bankroll_fraction_per_unit": 0.01,
+        "clv": {
+          "n": 150,
+          "mean_clv": 0.0019333333333333342,
+          "pct_positive": 0.16666666666666666
+        }
+      }
+    },
+    {
+      "key": "KXHIGHLAX",
+      "calibration": {
+        "n": 150,
+        "n_wins": 26,
+        "n_losses": 124,
+        "n_pushes": 0,
+        "n_voids": 0,
+        "sufficiency": "Thin",
+        "win_rate": 0.17333333333333334,
+        "mean_predicted_prob": 0.17673333333333335,
+        "brier_score": 0.10838866666666666,
+        "brier_skill_score": 0.24356544665012403,
+        "log_loss": 0.34062913522818333,
+        "ece": 0.04580000000000001,
+        "reliability": [
+          {
+            "lo": 0.0,
+            "hi": 0.1,
+            "n": 66,
+            "mean_predicted": 0.04121212121212121,
+            "empirical": 0.015151515151515152
+          },
+          {
+            "lo": 0.1,
+            "hi": 0.2,
+            "n": 24,
+            "mean_predicted": 0.1375,
+            "empirical": 0.125
+          },
+          {
+            "lo": 0.2,
+            "hi": 0.3,
+            "n": 25,
+            "mean_predicted": 0.24240000000000006,
+            "empirical": 0.2
+          },
+          {
+            "lo": 0.3,
+            "hi": 0.4,
+            "n": 17,
+            "mean_predicted": 0.34823529411764703,
+            "empirical": 0.35294117647058826
+          },
+          {
+            "lo": 0.4,
+            "hi": 0.5,
+            "n": 12,
+            "mean_predicted": 0.4383333333333333,
+            "empirical": 0.6666666666666666
+          },
+          {
+            "lo": 0.5,
+            "hi": 0.6,
+            "n": 5,
+            "mean_predicted": 0.522,
+            "empirical": 0.4
+          },
+          {
+            "lo": 0.6,
+            "hi": 0.7,
+            "n": 1,
+            "mean_predicted": 0.64,
+            "empirical": 1.0
+          },
+          {
+            "lo": 0.7,
+            "hi": 0.8,
+            "n": 0,
+            "mean_predicted": null,
+            "empirical": null
+          },
+          {
+            "lo": 0.8,
+            "hi": 0.9,
+            "n": 0,
+            "mean_predicted": null,
+            "empirical": null
+          },
+          {
+            "lo": 0.9,
+            "hi": 1.0,
+            "n": 0,
+            "mean_predicted": null,
+            "empirical": null
+          }
+        ],
+        "brier_ci": {
+          "lo": 0.08465533333333335,
+          "hi": 0.13725200000000007
+        },
+        "ece_ci": {
+          "lo": 0.034999999999999996,
+          "hi": 0.11213333333333332
+        },
+        "win_rate_ci": {
+          "lo": 0.12,
+          "hi": 0.23333333333333334
+        }
+      },
+      "roi": {
+        "n_decided": 150,
+        "n_refunded": 0,
+        "total_staked_units": 150.0,
+        "net_units": -48.10771238709236,
+        "roi": -0.32071808258061574,
+        "avg_units_per_bet": -0.32071808258061574,
+        "max_drawdown_units": 54.469917352238504,
+        "log_growth_total": -0.5125635054713631,
+        "log_growth_per_bet": -0.003417090036475754,
+        "bankroll_fraction_per_unit": 0.01,
+        "clv": {
+          "n": 150,
+          "mean_clv": 0.003399999999999997,
+          "pct_positive": 0.17333333333333334
+        }
+      }
+    },
+    {
+      "key": "KXHIGHMIA",
+      "calibration": {
+        "n": 150,
+        "n_wins": 29,
+        "n_losses": 121,
+        "n_pushes": 0,
+        "n_voids": 0,
+        "sufficiency": "Thin",
+        "win_rate": 0.19333333333333333,
+        "mean_predicted_prob": 0.1873999999999999,
+        "brier_score": 0.12294200000000001,
+        "brier_skill_score": 0.21168566543174683,
+        "log_loss": 0.39609686877464495,
+        "ece": 0.051000000000000004,
+        "reliability": [
+          {
+            "lo": 0.0,
+            "hi": 0.1,
+            "n": 62,
+            "mean_predicted": 0.04306451612903226,
+            "empirical": 0.04838709677419355
+          },
+          {
+            "lo": 0.1,
+            "hi": 0.2,
+            "n": 27,
+            "mean_predicted": 0.1440740740740741,
+            "empirical": 0.1111111111111111
+          },
+          {
+            "lo": 0.2,
+            "hi": 0.3,
+            "n": 21,
+            "mean_predicted": 0.23904761904761906,
+            "empirical": 0.2857142857142857
+          },
+          {
+            "lo": 0.3,
+            "hi": 0.4,
+            "n": 19,
+            "mean_predicted": 0.34157894736842104,
+            "empirical": 0.21052631578947367
+          },
+          {
+            "lo": 0.4,
+            "hi": 0.5,
+            "n": 13,
+            "mean_predicted": 0.43923076923076915,
+            "empirical": 0.46153846153846156
+          },
+          {
+            "lo": 0.5,
+            "hi": 0.6,
+            "n": 8,
+            "mean_predicted": 0.54125,
+            "empirical": 0.875
+          },
+          {
+            "lo": 0.6,
+            "hi": 0.7,
+            "n": 0,
+            "mean_predicted": null,
+            "empirical": null
+          },
+          {
+            "lo": 0.7,
+            "hi": 0.8,
+            "n": 0,
+            "mean_predicted": null,
+            "empirical": null
+          },
+          {
+            "lo": 0.8,
+            "hi": 0.9,
+            "n": 0,
+            "mean_predicted": null,
+            "empirical": null
+          },
+          {
+            "lo": 0.9,
+            "hi": 1.0,
+            "n": 0,
+            "mean_predicted": null,
+            "empirical": null
+          }
+        ],
+        "brier_ci": {
+          "lo": 0.09301533333333334,
+          "hi": 0.16046600000000005
+        },
+        "ece_ci": {
+          "lo": 0.04379999999999998,
+          "hi": 0.11913333333333334
+        },
+        "win_rate_ci": {
+          "lo": 0.14,
+          "hi": 0.26666666666666666
+        }
+      },
+      "roi": {
+        "n_decided": 150,
+        "n_refunded": 0,
+        "total_staked_units": 150.0,
+        "net_units": 24.719987772991892,
+        "roi": 0.16479991848661263,
+        "avg_units_per_bet": 0.16479991848661263,
+        "max_drawdown_units": 40.71189806315891,
+        "log_growth_total": 0.107705405829437,
+        "log_growth_per_bet": 0.0007180360388629133,
+        "bankroll_fraction_per_unit": 0.01,
+        "clv": {
+          "n": 150,
+          "mean_clv": 0.012066666666666654,
+          "pct_positive": 0.19333333333333333
+        }
+      }
+    },
+    {
+      "key": "KXHIGHNY",
+      "calibration": {
+        "n": 150,
+        "n_wins": 26,
+        "n_losses": 124,
+        "n_pushes": 0,
+        "n_voids": 0,
+        "sufficiency": "Thin",
+        "win_rate": 0.17333333333333334,
+        "mean_predicted_prob": 0.17626666666666663,
+        "brier_score": 0.109716,
+        "brier_skill_score": 0.23430210918114147,
+        "log_loss": 0.34499419302531215,
+        "ece": 0.06426666666666667,
+        "reliability": [
+          {
+            "lo": 0.0,
+            "hi": 0.1,
+            "n": 64,
+            "mean_predicted": 0.042499999999999996,
+            "empirical": 0.03125
+          },
+          {
+            "lo": 0.1,
+            "hi": 0.2,
+            "n": 26,
+            "mean_predicted": 0.1380769230769231,
+            "empirical": 0.0
+          },
+          {
+            "lo": 0.2,
+            "hi": 0.3,
+            "n": 24,
+            "mean_predicted": 0.24416666666666664,
+            "empirical": 0.3333333333333333
+          },
+          {
+            "lo": 0.3,
+            "hi": 0.4,
+            "n": 21,
+            "mean_predicted": 0.3419047619047619,
+            "empirical": 0.3333333333333333
+          },
+          {
+            "lo": 0.4,
+            "hi": 0.5,
+            "n": 10,
+            "mean_predicted": 0.42300000000000004,
+            "empirical": 0.6
+          },
+          {
+            "lo": 0.5,
+            "hi": 0.6,
+            "n": 3,
+            "mean_predicted": 0.5166666666666667,
+            "empirical": 0.3333333333333333
+          },
+          {
+            "lo": 0.6,
+            "hi": 0.7,
+            "n": 2,
+            "mean_predicted": 0.655,
+            "empirical": 1.0
+          },
+          {
+            "lo": 0.7,
+            "hi": 0.8,
+            "n": 0,
+            "mean_predicted": null,
+            "empirical": null
+          },
+          {
+            "lo": 0.8,
+            "hi": 0.9,
+            "n": 0,
+            "mean_predicted": null,
+            "empirical": null
+          },
+          {
+            "lo": 0.9,
+            "hi": 1.0,
+            "n": 0,
+            "mean_predicted": null,
+            "empirical": null
+          }
+        ],
+        "brier_ci": {
+          "lo": 0.08521999999999999,
+          "hi": 0.13891733333333336
+        },
+        "ece_ci": {
+          "lo": 0.04566666666666663,
+          "hi": 0.1234666666666667
+        },
+        "win_rate_ci": {
+          "lo": 0.10666666666666667,
+          "hi": 0.23333333333333334
+        }
+      },
+      "roi": {
+        "n_decided": 150,
+        "n_refunded": 0,
+        "total_staked_units": 150.0,
+        "net_units": -45.48965315392842,
+        "roi": -0.3032643543595228,
+        "avg_units_per_bet": -0.3032643543595228,
+        "max_drawdown_units": 54.77829241638675,
+        "log_growth_total": -0.48800571984983887,
+        "log_growth_per_bet": -0.0032533714656655926,
+        "bankroll_fraction_per_unit": 0.01,
+        "clv": {
+          "n": 150,
+          "mean_clv": 0.0035999999999999973,
+          "pct_positive": 0.17333333333333334
+        }
+      }
+    },
+    {
+      "key": "KXCPIYOY",
+      "calibration": {
+        "n": 61,
+        "n_wins": 44,
+        "n_losses": 17,
+        "n_pushes": 0,
+        "n_voids": 0,
+        "sufficiency": "Thin",
+        "win_rate": 0.7213114754098361,
+        "mean_predicted_prob": 0.3588524590163933,
+        "brier_score": 0.2838803278688524,
+        "brier_skill_score": -0.4121907754010694,
+        "log_loss": 0.8029436189289586,
+        "ece": 0.36245901639344263,
+        "reliability": [
+          {
+            "lo": 0.0,
+            "hi": 0.1,
+            "n": 13,
+            "mean_predicted": 0.047692307692307694,
+            "empirical": 0.23076923076923078
+          },
+          {
+            "lo": 0.1,
+            "hi": 0.2,
+            "n": 13,
+            "mean_predicted": 0.15076923076923074,
+            "empirical": 0.7692307692307693
+          },
+          {
+            "lo": 0.2,
+            "hi": 0.3,
+            "n": 9,
+            "mean_predicted": 0.24777777777777776,
+            "empirical": 0.5555555555555556
+          },
+          {
+            "lo": 0.3,
+            "hi": 0.4,
+            "n": 4,
+            "mean_predicted": 0.325,
+            "empirical": 1.0
+          },
+          {
+            "lo": 0.4,
+            "hi": 0.5,
+            "n": 3,
+            "mean_predicted": 0.4566666666666667,
+            "empirical": 1.0
+          },
+          {
+            "lo": 0.5,
+            "hi": 0.6,
+            "n": 6,
+            "mean_predicted": 0.5366666666666666,
+            "empirical": 1.0
+          },
+          {
+            "lo": 0.6,
+            "hi": 0.7,
+            "n": 1,
+            "mean_predicted": 0.6,
+            "empirical": 1.0
+          },
+          {
+            "lo": 0.7,
+            "hi": 0.8,
+            "n": 2,
+            "mean_predicted": 0.745,
+            "empirical": 1.0
+          },
+          {
+            "lo": 0.8,
+            "hi": 0.9,
+            "n": 4,
+            "mean_predicted": 0.84,
+            "empirical": 1.0
+          },
+          {
+            "lo": 0.9,
+            "hi": 1.0,
+            "n": 6,
+            "mean_predicted": 0.9566666666666667,
+            "empirical": 1.0
+          }
+        ],
+        "brier_ci": {
+          "lo": 0.2103540983606557,
+          "hi": 0.36058032786885247
+        },
+        "ece_ci": {
+          "lo": 0.2695081967213115,
+          "hi": 0.4640983606557377
+        },
+        "win_rate_ci": {
+          "lo": 0.6229508196721312,
+          "hi": 0.819672131147541
+        }
+      },
+      "roi": {
+        "n_decided": 61,
+        "n_refunded": 0,
+        "total_staked_units": 61.0,
+        "net_units": 130.1752111562668,
+        "roi": 2.1340198550207674,
+        "avg_units_per_bet": 2.1340198550207674,
+        "max_drawdown_units": 6.0,
+        "log_growth_total": 1.2248856103518926,
+        "log_growth_per_bet": 0.020080091972981846,
+        "bankroll_fraction_per_unit": 0.01,
+        "clv": {
+          "n": 61,
+          "mean_clv": 0.3649180327868853,
+          "pct_positive": 0.7540983606557377
+        }
+      }
+    },
+    {
+      "key": "KXPAYROLLS",
+      "calibration": {
+        "n": 36,
+        "n_wins": 32,
+        "n_losses": 4,
+        "n_pushes": 0,
+        "n_voids": 0,
+        "sufficiency": "Insufficient",
+        "win_rate": 0.8888888888888888,
+        "mean_predicted_prob": 0.5352777777777777,
+        "brier_score": 0.22015277777777775,
+        "brier_skill_score": -1.229046874999999,
+        "log_loss": 0.6207190318574897,
+        "ece": 0.36083333333333334,
+        "reliability": [
+          {
+            "lo": 0.0,
+            "hi": 0.1,
+            "n": 2,
+            "mean_predicted": 0.065,
+            "empirical": 0.0
+          },
+          {
+            "lo": 0.1,
+            "hi": 0.2,
+            "n": 3,
+            "mean_predicted": 0.1366666666666667,
+            "empirical": 0.6666666666666666
+          },
+          {
+            "lo": 0.2,
+            "hi": 0.3,
+            "n": 4,
+            "mean_predicted": 0.2525,
+            "empirical": 1.0
+          },
+          {
+            "lo": 0.3,
+            "hi": 0.4,
+            "n": 1,
+            "mean_predicted": 0.34,
+            "empirical": 1.0
+          },
+          {
+            "lo": 0.4,
+            "hi": 0.5,
+            "n": 1,
+            "mean_predicted": 0.4,
+            "empirical": 1.0
+          },
+          {
+            "lo": 0.5,
+            "hi": 0.6,
+            "n": 11,
+            "mean_predicted": 0.5063636363636363,
+            "empirical": 0.9090909090909091
+          },
+          {
+            "lo": 0.6,
+            "hi": 0.7,
+            "n": 3,
+            "mean_predicted": 0.6533333333333333,
+            "empirical": 1.0
+          },
+          {
+            "lo": 0.7,
+            "hi": 0.8,
+            "n": 4,
+            "mean_predicted": 0.7475,
+            "empirical": 1.0
+          },
+          {
+            "lo": 0.8,
+            "hi": 0.9,
+            "n": 3,
+            "mean_predicted": 0.8666666666666667,
+            "empirical": 1.0
+          },
+          {
+            "lo": 0.9,
+            "hi": 1.0,
+            "n": 4,
+            "mean_predicted": 0.965,
+            "empirical": 1.0
+          }
+        ],
+        "brier_ci": {
+          "lo": 0.1469722222222222,
+          "hi": 0.2957500000000002
+        },
+        "ece_ci": {
+          "lo": 0.2572222222222222,
+          "hi": 0.45638888888888884
+        },
+        "win_rate_ci": {
+          "lo": 0.7777777777777778,
+          "hi": 0.9722222222222222
+        }
+      },
+      "roi": {
+        "n_decided": 36,
+        "n_refunded": 0,
+        "total_staked_units": 36.0,
+        "net_units": 37.779316356033185,
+        "roi": 1.0494254543342552,
+        "avg_units_per_bet": 1.0494254543342552,
+        "max_drawdown_units": 3.0,
+        "log_growth_total": 0.37090171820809964,
+        "log_growth_per_bet": 0.010302825505780546,
+        "bankroll_fraction_per_unit": 0.01,
+        "clv": {
+          "n": 36,
+          "mean_clv": 0.07555555555555554,
+          "pct_positive": 0.6666666666666666
+        }
+      }
+    },
+    {
+      "key": "KXFED",
+      "calibration": {
+        "n": 11,
+        "n_wins": 4,
+        "n_losses": 7,
+        "n_pushes": 0,
+        "n_voids": 0,
+        "sufficiency": "Insufficient",
+        "win_rate": 0.36363636363636365,
+        "mean_predicted_prob": 0.3372727272727273,
+        "brier_score": 0.04266363636363637,
+        "brier_skill_score": 0.8156321428571428,
+        "log_loss": 0.17101926563934858,
+        "ece": 0.1390909090909091,
+        "reliability": [
+          {
+            "lo": 0.0,
+            "hi": 0.1,
+            "n": 5,
+            "mean_predicted": 0.038,
+            "empirical": 0.0
+          },
+          {
+            "lo": 0.1,
+            "hi": 0.2,
+            "n": 1,
+            "mean_predicted": 0.19,
+            "empirical": 0.0
+          },
+          {
+            "lo": 0.2,
+            "hi": 0.3,
+            "n": 1,
+            "mean_predicted": 0.24,
+            "empirical": 0.0
+          },
+          {
+            "lo": 0.3,
+            "hi": 0.4,
+            "n": 0,
+            "mean_predicted": null,
+            "empirical": null
+          },
+          {
+            "lo": 0.4,
+            "hi": 0.5,
+            "n": 1,
+            "mean_predicted": 0.44,
+            "empirical": 1.0
+          },
+          {
+            "lo": 0.5,
+            "hi": 0.6,
+            "n": 0,
+            "mean_predicted": null,
+            "empirical": null
+          },
+          {
+            "lo": 0.6,
+            "hi": 0.7,
+            "n": 0,
+            "mean_predicted": null,
+            "empirical": null
+          },
+          {
+            "lo": 0.7,
+            "hi": 0.8,
+            "n": 1,
+            "mean_predicted": 0.79,
+            "empirical": 1.0
+          },
+          {
+            "lo": 0.8,
+            "hi": 0.9,
+            "n": 0,
+            "mean_predicted": null,
+            "empirical": null
+          },
+          {
+            "lo": 0.9,
+            "hi": 1.0,
+            "n": 2,
+            "mean_predicted": 0.9299999999999999,
+            "empirical": 1.0
+          }
+        ],
+        "brier_ci": {
+          "lo": 0.0071,
+          "hi": 0.10200000000000001
+        },
+        "ece_ci": {
+          "lo": 0.06272727272727274,
+          "hi": 0.23818181818181822
+        },
+        "win_rate_ci": {
+          "lo": 0.09090909090909091,
+          "hi": 0.7272727272727273
+        }
+      },
+      "roi": {
+        "n_decided": 11,
+        "n_refunded": 0,
+        "total_staked_units": 11.0,
+        "net_units": -5.309917264614134,
+        "roi": -0.4827197513285576,
+        "avg_units_per_bet": -0.4827197513285576,
+        "max_drawdown_units": 7.0,
+        "log_growth_total": -0.053535988690810145,
+        "log_growth_per_bet": -0.004866908062800922,
+        "bankroll_fraction_per_unit": 0.01,
+        "clv": {
+          "n": 11,
+          "mean_clv": 0.029090909090909077,
+          "pct_positive": 0.36363636363636365
+        }
+      }
+    }
+  ],
+  "by_tier": [],
+  "by_edge_bucket": [
+    {
+      "key": "longshot <20c",
+      "calibration": {
+        "n": 570,
+        "n_wins": 43,
+        "n_losses": 527,
+        "n_pushes": 0,
+        "n_voids": 0,
+        "sufficiency": "Adequate",
+        "win_rate": 0.07543859649122807,
+        "mean_predicted_prob": 0.0756140350877194,
+        "brier_score": 0.06627754385964917,
+        "brier_skill_score": 0.049751820308017614,
+        "log_loss": 0.2438691023575267,
+        "ece": 0.006070175438596389,
+        "reliability": [
+          {
+            "lo": 0.0,
+            "hi": 0.1,
+            "n": 383,
+            "mean_predicted": 0.0438120104438641,
+            "empirical": 0.0391644908616188
+          },
+          {
+            "lo": 0.1,
+            "hi": 0.2,
+            "n": 187,
+            "mean_predicted": 0.1407486631016043,
+            "empirical": 0.1497326203208556
+          },
+          {
+            "lo": 0.2,
+            "hi": 0.3,
+            "n": 0,
+            "mean_predicted": null,
+            "empirical": null
+          },
+          {
+            "lo": 0.3,
+            "hi": 0.4,
+            "n": 0,
+            "mean_predicted": null,
+            "empirical": null
+          },
+          {
+            "lo": 0.4,
+            "hi": 0.5,
+            "n": 0,
+            "mean_predicted": null,
+            "empirical": null
+          },
+          {
+            "lo": 0.5,
+            "hi": 0.6,
+            "n": 0,
+            "mean_predicted": null,
+            "empirical": null
+          },
+          {
+            "lo": 0.6,
+            "hi": 0.7,
+            "n": 0,
+            "mean_predicted": null,
+            "empirical": null
+          },
+          {
+            "lo": 0.7,
+            "hi": 0.8,
+            "n": 0,
+            "mean_predicted": null,
+            "empirical": null
+          },
+          {
+            "lo": 0.8,
+            "hi": 0.9,
+            "n": 0,
+            "mean_predicted": null,
+            "empirical": null
+          },
+          {
+            "lo": 0.9,
+            "hi": 1.0,
+            "n": 0,
+            "mean_predicted": null,
+            "empirical": null
+          }
+        ],
+        "brier_ci": {
+          "lo": 0.05166526315789481,
+          "hi": 0.08347543859649113
+        },
+        "ece_ci": {
+          "lo": 0.0019298245614036507,
+          "hi": 0.02692982456140359
+        },
+        "win_rate_ci": {
+          "lo": 0.054385964912280704,
+          "hi": 0.09298245614035087
+        }
+      },
+      "roi": {
+        "n_decided": 570,
+        "n_refunded": 0,
+        "total_staked_units": 570.0,
+        "net_units": -39.71831702868853,
+        "roi": -0.0696812579450676,
+        "avg_units_per_bet": -0.0696812579450676,
+        "max_drawdown_units": 246.64322382124237,
+        "log_growth_total": -0.8438222726461746,
+        "log_growth_per_bet": -0.0014803899520108327,
+        "bankroll_fraction_per_unit": 0.01,
+        "clv": {
+          "n": 570,
+          "mean_clv": 0.0059649122807017806,
+          "pct_positive": 0.07543859649122807
+        }
+      }
+    },
+    {
+      "key": "20-40c",
+      "calibration": {
+        "n": 310,
+        "n_wins": 99,
+        "n_losses": 211,
+        "n_pushes": 0,
+        "n_voids": 0,
+        "sufficiency": "Adequate",
+        "win_rate": 0.3193548387096774,
+        "mean_predicted_prob": 0.28077419354838723,
+        "brier_score": 0.21610580645161293,
+        "brier_skill_score": 0.005803628704102559,
+        "log_loss": 0.6241701102021283,
+        "ece": 0.03858064516129031,
+        "reliability": [
+          {
+            "lo": 0.0,
+            "hi": 0.1,
+            "n": 0,
+            "mean_predicted": null,
+            "empirical": null
+          },
+          {
+            "lo": 0.1,
+            "hi": 0.2,
+            "n": 0,
+            "mean_predicted": null,
+            "empirical": null
+          },
+          {
+            "lo": 0.2,
+            "hi": 0.3,
+            "n": 185,
+            "mean_predicted": 0.24178378378378385,
+            "empirical": 0.2864864864864865
+          },
+          {
+            "lo": 0.3,
+            "hi": 0.4,
+            "n": 125,
+            "mean_predicted": 0.33847999999999995,
+            "empirical": 0.368
+          },
+          {
+            "lo": 0.4,
+            "hi": 0.5,
+            "n": 0,
+            "mean_predicted": null,
+            "empirical": null
+          },
+          {
+            "lo": 0.5,
+            "hi": 0.6,
+            "n": 0,
+            "mean_predicted": null,
+            "empirical": null
+          },
+          {
+            "lo": 0.6,
+            "hi": 0.7,
+            "n": 0,
+            "mean_predicted": null,
+            "empirical": null
+          },
+          {
+            "lo": 0.7,
+            "hi": 0.8,
+            "n": 0,
+            "mean_predicted": null,
+            "empirical": null
+          },
+          {
+            "lo": 0.8,
+            "hi": 0.9,
+            "n": 0,
+            "mean_predicted": null,
+            "empirical": null
+          },
+          {
+            "lo": 0.9,
+            "hi": 1.0,
+            "n": 0,
+            "mean_predicted": null,
+            "empirical": null
+          }
+        ],
+        "brier_ci": {
+          "lo": 0.19319612903225816,
+          "hi": 0.23869806451612924
+        },
+        "ece_ci": {
+          "lo": 0.00938709677419357,
+          "hi": 0.09293548387096745
+        },
+        "win_rate_ci": {
+          "lo": 0.267741935483871,
+          "hi": 0.36451612903225805
+        }
+      },
+      "roi": {
+        "n_decided": 310,
+        "n_refunded": 0,
+        "total_staked_units": 310.0,
+        "net_units": 45.93860959619595,
+        "roi": 0.14818906321353534,
+        "avg_units_per_bet": 0.14818906321353534,
+        "max_drawdown_units": 15.678030303030301,
+        "log_growth_total": 0.41337372804101713,
+        "log_growth_per_bet": 0.0013334636388419908,
+        "bankroll_fraction_per_unit": 0.01,
+        "clv": {
+          "n": 310,
+          "mean_clv": 0.037451612903225795,
+          "pct_positive": 0.3258064516129032
+        }
+      }
+    },
+    {
+      "key": "40-60c",
+      "calibration": {
+        "n": 94,
+        "n_wins": 60,
+        "n_losses": 34,
+        "n_pushes": 0,
+        "n_voids": 0,
+        "sufficiency": "Thin",
+        "win_rate": 0.6382978723404256,
+        "mean_predicted_prob": 0.46999999999999975,
+        "brier_score": 0.2529106382978723,
+        "brier_skill_score": -0.0954501960784313,
+        "log_loss": 0.6991144196083531,
+        "ece": 0.1682978723404256,
+        "reliability": [
+          {
+            "lo": 0.0,
+            "hi": 0.1,
+            "n": 0,
+            "mean_predicted": null,
+            "empirical": null
+          },
+          {
+            "lo": 0.1,
+            "hi": 0.2,
+            "n": 0,
+            "mean_predicted": null,
+            "empirical": null
+          },
+          {
+            "lo": 0.2,
+            "hi": 0.3,
+            "n": 0,
+            "mean_predicted": null,
+            "empirical": null
+          },
+          {
+            "lo": 0.3,
+            "hi": 0.4,
+            "n": 0,
+            "mean_predicted": null,
+            "empirical": null
+          },
+          {
+            "lo": 0.4,
+            "hi": 0.5,
+            "n": 57,
+            "mean_predicted": 0.435438596491228,
+            "empirical": 0.5614035087719298
+          },
+          {
+            "lo": 0.5,
+            "hi": 0.6,
+            "n": 37,
+            "mean_predicted": 0.5232432432432432,
+            "empirical": 0.7567567567567568
+          },
+          {
+            "lo": 0.6,
+            "hi": 0.7,
+            "n": 0,
+            "mean_predicted": null,
+            "empirical": null
+          },
+          {
+            "lo": 0.7,
+            "hi": 0.8,
+            "n": 0,
+            "mean_predicted": null,
+            "empirical": null
+          },
+          {
+            "lo": 0.8,
+            "hi": 0.9,
+            "n": 0,
+            "mean_predicted": null,
+            "empirical": null
+          },
+          {
+            "lo": 0.9,
+            "hi": 1.0,
+            "n": 0,
+            "mean_predicted": null,
+            "empirical": null
+          }
+        ],
+        "brier_ci": {
+          "lo": 0.2404425531914894,
+          "hi": 0.2651382978723403
+        },
+        "ece_ci": {
+          "lo": 0.08393617021276589,
+          "hi": 0.25563829787234044
+        },
+        "win_rate_ci": {
+          "lo": 0.5319148936170213,
+          "hi": 0.723404255319149
+        }
+      },
+      "roi": {
+        "n_decided": 94,
+        "n_refunded": 0,
+        "total_staked_units": 94.0,
+        "net_units": 33.26112011147349,
+        "roi": 0.35384170331354775,
+        "avg_units_per_bet": 0.35384170331354775,
+        "max_drawdown_units": 4.4598997493734345,
+        "log_growth_total": 0.3270032442522875,
+        "log_growth_per_bet": 0.0034787579175775264,
+        "bankroll_fraction_per_unit": 0.01,
+        "clv": {
+          "n": 94,
+          "mean_clv": 0.1161702127659574,
+          "pct_positive": 0.6063829787234043
+        }
+      }
+    },
+    {
+      "key": "favorite >80c",
+      "calibration": {
+        "n": 19,
+        "n_wins": 19,
+        "n_losses": 0,
+        "n_pushes": 0,
+        "n_voids": 0,
+        "sufficiency": "Insufficient",
+        "win_rate": 1.0,
+        "mean_predicted_prob": 0.9168421052631578,
+        "brier_score": 0.009915789473684211,
+        "brier_skill_score": null,
+        "log_loss": 0.0886373693713416,
+        "ece": 0.08315789473684213,
+        "reliability": [
+          {
+            "lo": 0.0,
+            "hi": 0.1,
+            "n": 0,
+            "mean_predicted": null,
+            "empirical": null
+          },
+          {
+            "lo": 0.1,
+            "hi": 0.2,
+            "n": 0,
+            "mean_predicted": null,
+            "empirical": null
+          },
+          {
+            "lo": 0.2,
+            "hi": 0.3,
+            "n": 0,
+            "mean_predicted": null,
+            "empirical": null
+          },
+          {
+            "lo": 0.3,
+            "hi": 0.4,
+            "n": 0,
+            "mean_predicted": null,
+            "empirical": null
+          },
+          {
+            "lo": 0.4,
+            "hi": 0.5,
+            "n": 0,
+            "mean_predicted": null,
+            "empirical": null
+          },
+          {
+            "lo": 0.5,
+            "hi": 0.6,
+            "n": 0,
+            "mean_predicted": null,
+            "empirical": null
+          },
+          {
+            "lo": 0.6,
+            "hi": 0.7,
+            "n": 0,
+            "mean_predicted": null,
+            "empirical": null
+          },
+          {
+            "lo": 0.7,
+            "hi": 0.8,
+            "n": 0,
+            "mean_predicted": null,
+            "empirical": null
+          },
+          {
+            "lo": 0.8,
+            "hi": 0.9,
+            "n": 7,
+            "mean_predicted": 0.8514285714285714,
+            "empirical": 1.0
+          },
+          {
+            "lo": 0.9,
+            "hi": 1.0,
+            "n": 12,
+            "mean_predicted": 0.955,
+            "empirical": 1.0
+          }
+        ],
+        "brier_ci": {
+          "lo": 0.005652631578947368,
+          "hi": 0.014963157894736848
+        },
+        "ece_ci": {
+          "lo": 0.05999999999999993,
+          "hi": 0.10631578947368411
+        },
+        "win_rate_ci": {
+          "lo": 1.0,
+          "hi": 1.0
+        }
+      },
+      "roi": {
+        "n_decided": 19,
+        "n_refunded": 0,
+        "total_staked_units": 19.0,
+        "net_units": 1.7994263112414441,
+        "roi": 0.09470664796007601,
+        "avg_units_per_bet": 0.09470664796007601,
+        "max_drawdown_units": 0.0,
+        "log_growth_total": 0.017981476523425924,
+        "log_growth_per_bet": 0.0009463935012329434,
+        "bankroll_fraction_per_unit": 0.01,
+        "clv": {
+          "n": 19,
+          "mean_clv": 0.047894736842105254,
+          "pct_positive": 0.7894736842105263
+        }
+      }
+    },
+    {
+      "key": "60-80c",
+      "calibration": {
+        "n": 15,
+        "n_wins": 15,
+        "n_losses": 0,
+        "n_pushes": 0,
+        "n_voids": 0,
+        "sufficiency": "Insufficient",
+        "win_rate": 1.0,
+        "mean_predicted_prob": 0.6953333333333334,
+        "brier_score": 0.09624666666666667,
+        "brier_skill_score": null,
+        "log_loss": 0.36691772172612497,
+        "ece": 0.30466666666666664,
+        "reliability": [
+          {
+            "lo": 0.0,
+            "hi": 0.1,
+            "n": 0,
+            "mean_predicted": null,
+            "empirical": null
+          },
+          {
+            "lo": 0.1,
+            "hi": 0.2,
+            "n": 0,
+            "mean_predicted": null,
+            "empirical": null
+          },
+          {
+            "lo": 0.2,
+            "hi": 0.3,
+            "n": 0,
+            "mean_predicted": null,
+            "empirical": null
+          },
+          {
+            "lo": 0.3,
+            "hi": 0.4,
+            "n": 0,
+            "mean_predicted": null,
+            "empirical": null
+          },
+          {
+            "lo": 0.4,
+            "hi": 0.5,
+            "n": 0,
+            "mean_predicted": null,
+            "empirical": null
+          },
+          {
+            "lo": 0.5,
+            "hi": 0.6,
+            "n": 0,
+            "mean_predicted": null,
+            "empirical": null
+          },
+          {
+            "lo": 0.6,
+            "hi": 0.7,
+            "n": 8,
+            "mean_predicted": 0.645,
+            "empirical": 1.0
+          },
+          {
+            "lo": 0.7,
+            "hi": 0.8,
+            "n": 7,
+            "mean_predicted": 0.7528571428571429,
+            "empirical": 1.0
+          },
+          {
+            "lo": 0.8,
+            "hi": 0.9,
+            "n": 0,
+            "mean_predicted": null,
+            "empirical": null
+          },
+          {
+            "lo": 0.9,
+            "hi": 1.0,
+            "n": 0,
+            "mean_predicted": null,
+            "empirical": null
+          }
+        ],
+        "brier_ci": {
+          "lo": 0.07945333333333333,
+          "hi": 0.11300666666666667
+        },
+        "ece_ci": {
+          "lo": 0.2753333333333332,
+          "hi": 0.33333333333333337
+        },
+        "win_rate_ci": {
+          "lo": 1.0,
+          "hi": 1.0
+        }
+      },
+      "roi": {
+        "n_decided": 15,
+        "n_refunded": 0,
+        "total_staked_units": 15.0,
+        "net_units": 6.726432962760551,
+        "roi": 0.44842886418403677,
+        "avg_units_per_bet": 0.44842886418403677,
+        "max_drawdown_units": 0.0,
+        "log_growth_total": 0.06710284291715339,
+        "log_growth_per_bet": 0.004473522861143559,
+        "bankroll_fraction_per_unit": 0.01,
+        "clv": {
+          "n": 15,
+          "mean_clv": 0.20733333333333331,
+          "pct_positive": 0.9333333333333333
+        }
+      }
+    }
+  ],
+  "oos": {
+    "split_fraction": 0.7,
+    "n_train": 705,
+    "n_test": 303,
+    "calibrator": {
+      "kind": {
+        "Isotonic": {
+          "xs": [
+            0.02882352941176472,
+            0.061650485436893235,
+            0.10432835820895525,
+            0.13,
+            0.14000000000000004,
+            0.15499999999999997,
+            0.16999999999999996,
+            0.1921212121212121,
+            0.234320987654321,
+            0.2747619047619048,
+            0.31558823529411767,
+            0.359090909090909,
+            0.3821428571428571,
+            0.41565217391304343,
+            0.445,
+            0.47000000000000003,
+            0.5113636363636364,
+            0.6,
+            0.64,
+            0.65,
+            0.74,
+            0.75,
+            0.78,
+            0.79,
+            0.82,
+            0.86,
+            0.87,
+            0.88,
+            0.91,
+            0.92,
+            0.95,
+            0.96,
+            0.97,
+            0.98
+          ],
+          "ys": [
+            0.013071895424836602,
+            0.038834951456310676,
+            0.08955223880597014,
+            0.125,
+            0.16666666666666666,
+            0.16666666666666666,
+            0.16666666666666666,
+            0.21212121212121213,
+            0.2345679012345679,
+            0.3333333333333333,
+            0.3382352941176471,
+            0.45454545454545453,
+            0.5,
+            0.5217391304347826,
+            0.625,
+            0.7142857142857143,
+            0.8181818181818182,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "n_fit": 705,
+      "clamp_lo": 0.01,
+      "clamp_hi": 0.99
+    },
+    "test_before": {
+      "n": 303,
+      "n_wins": 80,
+      "n_losses": 223,
+      "n_pushes": 0,
+      "n_voids": 0,
+      "sufficiency": "Adequate",
+      "win_rate": 0.264026402640264,
+      "mean_predicted_prob": 0.21099009900990098,
+      "brier_score": 0.14496666666666672,
+      "brier_skill_score": 0.25396610426008936,
+      "log_loss": 0.4478025245759333,
+      "ece": 0.05303630363036304,
+      "reliability": [
+        {
+          "lo": 0.0,
+          "hi": 0.1,
+          "n": 113,
+          "mean_predicted": 0.04212389380530972,
+          "empirical": 0.05309734513274336
+        },
+        {
+          "lo": 0.1,
+          "hi": 0.2,
+          "n": 55,
+          "mean_predicted": 0.14618181818181816,
+          "empirical": 0.2
+        },
+        {
+          "lo": 0.2,
+          "hi": 0.3,
+          "n": 59,
+          "mean_predicted": 0.24508474576271186,
+          "empirical": 0.3220338983050847
+        },
+        {
+          "lo": 0.3,
+          "hi": 0.4,
+          "n": 29,
+          "mean_predicted": 0.3420689655172413,
+          "empirical": 0.3793103448275862
+        },
+        {
+          "lo": 0.4,
+          "hi": 0.5,
+          "n": 18,
+          "mean_predicted": 0.4400000000000001,
+          "empirical": 0.5
+        },
+        {
+          "lo": 0.5,
+          "hi": 0.6,
+          "n": 16,
+          "mean_predicted": 0.5375,
+          "empirical": 0.6875
+        },
+        {
+          "lo": 0.6,
+          "hi": 0.7,
+          "n": 4,
+          "mean_predicted": 0.6575,
+          "empirical": 1.0
+        },
+        {
+          "lo": 0.7,
+          "hi": 0.8,
+          "n": 3,
+          "mean_predicted": 0.7366666666666667,
+          "empirical": 1.0
+        },
+        {
+          "lo": 0.8,
+          "hi": 0.9,
+          "n": 3,
+          "mean_predicted": 0.8433333333333333,
+          "empirical": 1.0
+        },
+        {
+          "lo": 0.9,
+          "hi": 1.0,
+          "n": 3,
+          "mean_predicted": 0.9533333333333335,
+          "empirical": 1.0
+        }
+      ],
+      "brier_ci": {
+        "lo": 0.12029108910891094,
+        "hi": 0.17164884488448853
+      },
+      "ece_ci": {
+        "lo": 0.03349834983498351,
+        "hi": 0.10079207920792077
+      },
+      "win_rate_ci": {
+        "lo": 0.2145214521452145,
+        "hi": 0.3102310231023102
+      }
+    },
+    "test_after": {
+      "n": 303,
+      "n_wins": 80,
+      "n_losses": 223,
+      "n_pushes": 0,
+      "n_voids": 0,
+      "sufficiency": "Adequate",
+      "win_rate": 0.264026402640264,
+      "mean_predicted_prob": 0.254525532418524,
+      "brier_score": 0.14313328298177022,
+      "brier_skill_score": 0.26340114477167353,
+      "log_loss": 0.4441524265609991,
+      "ece": 0.04823524420726946,
+      "reliability": [
+        {
+          "lo": 0.0,
+          "hi": 0.1,
+          "n": 117,
+          "mean_predicted": 0.028842317602107637,
+          "empirical": 0.05128205128205128
+        },
+        {
+          "lo": 0.1,
+          "hi": 0.2,
+          "n": 48,
+          "mean_predicted": 0.15160151963647306,
+          "empirical": 0.22916666666666666
+        },
+        {
+          "lo": 0.2,
+          "hi": 0.3,
+          "n": 44,
+          "mean_predicted": 0.24323627265004075,
+          "empirical": 0.29545454545454547
+        },
+        {
+          "lo": 0.3,
+          "hi": 0.4,
+          "n": 31,
+          "mean_predicted": 0.3377495957130388,
+          "empirical": 0.3225806451612903
+        },
+        {
+          "lo": 0.4,
+          "hi": 0.5,
+          "n": 13,
+          "mean_predicted": 0.4537814281081507,
+          "empirical": 0.46153846153846156
+        },
+        {
+          "lo": 0.5,
+          "hi": 0.6,
+          "n": 11,
+          "mean_predicted": 0.5237440827802273,
+          "empirical": 0.36363636363636365
+        },
+        {
+          "lo": 0.6,
+          "hi": 0.7,
+          "n": 4,
+          "mean_predicted": 0.6074074074074074,
+          "empirical": 0.5
+        },
+        {
+          "lo": 0.7,
+          "hi": 0.8,
+          "n": 10,
+          "mean_predicted": 0.7569858712715857,
+          "empirical": 0.6
+        },
+        {
+          "lo": 0.8,
+          "hi": 0.9,
+          "n": 5,
+          "mean_predicted": 0.8355206698063842,
+          "empirical": 0.6
+        },
+        {
+          "lo": 0.9,
+          "hi": 1.0,
+          "n": 20,
+          "mean_predicted": 0.9729871794871793,
+          "empirical": 0.95
+        }
+      ],
+      "brier_ci": {
+        "lo": 0.11654984598840705,
+        "hi": 0.17001171937401532
+      },
+      "ece_ci": {
+        "lo": 0.035595346600712514,
+        "hi": 0.09989118521991666
+      },
+      "win_rate_ci": {
+        "lo": 0.2145214521452145,
+        "hi": 0.3102310231023102
+      }
+    }
+  },
+  "notes": [
+    "Data: 1008 settled Kalshi markets across series [\"KXHIGHNY\", \"KXHIGHCHI\", \"KXHIGHAUS\", \"KXHIGHDEN\", \"KXHIGHLAX\", \"KXHIGHMIA\", \"KXFED\", \"KXCPIYOY\", \"KXPAYROLLS\", \"KXBTCD\", \"KXETHD\"] (public API, volume >= 500, lifetime >= 6h), cached in eval-data/.",
+    "Forecast under test: the market's ENTRY price (first traded candle) as P(yes). This measures market calibration — the benchmark the app's own forecasts must beat — and exercises CLV end to end (closing_prob = final candle). 'ROI' is the return of blindly buying YES at entry on every market; expect ~zero minus spread.",
+    "The app's LLM forecasts have no graded history yet; once predictions.db accumulates resolved rows the same engine scores them via eval_adapter."
+  ]
+}

@@ -1,0 +1,15 @@
+/target/
+**/target/
+**/node_modules/
+**/dist/
+/.openclaw/
+/.idea/
+/.vscode/
+*.log
+*.pma
+.DS_Store
+Thumbs.db
+*.exe
+*.msi
+*.dmg
+*.app

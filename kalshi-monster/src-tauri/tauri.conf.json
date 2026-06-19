@@ -1,0 +1,46 @@
+{
+  "build": {
+    "beforeBuildCommand": "cd ../src-ui && npm run build",
+    "beforeDevCommand": "cd ../src-ui && npm run dev",
+    "devUrl": "http://localhost:1420",
+    "frontendDist": "../src-ui/dist"
+  },
+  "bundle": {
+    "active": true,
+    "category": "Finance",
+    "copyright": "2026 Kalshi Monster",
+    "targets": "all",
+    "externalBin": [],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "longDescription": "AI-powered Kalshi prediction market intelligence with portfolio-aware Kelly sizing and calibration",
+    "shortDescription": "Kalshi Monster",
+    "resources": []
+  },
+  "productName": "Kalshi Monster",
+  "version": "0.8.0",
+  "identifier": "com.kalshimonster.desktop",
+  "plugins": {},
+  "app": {
+    "windows": [
+      {
+        "title": "Kalshi Monster",
+        "width": 1400,
+        "height": 900,
+        "minWidth": 1000,
+        "minHeight": 700,
+        "resizable": true,
+        "fullscreen": false
+      }
+    ],
+    "security": {
+      "csp": null
+    },
+    "withGlobalTauri": false
+  }
+}
