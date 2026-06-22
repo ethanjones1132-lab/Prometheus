@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
+import { bankrollApi, configApi } from '../services/tauri';
+import type { AppConfig, BankrollConfig } from '../types';
 import { kalshiApi } from '../services/kalshi';
 import type {
   KalshiMarketSummary,
@@ -22,10 +24,67 @@ export function MarketDetailPanel({ market, onClose }: Props) {
   const [historyLoading, setHistoryLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [config, setConfig] = useState<AppConfig | null>(null);
+  const [bankrollConfig, setBankrollConfig] = useState<BankrollConfig | null>(null);
+  const [stakeConfigLoading, setStakeConfigLoading] = useState(true);
+  const [stakeConfigError, setStakeConfigError] = useState<string | null>(null);
 
   const marketPricePct =
     contractSide === 'YES' ? market.yes_prob_pct : 100 - market.yes_prob_pct;
   const edgePts = fairProb - marketPricePct;
+  const maxStakeDollars = Math.max(
+    1,
+    Math.round(((bankrollConfig?.total_bankroll ?? 1000) * (config?.max_bet_pct ?? 0.05)) * 100) / 100,
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([configApi.get(), bankrollApi.getConfig()])
+      .then(([appConfig, bankroll]) => {
+        if (cancelled) return;
+        setConfig(appConfig);
+        setBankrollConfig(bankroll);
+        const maxStake = Math.max(1, bankroll.total_bankroll * appConfig.max_bet_pct);
+        setRawStake((current) => Math.min(Math.max(1, current), maxStake));
+      })
+      .catch((e) => {
+        if (!cancelled) {
+          setStakeConfigError(e instanceof Error ? e.message : String(e));
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setStakeConfigLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const updateMaxBetPct = async (value: number) => {
+    if (!config || !bankrollConfig) return;
+    const nextPct = Math.max(0.1, Math.min(25, value));
+    const nextConfig: AppConfig = {
+      ...config,
+      max_bet_pct: nextPct / 100,
+    };
+    const nextMaxStakeDollars = Math.max(
+      1,
+      Math.round(((bankrollConfig.total_bankroll * nextPct) / 100) * 100) / 100,
+    );
+    setConfig(nextConfig);
+    setRawStake((current) => Math.min(Math.max(1, current), nextMaxStakeDollars));
+    try {
+      await configApi.save(nextConfig);
+    } catch (e) {
+      setConfig(config);
+      setStakeConfigError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const updateRawStake = (value: number) => {
+    setRawStake(Math.max(1, Math.min(value, maxStakeDollars)));
+  };
 
   const loadAdjustment = useCallback(async () => {
     try {
@@ -155,11 +214,30 @@ export function MarketDetailPanel({ market, onClose }: Props) {
             <input
               type="number"
               min={1}
-              max={500}
+              max={maxStakeDollars}
               value={rawStake}
-              onChange={(e) => setRawStake(Number(e.target.value))}
+              onChange={(e) => updateRawStake(Number(e.target.value))}
             />
           </div>
+          <div className="ticketRow">
+            <label>Local max bet % bankroll</label>
+            <input
+              type="number"
+              min={0.1}
+              max={25}
+              step={0.1}
+              disabled={stakeConfigLoading}
+              value={config ? (config.max_bet_pct * 100).toFixed(1) : '5.0'}
+              onChange={(e) => void updateMaxBetPct(Number(e.target.value))}
+            />
+          </div>
+          <div className="ticketRow">
+            <label>Configured max stake</label>
+            <strong>
+              {stakeConfigLoading ? 'Loading…' : stakeConfigError ? 'Unavailable' : `$${maxStakeDollars.toFixed(2)}`}
+            </strong>
+          </div>
+          {stakeConfigError && <p className="muted small">{stakeConfigError}</p>}
 
           {adjustment && (
             <div className="adjustmentBox">

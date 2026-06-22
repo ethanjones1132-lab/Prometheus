@@ -4,6 +4,7 @@ import { ChatView } from './components/ChatView';
 import { KalshiPredictionsPanel } from './components/KalshiPredictionsPanel';
 import { KalshiView } from './components/KalshiView';
 import { PropsView } from './components/PropsView';
+import { SettingsView } from './components/SettingsView';
 
 type Tab = 'props' | 'markets' | 'chat' | 'predictions' | 'settings';
 
@@ -53,16 +54,7 @@ export default function App() {
             <KalshiPredictionsPanel />
           </section>
         )}
-        {activeTab === 'settings' && (
-          <section className="page">
-            <div className="card">
-              <h2>Settings</h2>
-              <p className="muted">
-                Configure OpenRouter, model, risk controls, notifications, and Kalshi compatibility.
-              </p>
-            </div>
-          </section>
-        )}
+        {activeTab === 'settings' && <SettingsView />}
       </main>
     </div>
   );

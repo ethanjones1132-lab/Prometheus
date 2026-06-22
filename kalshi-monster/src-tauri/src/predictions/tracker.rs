@@ -30,6 +30,10 @@ pub struct Prediction {
     pub created_at: String,
     /// Serialized `KalshiTradeDecision` JSON when the prediction is a Kalshi market trade.
     pub full_decision_json: Option<String>,
+    /// Entry price (market implied probability at time of decision, 0-1)
+    pub entry_price: Option<f64>,
+    /// Whether the model's fair probability diverged significantly from market implied prob
+    pub model_disagreement: bool,
 }
 
 /// Outcome tracking for a prediction
@@ -322,6 +326,8 @@ impl PredictionTracker {
                 }),
             created_at: now.to_string(),
             full_decision_json: None,
+            entry_price: None,
+            model_disagreement: false,
         })
     }
 
@@ -392,6 +398,8 @@ impl PredictionTracker {
             risk,
             created_at: now.to_string(),
             full_decision_json: Some(full_json),
+            entry_price: Some(decision.market_price_pct / 100.0),
+            model_disagreement: decision.model_disagreement,
         })
     }
 
@@ -419,6 +427,8 @@ impl PredictionTracker {
                 risk: None,
                 created_at: now.to_string(),
                 full_decision_json: None,
+                entry_price: None,
+                model_disagreement: false,
             };
 
             let first_line = block.lines().next().unwrap_or("").trim();
@@ -1223,6 +1233,33 @@ impl PredictionTracker {
         } else {
             Ok(())
         }
+    }
+
+    /// Update CLV (Closing Line Value) for a prediction.
+    pub async fn update_prediction_clv(
+        &self,
+        prediction_id: &str,
+        close_price: f64,
+    ) -> Result<(), String> {
+        crate::predictions::storage::update_prediction_clv(&self.pool, prediction_id, close_price).await
+    }
+
+    /// Set the entry price for a prediction.
+    pub async fn set_prediction_entry_price(
+        &self,
+        prediction_id: &str,
+        entry_price: f64,
+    ) -> Result<(), String> {
+        crate::predictions::storage::set_prediction_entry_price(&self.pool, prediction_id, entry_price).await
+    }
+
+    /// Set model disagreement flag for a prediction.
+    pub async fn set_model_disagreement(
+        &self,
+        prediction_id: &str,
+        disagreement: bool,
+    ) -> Result<(), String> {
+        crate::predictions::storage::set_model_disagreement(&self.pool, prediction_id, disagreement).await
     }
 
     pub async fn get_kalshi_stats(&self, predictions: &[KalshiPrediction]) -> KalshiPredictionStats {

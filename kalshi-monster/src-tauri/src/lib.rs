@@ -15,6 +15,7 @@ pub mod kalshi;
 pub mod line_tracker;
 pub mod ml_predictor;
 pub mod prizepicks;
+pub mod paper;
 
 use chat::ChatState;
 use football::api_client::{SportsApiClient, SportsApiConfig};
@@ -67,6 +68,13 @@ pub fn run() {
         }
     });
 
+    // Initialize paper-trading journal tables
+    rt.block_on(async {
+        if let Err(e) = paper::init_paper_tables(&db_pool).await {
+            tracing::warn!("Failed to init paper tables: {}", e);
+        }
+    });
+
     // Initialize prediction tracker (migrates JSON data on first run)
     let prediction_tracker = rt.block_on(async {
         PredictionTracker::new(db_pool.clone())
@@ -115,8 +123,15 @@ pub fn run() {
 
             // Background auto-grade for resolved Kalshi markets
             kalshi::spawn_auto_grade_task(
-                kalshi_for_grade,
+                kalshi_for_grade.clone(),
                 prediction_tracker_for_setup.clone(),
+                kalshi_auto_grade_secs,
+            );
+
+            // Settle open paper lots when Kalshi markets resolve
+            paper::spawn_paper_settle_task(
+                db_pool.clone(),
+                kalshi_for_grade,
                 kalshi_auto_grade_secs,
             );
 
@@ -238,6 +253,10 @@ pub fn run() {
             commands::kalshi_snapshot_prices,
             commands::kalshi_get_price_history,
             commands::kalshi_record_paper_decision,
+            commands::paper_get_analytics,
+            commands::paper_get_positions,
+            commands::paper_settle_pending,
+            commands::paper_reset_account,
             // Bot integration
             commands::get_bot_config,
             commands::save_bot_config,
@@ -253,6 +272,12 @@ pub fn run() {
             commands::get_tracked_line_stat_categories,
             commands::get_latest_line_snapshot,
             commands::prune_line_movements,
+            // Analysis engine
+            commands::analyze_prop,
+            commands::analyze_multiple_props,
+            commands::get_scored_props_by_tier,
+            commands::analyze_parlay_correlation,
+            commands::generate_analysis_context,
             // ML Predictor
             commands::ml_train_model,
             commands::ml_predict_batch,

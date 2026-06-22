@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
 import { kalshiApi } from '../services/kalshi';
-import type { KalshiPrediction } from '../types/kalshi';
+import type { KalshiPrediction, PaperAnalytics } from '../types/kalshi';
 import { kalshiBetWon } from '../types/kalshi';
 
 export function KalshiPredictionsPanel() {
   const [predictions, setPredictions] = useState<KalshiPrediction[]>([]);
+  const [analytics, setAnalytics] = useState<PaperAnalytics | null>(null);
   const [loading, setLoading] = useState(true);
   const [grading, setGrading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -12,8 +13,12 @@ export function KalshiPredictionsPanel() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await kalshiApi.getPredictions();
+      const [data, paper] = await Promise.all([
+        kalshiApi.getPredictions(),
+        kalshiApi.getPaperAnalytics().catch(() => null),
+      ]);
       setPredictions(data);
+      setAnalytics(paper);
     } catch (e) {
       setMessage(e instanceof Error ? e.message : String(e));
     } finally {
@@ -50,6 +55,30 @@ export function KalshiPredictionsPanel() {
           {grading ? 'Grading…' : 'Grade pending'}
         </button>
       </div>
+      {analytics && (
+        <div className="paperSummary">
+          <div>
+            <span className="muted">Paper equity</span>
+            <strong>${analytics.equity.toFixed(2)}</strong>
+          </div>
+          <div>
+            <span className="muted">Cash</span>
+            <strong>${analytics.cash_balance.toFixed(2)}</strong>
+          </div>
+          <div>
+            <span className="muted">Open</span>
+            <strong>{analytics.open_positions}</strong>
+          </div>
+          <div>
+            <span className="muted">Return</span>
+            <strong>{analytics.total_return_pct.toFixed(1)}%</strong>
+          </div>
+          <div>
+            <span className="muted">Win rate</span>
+            <strong>{analytics.win_rate.toFixed(0)}%</strong>
+          </div>
+        </div>
+      )}
       {message && <p className="muted small">{message}</p>}
       {loading && <p className="muted">Loading predictions…</p>}
       <div className="predList">

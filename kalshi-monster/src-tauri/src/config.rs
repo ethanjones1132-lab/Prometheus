@@ -34,6 +34,9 @@ pub struct AppConfig {
     pub kalshi_password: String,
     #[serde(default = "default_kalshi_poll")]
     pub kalshi_poll_interval_secs: u64,
+    // Bankroll / staking configuration
+    #[serde(default = "default_max_bet_pct")]
+    pub max_bet_pct: f64,        // Max single bet as fraction of bankroll (e.g. 0.05 = 5%)
     // Discord / Telegram bot configuration
     #[serde(default)]
     pub discord_webhook_url: String,
@@ -76,6 +79,7 @@ impl Default for AppConfig {
             bot_game_alerts_enabled: true,
             bot_grading_results_enabled: true,
             bot_daily_picks_time: "08:00".to_string(),
+            max_bet_pct: default_max_bet_pct(),
         }
     }
 }
@@ -150,6 +154,10 @@ fn default_theme() -> String {
 
 fn default_kalshi_poll() -> u64 {
     60
+}
+
+fn default_max_bet_pct() -> f64 {
+    0.05
 }
 
 pub fn config_path() -> PathBuf {

@@ -14,7 +14,9 @@
 //! confidence-adjusted Kelly variants.
 //! ═══════════════════════════════════════════════════════════════
 
+use chrono::{Datelike, Duration, Utc};
 use serde::{Deserialize, Serialize};
+use sqlx::{Pool, Row, Sqlite};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
@@ -134,10 +136,21 @@ pub struct BankrollSummary {
     pub total_won: f64,
     pub total_lost: f64,
     pub profit_loss: f64,
+    pub net_profit: f64,
+    pub current_bankroll: f64,
+    pub bets_placed: f64,
+    pub win_rate: f64,
     pub bets_today: f64,
     pub bets_this_week: f64,
     pub remaining_daily: f64,
     pub remaining_weekly: f64,
+    pub daily_limit_used: f64,
+    pub weekly_limit_used: f64,
+    pub prediction_open_exposure: f64,
+    pub paper_open_exposure: f64,
+    pub paper_cash_balance: f64,
+    pub paper_realized_pnl: f64,
+    pub synced_at: String,
 }
 
 /// Parlay-specific bet sizing with correlation adjustment
@@ -466,11 +479,349 @@ pub fn get_bankroll_summary(config: &BankrollConfig) -> BankrollSummary {
         total_won: 0.0,
         total_lost: 0.0,
         profit_loss: (profit_loss * 100.0).round() / 100.0,
+        net_profit: (profit_loss * 100.0).round() / 100.0,
+        current_bankroll: config.total_bankroll,
+        bets_placed: 0.0,
+        win_rate: 0.0,
         bets_today: 0.0,
         bets_this_week: 0.0,
         remaining_daily: config.daily_bet_limit,
         remaining_weekly: config.weekly_bet_limit,
+        daily_limit_used: 0.0,
+        weekly_limit_used: 0.0,
+        prediction_open_exposure: 0.0,
+        paper_open_exposure: 0.0,
+        paper_cash_balance: 0.0,
+        paper_realized_pnl: 0.0,
+        synced_at: Utc::now().to_rfc3339(),
     }
+}
+
+#[derive(Debug, Clone)]
+struct BankrollSyncMetrics {
+    kalshi_bets: f64,
+    kalshi_total_wagered: f64,
+    kalshi_total_won: f64,
+    kalshi_total_lost: f64,
+    kalshi_profit_loss: f64,
+    kalshi_open_exposure: f64,
+    kalshi_daily_wagered: f64,
+    kalshi_weekly_wagered: f64,
+    kalshi_wins: f64,
+    kalshi_losses: f64,
+    paper_total_stake: f64,
+    paper_open_exposure: f64,
+    paper_daily_exposure: f64,
+    paper_weekly_exposure: f64,
+    paper_cash_balance: f64,
+    paper_realized_pnl: f64,
+    paper_bets: f64,
+}
+
+fn today_start_rfc3339() -> String {
+    let now = Utc::now();
+    now.date_naive()
+        .and_hms_opt(0, 0, 0)
+        .expect("valid midnight")
+        .and_utc()
+        .to_rfc3339()
+}
+
+fn monday_start_rfc3339() -> String {
+    let now = Utc::now();
+    let days_since_monday = now.weekday().num_days_from_monday() as i64;
+    let monday = now - Duration::days(days_since_monday);
+    monday
+        .date_naive()
+        .and_hms_opt(0, 0, 0)
+        .expect("valid midnight")
+        .and_utc()
+        .to_rfc3339()
+}
+
+async fn fetch_kalshi_bankroll_metrics(
+    pool: &Pool<Sqlite>,
+    today_start: &str,
+    week_start: &str,
+) -> Result<(f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64), String> {
+    let row = sqlx::query(
+        r#"
+        SELECT
+            COUNT(*) AS bet_count,
+            COALESCE(SUM(CASE WHEN COALESCE(line, 0.0) > 0.0 THEN COALESCE(line, 0.0) ELSE 0.0 END), 0.0) AS total_wagered,
+            COALESCE(SUM(CASE WHEN COALESCE(actual_result, 0.0) > 0.0 THEN actual_result ELSE 0.0 END), 0.0) AS total_won,
+            COALESCE(SUM(CASE WHEN COALESCE(actual_result, 0.0) < 0.0 THEN ABS(actual_result) ELSE 0.0 END), 0.0) AS total_lost,
+            COALESCE(SUM(actual_result), 0.0) AS profit_loss,
+            COALESCE(SUM(CASE WHEN outcome = 'Pending' AND COALESCE(line, 0.0) > 0.0 THEN COALESCE(line, 0.0) ELSE 0.0 END), 0.0) AS open_exposure,
+            COALESCE(SUM(CASE WHEN created_at >= ?1 AND COALESCE(line, 0.0) > 0.0 THEN COALESCE(line, 0.0) ELSE 0.0 END), 0.0) AS daily_wagered,
+            COALESCE(SUM(CASE WHEN created_at >= ?2 AND COALESCE(line, 0.0) > 0.0 THEN COALESCE(line, 0.0) ELSE 0.0 END), 0.0) AS weekly_wagered,
+            COALESCE(SUM(CASE WHEN outcome = 'Win' THEN 1 ELSE 0 END), 0.0) AS wins,
+            COALESCE(SUM(CASE WHEN outcome = 'Loss' THEN 1 ELSE 0 END), 0.0) AS losses,
+            COALESCE(SUM(CASE WHEN created_at >= ?1 THEN 1 ELSE 0 END), 0.0) AS daily_bets,
+            COALESCE(SUM(CASE WHEN created_at >= ?2 THEN 1 ELSE 0 END), 0.0) AS weekly_bets
+        FROM predictions
+        WHERE full_decision_json IS NOT NULL
+        "#,
+    )
+    .bind(today_start)
+    .bind(week_start)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| format!("Failed to fetch prediction bankroll metrics: {}", e))?;
+
+    Ok((
+        row.get::<i64, _>("bet_count") as f64,
+        row.get::<f64, _>("total_wagered"),
+        row.get::<f64, _>("total_won"),
+        row.get::<f64, _>("total_lost"),
+        row.get::<f64, _>("profit_loss"),
+        row.get::<f64, _>("open_exposure"),
+        row.get::<f64, _>("daily_wagered"),
+        row.get::<f64, _>("weekly_wagered"),
+        row.get::<i64, _>("wins") as f64,
+        row.get::<i64, _>("losses") as f64,
+        row.get::<i64, _>("daily_bets") as f64,
+        row.get::<i64, _>("weekly_bets") as f64,
+    ))
+}
+
+async fn fetch_paper_bankroll_metrics(
+    pool: &Pool<Sqlite>,
+    today_start: &str,
+    week_start: &str,
+) -> Result<(f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64), String> {
+    let total_stake: f64 = sqlx::query_scalar(
+        r#"
+        SELECT COALESCE(SUM(stake_dollars), 0.0)
+        FROM paper_lots
+        WHERE COALESCE(stake_dollars, 0.0) > 0.0
+        "#,
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(|e| format!("Failed to fetch paper total stake: {}", e))?;
+
+    let open_exposure: f64 = sqlx::query_scalar(
+        r#"
+        SELECT COALESCE(SUM(stake_dollars), 0.0)
+        FROM paper_lots
+        WHERE status = 'Open' AND COALESCE(stake_dollars, 0.0) > 0.0
+        "#,
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(|e| format!("Failed to fetch paper open exposure: {}", e))?;
+
+    let daily_exposure: f64 = sqlx::query_scalar(
+        r#"
+        SELECT COALESCE(SUM(stake_dollars), 0.0)
+        FROM paper_lots
+        WHERE opened_at >= ?1
+          AND COALESCE(stake_dollars, 0.0) > 0.0
+        "#,
+    )
+    .bind(today_start)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| format!("Failed to fetch paper daily wagered: {}", e))?;
+
+    let weekly_exposure: f64 = sqlx::query_scalar(
+        r#"
+        SELECT COALESCE(SUM(stake_dollars), 0.0)
+        FROM paper_lots
+        WHERE opened_at >= ?1
+          AND COALESCE(stake_dollars, 0.0) > 0.0
+        "#,
+    )
+    .bind(week_start)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| format!("Failed to fetch paper weekly wagered: {}", e))?;
+
+    let paper_cash_balance: f64 = sqlx::query_scalar(
+        "SELECT balance_dollars FROM paper_account WHERE id = 1",
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| format!("Failed to fetch paper cash balance: {}", e))?
+    .unwrap_or(0.0);
+
+    let paper_realized_pnl: f64 = sqlx::query_scalar(
+        r#"
+        SELECT COALESCE(SUM(realized_pnl), 0.0)
+        FROM paper_lots
+        WHERE status = 'Closed'
+        "#,
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(|e| format!("Failed to fetch paper realized PnL: {}", e))?;
+
+    let paper_bets: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM paper_lots WHERE COALESCE(stake_dollars, 0.0) > 0.0",
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(|e| format!("Failed to fetch paper bet count: {}", e))?;
+
+    let paper_daily_bets: i64 = sqlx::query_scalar(
+        r#"
+        SELECT COUNT(*)
+        FROM paper_lots
+        WHERE opened_at >= ?1
+          AND COALESCE(stake_dollars, 0.0) > 0.0
+        "#,
+    )
+    .bind(today_start)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| format!("Failed to fetch paper daily bets: {}", e))?;
+
+    let paper_weekly_bets: i64 = sqlx::query_scalar(
+        r#"
+        SELECT COUNT(*)
+        FROM paper_lots
+        WHERE opened_at >= ?1
+          AND COALESCE(stake_dollars, 0.0) > 0.0
+        "#,
+    )
+    .bind(week_start)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| format!("Failed to fetch paper weekly bets: {}", e))?;
+
+    let paper_wins: i64 = sqlx::query_scalar(
+        r#"
+        SELECT COALESCE(SUM(CASE WHEN realized_pnl > 0.0 THEN 1 ELSE 0 END), 0.0)
+        FROM paper_lots
+        WHERE status = 'Closed'
+        "#,
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(|e| format!("Failed to fetch paper wins: {}", e))?;
+
+    let paper_losses: i64 = sqlx::query_scalar(
+        r#"
+        SELECT COALESCE(SUM(CASE WHEN realized_pnl < 0.0 THEN 1 ELSE 0 END), 0.0)
+        FROM paper_lots
+        WHERE status = 'Closed'
+        "#,
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(|e| format!("Failed to fetch paper losses: {}", e))?;
+
+    Ok((
+        total_stake,
+        open_exposure,
+        daily_exposure,
+        weekly_exposure,
+        paper_cash_balance,
+        paper_realized_pnl,
+        paper_bets as f64,
+        paper_daily_bets as f64,
+        paper_weekly_bets as f64,
+        paper_wins as f64,
+        paper_losses as f64,
+    ))
+}
+
+/// Get bankroll status with live exposure synced from predictions.db and paper positions.
+pub async fn get_bankroll_summary_synced(
+    config: &BankrollConfig,
+    pool: &Pool<Sqlite>,
+) -> Result<BankrollSummary, String> {
+    let today_start = today_start_rfc3339();
+    let week_start = monday_start_rfc3339();
+    let (
+        kalshi_bets,
+        kalshi_total_wagered,
+        kalshi_total_won,
+        kalshi_total_lost,
+        kalshi_profit_loss,
+        prediction_open_exposure,
+        kalshi_daily_wagered,
+        kalshi_weekly_wagered,
+        kalshi_wins,
+        kalshi_losses,
+        kalshi_daily_bets,
+        kalshi_weekly_bets,
+    ) = fetch_kalshi_bankroll_metrics(pool, &today_start, &week_start).await?;
+
+    let (
+        paper_total_stake,
+        paper_open_exposure,
+        paper_daily_exposure,
+        paper_weekly_exposure,
+        paper_cash_balance,
+        paper_realized_pnl,
+        paper_bets,
+        paper_daily_bets,
+        paper_weekly_bets,
+        paper_wins,
+        paper_losses,
+    ) = fetch_paper_bankroll_metrics(pool, &today_start, &week_start).await?;
+
+    let total_wagered = kalshi_total_wagered + paper_total_stake;
+    let total_won = kalshi_total_won + paper_realized_pnl.max(0.0);
+    let total_lost = kalshi_total_lost + paper_realized_pnl.abs().min(paper_total_stake);
+    let profit_loss = kalshi_profit_loss + paper_realized_pnl;
+    let bets_placed = kalshi_bets + paper_bets;
+    let wins = kalshi_wins + paper_wins;
+    let losses = kalshi_losses + paper_losses;
+    let win_rate = if wins + losses > 0.0 {
+        wins / (wins + losses) * 100.0
+    } else {
+        0.0
+    };
+    let daily_limit_used = kalshi_daily_wagered + paper_daily_exposure;
+    let weekly_limit_used = kalshi_weekly_wagered + paper_weekly_exposure;
+    let remaining_daily = (config.daily_bet_limit - daily_limit_used).max(0.0);
+    let remaining_weekly = (config.weekly_bet_limit - weekly_limit_used).max(0.0);
+    let roi_pct = if config.initial_bankroll > 0.0 {
+        profit_loss / config.initial_bankroll * 100.0
+    } else {
+        0.0
+    };
+
+    Ok(BankrollSummary {
+        config: config.clone(),
+        roi_pct: (roi_pct * 100.0).round() / 100.0,
+        total_wagered,
+        total_won,
+        total_lost,
+        profit_loss,
+        net_profit: profit_loss,
+        current_bankroll: (config.total_bankroll + profit_loss).max(0.0),
+        bets_placed,
+        win_rate,
+        bets_today: kalshi_daily_bets + paper_daily_bets,
+        bets_this_week: kalshi_weekly_bets + paper_weekly_bets,
+        remaining_daily,
+        remaining_weekly,
+        daily_limit_used,
+        weekly_limit_used,
+        prediction_open_exposure,
+        paper_open_exposure,
+        paper_cash_balance,
+        paper_realized_pnl,
+        synced_at: Utc::now().to_rfc3339(),
+    })
+}
+
+/// Return the tighter of daily/weekly remaining cap and an explanatory warning when a proposed stake exceeds it.
+pub fn apply_bankroll_cap(stake: f64, summary: &BankrollSummary) -> (f64, Option<String>) {
+    let cap = summary.remaining_daily.min(summary.remaining_weekly);
+    if stake > cap {
+        let capped = cap.max(0.0);
+        let warning = format!(
+            "Bankroll cap: proposed ${:.2} exceeds remaining daily ${:.2} / weekly ${:.2}; capped at ${:.2}.",
+            stake, summary.remaining_daily, summary.remaining_weekly, capped
+        );
+        return (capped, Some(warning));
+    }
+    (stake, None)
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -633,5 +984,41 @@ mod tests {
             StakingStrategy::FlatBet
         );
         assert!("invalid".parse::<StakingStrategy>().is_err());
+    }
+
+    #[test]
+    fn test_apply_bankroll_cap() {
+        let mut summary = BankrollSummary {
+            config: BankrollConfig::default(),
+            roi_pct: 0.0,
+            total_wagered: 0.0,
+            total_won: 0.0,
+            total_lost: 0.0,
+            profit_loss: 0.0,
+            net_profit: 0.0,
+            current_bankroll: 1000.0,
+            bets_placed: 0.0,
+            win_rate: 0.0,
+            bets_today: 0.0,
+            bets_this_week: 0.0,
+            remaining_daily: 75.0,
+            remaining_weekly: 200.0,
+            daily_limit_used: 125.0,
+            weekly_limit_used: 300.0,
+            prediction_open_exposure: 0.0,
+            paper_open_exposure: 0.0,
+            paper_cash_balance: 0.0,
+            paper_realized_pnl: 0.0,
+            synced_at: String::new(),
+        };
+
+        let (capped, warning) = apply_bankroll_cap(100.0, &summary);
+        assert!((capped - 75.0).abs() < 0.001);
+        assert!(warning.unwrap().contains("Bankroll cap"));
+
+        summary.remaining_daily = 150.0;
+        let (capped, warning) = apply_bankroll_cap(100.0, &summary);
+        assert!((capped - 100.0).abs() < 0.001);
+        assert!(warning.is_none());
     }
 }

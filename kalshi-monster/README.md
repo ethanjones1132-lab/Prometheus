@@ -51,12 +51,12 @@ accumulates resolved Win/Loss rows, the same engine scores them via
 `eval_adapter` — and unlike PrizePicks, Kalshi's public API makes a full year
 of resolved-market history retrievable for benchmarking.
 
-Re-run:
+Re-run (in-app, via `eval_adapter`):
 ```bash
-cd eval-cli && cargo run --release -- --data-dir ../eval-data --out-dir ../reports
+cd src-tauri && cargo test eval_adapter::
 ```
-Proof of the run: `reports/backtest-report.md` / `.json`,
-`reports/market-calibrator.json`. Full record: `../edge-eval/RUN-NOTES.md`.
+Offline benchmark artifacts live in `reports/` (`backtest-report.md`, `market-calibrator.json`).
+The standalone `eval-cli` crate is not in this repo; calibration runs through the shared `edge-eval` library dependency.
 
 ## Architecture
 
@@ -77,7 +77,7 @@ kalshi-monster/
 │   │   ├── components/
 │   │   │   ├── KalshiView.tsx       # Live Kalshi market dashboard
 │   │   │   ├── ChatView.tsx         # AI chat interface
-│   │   │   ├── PredictionsView.tsx  # Performance dashboard
+│   │   │   ├── KalshiPredictionsPanel.tsx  # Paper trade log + analytics
 │   │   │   └── ...
 │   │   └── ...
 │   └── package.json

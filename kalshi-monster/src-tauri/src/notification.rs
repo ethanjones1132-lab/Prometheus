@@ -117,6 +117,39 @@ impl Default for NotificationSettings {
     }
 }
 
+const NOTIFICATION_SETTINGS_FILE: &str = "notification_settings.json";
+
+/// Path to the persisted notification settings file (alongside `config.json`).
+pub fn settings_path() -> std::path::PathBuf {
+    crate::config::config_dir().join(NOTIFICATION_SETTINGS_FILE)
+}
+
+/// Load notification settings from disk, falling back to defaults if the file
+/// is missing or unreadable.
+pub fn load_settings() -> NotificationSettings {
+    let path = settings_path();
+    if let Ok(content) = std::fs::read_to_string(&path) {
+        if let Ok(settings) = serde_json::from_str::<NotificationSettings>(&content) {
+            return settings;
+        }
+    }
+    NotificationSettings::default()
+}
+
+/// Persist notification settings to disk as pretty-printed JSON.
+pub fn save_settings(settings: &NotificationSettings) -> Result<(), String> {
+    let path = settings_path();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create config dir: {}", e))?;
+    }
+    let json = serde_json::to_string_pretty(settings)
+        .map_err(|e| format!("Failed to serialize notification settings: {}", e))?;
+    std::fs::write(&path, json)
+        .map_err(|e| format!("Failed to write notification settings: {}", e))?;
+    Ok(())
+}
+
 /// Tracked game state for detecting transitions
 #[derive(Debug, Clone, PartialEq)]
 pub enum GameStatus {

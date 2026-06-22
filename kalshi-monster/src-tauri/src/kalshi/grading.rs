@@ -188,6 +188,14 @@ pub async fn grade_pending_predictions(
             tracker
                 .update_kalshi_outcome(&pred.id, &actual, eval.pnl)
                 .await?;
+
+            // CLV tracking: record the close price (last market price before resolution)
+            // For binary markets: Yes win = close at 1.0, No win = close at 0.0
+            let close_price = if actual == "Yes" { 1.0 } else { 0.0 };
+            if let Err(e) = tracker.update_prediction_clv(&pred.id, close_price).await {
+                tracing::warn!("kalshi CLV update failed for {}: {}", pred.id, e);
+            }
+
             results.push(KalshiGradingResult {
                 prediction_id: pred.id.clone(),
                 ticker: pred.ticker.clone(),

@@ -67,6 +67,9 @@ export interface StakeAdjustment {
   adjusted_recommended_stake: number;
   conflicts: CorrelationConflict[];
   warnings: string[];
+  remaining_daily?: number;
+  remaining_weekly?: number;
+  bankroll_cap?: number;
 }
 
 export interface KalshiPriceSnapshot {
@@ -131,6 +134,24 @@ export function parseKalshiBetSide(
   if (pick === 'over') return 'YES';
   if (pick === 'under') return 'NO';
   return 'UNKNOWN';
+}
+
+export interface PaperAnalytics {
+  starting_balance: number;
+  cash_balance: number;
+  open_market_value: number;
+  equity: number;
+  realized_pnl: number;
+  unrealized_pnl: number;
+  total_return_pct: number;
+  total_trades: number;
+  open_positions: number;
+  win_rate: number;
+  wins: number;
+  losses: number;
+  profit_factor: number;
+  max_drawdown_pct: number;
+  fetched_at: string;
 }
 
 export function kalshiBetWon(pred: KalshiPrediction): boolean | null {

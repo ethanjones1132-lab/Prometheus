@@ -72,13 +72,23 @@ pub async fn init_db() -> Result<Pool<Sqlite>, String> {
             outcome TEXT NOT NULL DEFAULT 'Pending',
             actual_result REAL,
             notes TEXT,
-            resolved_at TEXT
+            resolved_at TEXT,
+            entry_price REAL DEFAULT 0,
+            close_price REAL DEFAULT 0,
+            clv REAL DEFAULT 0,
+            model_disagreement INTEGER DEFAULT 0
         )
         "#,
     )
     .execute(&pool)
     .await
     .map_err(|e| format!("Failed to create predictions table: {}", e))?;
+
+    // Migration: add columns if they don't exist (for existing databases)
+    let _ = sqlx::query("ALTER TABLE predictions ADD COLUMN entry_price REAL DEFAULT 0").execute(&pool).await;
+    let _ = sqlx::query("ALTER TABLE predictions ADD COLUMN close_price REAL DEFAULT 0").execute(&pool).await;
+    let _ = sqlx::query("ALTER TABLE predictions ADD COLUMN clv REAL DEFAULT 0").execute(&pool).await;
+    let _ = sqlx::query("ALTER TABLE predictions ADD COLUMN model_disagreement INTEGER DEFAULT 0").execute(&pool).await;
 
     sqlx::query(
         r#"
@@ -170,8 +180,8 @@ pub async fn insert_prediction(
             (id, session_id, raw_text, player_name, pick_type, line,
              stat_category, confidence, confidence_score, probability,
              reasoning, risk, created_at, outcome, actual_result, notes, resolved_at,
-             full_decision_json)
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
+             full_decision_json, entry_price, model_disagreement)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)
         "#,
     )
     .bind(&p.id)
@@ -192,6 +202,8 @@ pub async fn insert_prediction(
     .bind(&record.notes)
     .bind(&record.resolved_at)
     .bind(&p.full_decision_json)
+    .bind(p.entry_price)
+    .bind(p.model_disagreement as i64)
     .execute(pool)
     .await
     .map_err(|e| format!("Failed to insert prediction: {}", e))?;
@@ -235,6 +247,104 @@ pub async fn update_prediction_outcome(
     }
 }
 
+/// Update CLV (Closing Line Value) for a prediction.
+/// CLV = close_price - entry_price (in cents).
+/// Positive CLV means the market moved in your favor after entry.
+pub async fn update_prediction_clv(
+    pool: &Pool<Sqlite>,
+    prediction_id: &str,
+    close_price: f64,
+) -> Result<(), String> {
+    // First get the entry_price
+    let row = sqlx::query("SELECT entry_price FROM predictions WHERE id = ?1")
+        .bind(prediction_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| format!("Failed to fetch entry_price: {}", e))?;
+
+    let entry_price: f64 = match row {
+        Some(r) => r.get::<f64, _>("entry_price"),
+        None => return Err(format!("Prediction {} not found", prediction_id)),
+    };
+
+    let clv = close_price - entry_price;
+
+    let rows = sqlx::query(
+        r#"
+        UPDATE predictions
+        SET close_price = ?1, clv = ?2
+        WHERE id = ?3
+        "#,
+    )
+    .bind(close_price)
+    .bind(clv)
+    .bind(prediction_id)
+    .execute(pool)
+    .await
+    .map_err(|e| format!("Failed to update CLV: {}", e))?
+    .rows_affected();
+
+    if rows == 0 {
+        Err(format!("Prediction {} not found", prediction_id))
+    } else {
+        Ok(())
+    }
+}
+
+/// Set the entry price for a prediction (called when a trade decision is recorded).
+pub async fn set_prediction_entry_price(
+    pool: &Pool<Sqlite>,
+    prediction_id: &str,
+    entry_price: f64,
+) -> Result<(), String> {
+    let rows = sqlx::query(
+        r#"
+        UPDATE predictions
+        SET entry_price = ?1
+        WHERE id = ?2
+        "#,
+    )
+    .bind(entry_price)
+    .bind(prediction_id)
+    .execute(pool)
+    .await
+    .map_err(|e| format!("Failed to set entry_price: {}", e))?
+    .rows_affected();
+
+    if rows == 0 {
+        Err(format!("Prediction {} not found", prediction_id))
+    } else {
+        Ok(())
+    }
+}
+
+/// Set model disagreement flag for a prediction.
+pub async fn set_model_disagreement(
+    pool: &Pool<Sqlite>,
+    prediction_id: &str,
+    disagreement: bool,
+) -> Result<(), String> {
+    let rows = sqlx::query(
+        r#"
+        UPDATE predictions
+        SET model_disagreement = ?1
+        WHERE id = ?2
+        "#,
+    )
+    .bind(if disagreement { 1 } else { 0 })
+    .bind(prediction_id)
+    .execute(pool)
+    .await
+    .map_err(|e| format!("Failed to set model_disagreement: {}", e))?
+    .rows_affected();
+
+    if rows == 0 {
+        Err(format!("Prediction {} not found", prediction_id))
+    } else {
+        Ok(())
+    }
+}
+
 /// Get all predictions for a session, ordered by created_at desc.
 pub async fn get_session_predictions(
     pool: &Pool<Sqlite>,
@@ -266,7 +376,7 @@ pub async fn get_all_predictions(pool: &Pool<Sqlite>) -> Result<Vec<PredictionRe
         SELECT id, session_id, raw_text, player_name, pick_type, line,
                stat_category, confidence, confidence_score, probability,
                reasoning, risk, created_at, outcome, actual_result, notes, resolved_at,
-               full_decision_json
+               full_decision_json, entry_price, model_disagreement
         FROM predictions
         ORDER BY created_at DESC
         "#,
@@ -289,7 +399,7 @@ pub async fn get_predictions_by_confidence(
         SELECT id, session_id, raw_text, player_name, pick_type, line,
                stat_category, confidence, confidence_score, probability,
                reasoning, risk, created_at, outcome, actual_result, notes, resolved_at,
-               full_decision_json
+               full_decision_json, entry_price, model_disagreement
         FROM predictions
         WHERE confidence_score >= ?1 AND confidence_score <= ?2
         ORDER BY created_at DESC
@@ -484,6 +594,8 @@ fn row_to_record(r: &sqlx::sqlite::SqliteRow) -> PredictionRecord {
             risk: r.get("risk"),
             created_at: r.get("created_at"),
             full_decision_json: r.try_get("full_decision_json").ok().flatten(),
+            entry_price: r.try_get("entry_price").ok().flatten(),
+            model_disagreement: r.try_get::<i64, _>("model_disagreement").ok().unwrap_or(0) != 0,
         },
         outcome,
         actual_result: r.get("actual_result"),

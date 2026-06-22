@@ -53,6 +53,8 @@ pub struct KalshiTradeDecision {
     pub data_quality: DataQuality,
     /// Price at which to enter the position
     pub price_to_enter: f64,
+    /// Whether the model's fair probability diverges significantly from market implied prob
+    pub model_disagreement: bool,
 }
 
 /// Side of the binary contract
@@ -111,6 +113,10 @@ pub enum RiskFlag {
     StaleData,
     /// Position would exceed maximum portfolio allocation
     ConcentrationRisk,
+    /// Position would exceed configured daily/weekly bankroll cap
+    BankrollLimitExceeded,
+    /// Model's fair probability diverges significantly from market implied probability
+    ModelDisagreement,
     /// Other unspecified risk
     Other(String),
 }
@@ -157,6 +163,7 @@ impl KalshiTradeDecision {
             risk_flags: Vec::new(),
             data_quality: DataQuality::Inferential,
             price_to_enter: 0.0,
+            model_disagreement: false,
         }
     }
 
@@ -230,6 +237,14 @@ impl KalshiTradeDecision {
 
         // Max position: cap at 5% of bankroll or liquidity limit
         self.max_position_dollars = (bankroll_dollars * 0.05).min(self.recommended_stake_dollars);
+
+        // Model disagreement detection: flag when fair prob diverges significantly from market
+        let market_implied_pct = self.market_price_pct;
+        let divergence = (self.fair_probability_pct - market_implied_pct).abs();
+        self.model_disagreement = divergence >= 15.0;
+        if self.model_disagreement {
+            self.risk_flags.push(RiskFlag::ModelDisagreement);
+        }
     }
 
     /// Compute with isotonic calibration and portfolio correlation Kelly scaling.
@@ -313,7 +328,7 @@ RULES:
 - "contract_side" must be "YES", "NO", or "PASS".
 - "confidence_tier" must be "High", "Medium", "Low", or "None".
 - "data_quality" must be "Live", "Fresh", "Stale", "Inferential", or "Speculative".
-- "risk_flags" can include: SpreadExceedsEdge, InsufficientLiquidity, CorrelatedExposure, ProvisionalSettlement, EarlyCloseRisk, ExtremeProbability, AmbiguousResolution, StaleData, ConcentrationRisk.
+- "risk_flags" can include: SpreadExceedsEdge, InsufficientLiquidity, CorrelatedExposure, ProvisionalSettlement, EarlyCloseRisk, ExtremeProbability, AmbiguousResolution, StaleData, ConcentrationRisk, ModelDisagreement.
 - JSON must be valid. No trailing commas. Place it FIRST in the response.
 
 After the JSON, provide a concise readable summary:

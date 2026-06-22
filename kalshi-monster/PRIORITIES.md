@@ -1,9 +1,9 @@
 # Kalshi Monster — Priority Roadmap
 
-Last updated: 2026-06-17 (Phase 1 perf shipped)
+Last updated: 2026-06-22 (Tier 0+1: notification persistence, native correlation graph, count reconciliation)
 Working copy: `C:\Users\ethan\kalshi-build\kalshi-monster`
 
-Quick status: **P0 done · P1 mostly done (1 partial) · P2/P3 not started**
+Quick status: **P0 done · P1 done · P2 done · P3 2 pending**
 
 ---
 
@@ -16,11 +16,11 @@ Quick status: **P0 done · P1 mostly done (1 partial) · P2/P3 not started**
 | **P1** | Correlated position auto-scaling | Warnings exist (event/series co-exposure) but Kelly stakes were not scaled down | ✅ Done |
 | **P1** | Wire `edge_eval` calibrator into Kalshi decision path | Isotonic calibrator applied to `analyze_single_prop` (sports props), not LLM `KalshiTradeDecision` forecasts | ✅ Done |
 | **P1** | Kalshi historical price/spread snapshots | `line_tracker.rs` is PrizePicks-only; no candlestick API in `kalshi/client.rs` — blocks CLV tracking and momentum signals | ✅ Done |
-| **P1** | Kalshi-native correlation engine | `correlation.rs` is NFL prop families; portfolio checks are ticker-prefix heuristics, not macro/political/event-graph correlation | ⚠️ Partial |
-| **P2** | Persist `localMaxBetPct` to config | UI-only state; resets when modal closes (unlike `minQuality`, which is in `localStorage`) | ⬜ Not started |
-| **P2** | Sync bankroll limits from `predictions.db` + paper positions | Makes daily/weekly cap warnings and `BankrollView` accurate | ⬜ Not started |
-| **P2** | Model disagreement flags at entry | Flag when `fair_probability_pct` diverges sharply from market implied prob at decision time | ⬜ Not started |
-| **P2** | CLV per prediction | `eval-cli` scores closing-line value on benchmark data; live predictions don't store entry vs close | ⬜ Not started |
+| **P1** | Kalshi-native correlation engine | `correlation.rs` is NFL prop families; portfolio checks were ticker-prefix heuristics. Now a native correlation cluster graph links distinct series by shared macro/political driver | ✅ Done |
+|| **P2** | Persist `localMaxBetPct` to config | Now a persisted `max_bet_pct` config field, read/written by SettingsView + MarketDetailPanel | ✅ Done |
+|| **P2** | Sync bankroll limits from `predictions.db` + paper positions | Makes daily/weekly cap warnings and `BankrollView` accurate | ✅ Done |
+|| **P2** | Model disagreement flags at entry | Flag when `fair_probability_pct` diverges sharply from market implied prob at decision time | ✅ Done |
+|| **P2** | CLV per prediction | Grading records close price and CLV on paper predictions | ✅ Done |
 | **P3** | Volatility-adjusted Kelly from historical Brier | Shrinkage slider is manual; handoffs call for Brier-driven auto-shrinkage | ⬜ Not started |
 | **P3** | Multi-category ML classifiers (politics/econ/weather) | Current ML is scikit-learn on sports prop features via Python subprocess; README still lists ML training as unchecked | ⬜ Not started |
 
@@ -31,11 +31,11 @@ Quick status: **P0 done · P1 mostly done (1 partial) · P2/P3 not started**
 | Tier | Done | Remaining |
 |------|------|-----------|
 | P0 | 2 | **0** |
-| P1 | 3 (+1 partial) | **0–1** |
-| P2 | 0 | **4** |
+| P1 | 4 | **0** |
+| P2 | 4 | **0** |
 | P3 | 0 | **2** |
 
-**6–7 items left** (6 if heuristic correlation counts as P1-complete).
+**2 items left** (both P3). Plus the off-roadmap notification-settings persistence fix (now shipped).
 
 ---
 
@@ -48,23 +48,36 @@ Quick status: **P0 done · P1 mostly done (1 partial) · P2/P3 not started**
 
 ---
 
+## P2 implementation notes (shipped)
+
+- `src-tauri/src/bankroll.rs` — async `get_bankroll_summary_synced`, `apply_bankroll_cap`, prediction/paper exposure aggregation
+- `src-tauri/src/commands/mod.rs` — bankroll-aware stake adjustment and paper decision capping
+- UI: `src-ui/src/components/SettingsView.tsx`, `src-ui/src/components/KalshiPredictionsPanel.tsx`
+- `src-tauri/src/config.rs` — `max_bet_pct` persisted config field (resolves the `localMaxBetPct` item); `MarketDetailPanel.tsx` writes it via config save
+
+**P2 remaining:** none.
+
+---
+
 ## P1 implementation notes (shipped)
 
-- `src-tauri/src/kalshi/portfolio_risk.rs` — Kelly scaling (event 0.50, series 0.75, category 0.90, same-ticker 0.85)
+- `src-tauri/src/kalshi/portfolio_risk.rs` — Kelly scaling (event 0.50, series 0.75, **cluster 0.82**, category 0.90, same-ticker 0.85)
 - `src-tauri/src/analysis/calibration.rs` — isotonic calibrator wired into Kalshi paper trades
 - `src-tauri/src/kalshi/price_tracker.rs` — snapshots on `kalshi_refresh`, `kalshi_get_price_history`
 - UI: `src-ui/src/components/KalshiView.tsx`, `MarketDetailPanel.tsx`, `KalshiPredictionsPanel.tsx`, `PriceHistoryChart.tsx`
 
-**P1 gap:** ticker-prefix heuristics only — no macro/political/event-graph correlation yet.
+**P1 native correlation graph (shipped 2026-06-22):** `CorrelationStrength::Cluster` + `CORRELATION_CLUSTERS` map in `portfolio_risk.rs` links distinct series sharing a macro/political driver (`us-rates-inflation`: CPI/PCE/Fed/payrolls/GDP; `us-federal-politics`: president/senate/house/party-control). Conflict explanations name the driver. The cluster map is the extension point for future event-graph edges.
 
 ---
 
-## Suggested next target: P2
+## Suggested next target: P3
 
-Highest leverage for paper-sim trustworthiness:
+P0–P2 are complete. Remaining work is both P3:
 
-1. Sync bankroll limits from `predictions.db` + paper positions
-2. CLV per prediction (entry vs close)
+1. Volatility-adjusted Kelly from historical Brier (auto-shrinkage) — blocked on graded LLM forecast history accumulating in `predictions.db`
+2. Multi-category ML classifiers (politics/econ/weather)
+
+Off-roadmap fix shipped 2026-06-22: notification settings now persist to `~/.openclaw/kalshi-monster/notification_settings.json` (`notification::load_settings`/`save_settings`); previously `save_notification_settings` only logged and `get_notification_settings` always returned defaults.
 
 ---
 

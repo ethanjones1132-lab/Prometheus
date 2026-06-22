@@ -814,6 +814,27 @@ button {
   letter-spacing: -0.03em;
 }
 
+.paperSummary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px 24px;
+  margin-bottom: 14px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.paperSummary > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.paperSummary strong {
+  font-size: 1.05rem;
+}
+
 .predList {
   display: grid;
   gap: 12px;
@@ -867,6 +888,123 @@ button {
   color: #a9a9a0;
 }
 
+.settingsPage .settingsGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.settingsPage .settingsWide {
+  grid-column: 1 / -1;
+}
+
+.settingsPage h3 {
+  margin: 0 0 14px;
+  font-size: 16px;
+}
+
+.settingsActions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.metricGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.metricCard {
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(0, 0, 0, 0.24);
+}
+
+.metricCard span,
+.metricCard small {
+  display: block;
+  color: #a9a9a0;
+  font-size: 12px;
+}
+
+.metricCard strong {
+  display: block;
+  margin: 6px 0 4px;
+  font-size: 18px;
+}
+
+.metricCard small {
+  line-height: 1.35;
+}
+
+.statusPill {
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.statusPill.ok {
+  color: #8ef0a8;
+}
+
+.statusPill.bad {
+  color: #ff8f8f;
+}
+
+.banner {
+  padding: 12px 16px;
+  border-radius: 12px;
+  margin-bottom: 16px;
+  font-size: 14px;
+}
+
+.banner.success {
+  background: rgba(142, 240, 168, 0.1);
+  border: 1px solid rgba(142, 240, 168, 0.25);
+  color: #8ef0a8;
+}
+
+.banner.error {
+  background: rgba(255, 143, 143, 0.1);
+  border: 1px solid rgba(255, 143, 143, 0.25);
+  color: #ff8f8f;
+}
+
+.promptArea {
+  width: 100%;
+  margin-top: 10px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(0, 0, 0, 0.35);
+  color: #f5f5f0;
+  resize: vertical;
+  min-height: 180px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.toggleRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-top: 14px;
+}
+
+.toggleLabel {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: #d4d4cc;
+}
+
 @media (max-width: 980px) {
   .appShell {
     flex-direction: column;
@@ -915,5 +1053,13 @@ button {
 
   .marketGrid {
     grid-template-columns: 1fr;
+  }
+
+  .settingsPage .settingsGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .metricGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }

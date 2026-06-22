@@ -5,6 +5,7 @@ import type {
   KalshiPrediction,
   KalshiPriceHistory,
   KalshiTradeDecision,
+  PaperAnalytics,
   StakeAdjustment,
 } from '../types/kalshi';
 
@@ -58,4 +59,11 @@ export const kalshiApi = {
 
   recordPaperDecision: (sessionId: string, decision: KalshiTradeDecision) =>
     invoke<string>('kalshi_record_paper_decision', { sessionId, decision }),
+
+  getPaperAnalytics: () => invoke<PaperAnalytics>('paper_get_analytics'),
+
+  settlePaperPositions: () =>
+    invoke<{ settled: number; wins: number; losses: number; total_pnl: number }>(
+      'paper_settle_pending',
+    ),
 };
