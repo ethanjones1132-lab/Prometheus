@@ -511,6 +511,32 @@ button {
   margin-bottom: 20px;
 }
 
+.dashboardStatus {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 0 0 16px;
+}
+
+.dashboardStatus span {
+  padding: 7px 10px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #d4d4cc;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.dashboardStatus .diagnosticNote {
+  color: #b9d7ff;
+  background: rgba(88, 166, 255, 0.14);
+}
+
+.ghostBtn.danger {
+  color: #f1a0a0;
+  border-color: rgba(248, 81, 73, 0.3);
+}
+
 .chip {
   padding: 7px 12px;
   border-radius: 999px;
@@ -662,6 +688,42 @@ button {
   color: #c9a84c;
 }
 
+.mechanicsGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.mechanicsGrid div {
+  padding: 12px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.mechanicsGrid span {
+  display: block;
+  color: #8f8f86;
+  font-size: 12px;
+  margin-bottom: 5px;
+}
+
+.mechanicsGrid strong {
+  font-size: 13px;
+}
+
+.riskFlagRow,
+.decisionActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.decisionActions .primaryBtn,
+.decisionActions .ghostBtn {
+  flex: 1 1 120px;
+}
+
 .tradeTicket .ticketRow {
   display: grid;
   grid-template-columns: 120px 1fr;
@@ -717,6 +779,35 @@ button {
   border-radius: 14px;
   background: rgba(201, 168, 76, 0.08);
   border: 1px solid rgba(201, 168, 76, 0.22);
+}
+
+.calibrationBox {
+  margin: 14px 0;
+  padding: 14px;
+  border-radius: 14px;
+  background: rgba(88, 166, 255, 0.08);
+  border: 1px solid rgba(88, 166, 255, 0.2);
+}
+
+.calibrationBox h5 {
+  margin: 0 0 2px;
+  font-size: 0.9rem;
+}
+
+.calibrationGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.calibrationGrid span {
+  padding: 7px 9px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.18);
+  color: #deded7;
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .adjustmentHead {
@@ -833,6 +924,68 @@ button {
 
 .paperSummary strong {
   font-size: 1.05rem;
+}
+
+.paperPortfolio {
+  margin-bottom: 14px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.paperPortfolioHeader {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.paperPortfolioHeader h5 {
+  margin: 0;
+  font-size: 0.92rem;
+}
+
+.positionsTable {
+  display: grid;
+  gap: 8px;
+}
+
+.positionsTableHeader,
+.positionRow {
+  display: grid;
+  grid-template-columns: minmax(180px, 1.5fr) repeat(5, minmax(78px, 1fr));
+  gap: 10px;
+  align-items: center;
+}
+
+.positionsTableHeader {
+  color: #8f8f86;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.positionRow {
+  padding: 10px 0 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+  color: #e7e7df;
+  font-size: 12px;
+}
+
+.positionRow > div {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.positionRow code,
+.positionRow .small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .predList {

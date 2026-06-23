@@ -27,6 +27,19 @@ export interface KalshiCategoryStat {
   volume_24h: number;
 }
 
+export interface KalshiDashboardBootstrap {
+  markets: KalshiMarketSummary[];
+  categories: KalshiCategoryStat[];
+  cache_status: 'cold' | 'partial' | 'full' | string;
+  cache_age_secs?: number | null;
+  partial_catalog: boolean;
+  last_refresh_at?: string | null;
+  market_count: number;
+  category_count: number;
+  dashboard_generated_at: string;
+  data_quality_notes: string[];
+}
+
 export interface KalshiPrediction {
   id: string;
   ticker: string;
@@ -70,6 +83,18 @@ export interface StakeAdjustment {
   remaining_daily?: number;
   remaining_weekly?: number;
   bankroll_cap?: number;
+}
+
+export interface CalibrationStatus {
+  raw_pct: number;
+  calibrated_pct: number;
+  adjustment_pct: number;
+  applied: boolean;
+  artifact_kind: string;
+  n_fit: number;
+  source: string;
+  volatility_haircut_pct: number;
+  category_sample_status: string;
 }
 
 export interface KalshiPriceSnapshot {
@@ -152,6 +177,44 @@ export interface PaperAnalytics {
   profit_factor: number;
   max_drawdown_pct: number;
   fetched_at: string;
+}
+
+export interface PaperPosition {
+  ticker: string;
+  title: string;
+  category: string;
+  side: string;
+  total_qty: number;
+  avg_entry_price_cents: number;
+  cost_basis_dollars: number;
+  mark_price_cents?: number | null;
+  market_value_dollars?: number | null;
+  unrealized_pnl_dollars?: number | null;
+  lots_count: number;
+}
+
+export interface PaperSettlementSummary {
+  settled: number;
+  wins: number;
+  losses: number;
+  total_pnl: number;
+  details?: Array<{
+    lot_id: string;
+    ticker: string;
+    side: string;
+    result: string;
+    realized_pnl: number;
+  }>;
+  fetched_at?: string;
+}
+
+export interface PaperAccount {
+  id: number;
+  balance_dollars: number;
+  total_deposits: number;
+  total_withdrawals: number;
+  created_at: string;
+  updated_at: string;
 }
 
 export function kalshiBetWon(pred: KalshiPrediction): boolean | null {

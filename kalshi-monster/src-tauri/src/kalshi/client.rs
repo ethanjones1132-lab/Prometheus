@@ -76,6 +76,17 @@ impl KalshiClient {
             .as_secs()
     }
 
+    pub fn cache_metadata(&self) -> (String, Option<u64>, bool, Option<u64>) {
+        match &self.cache {
+            None => ("cold".to_string(), None, true, None),
+            Some(cache) => {
+                let age = Self::now_secs().saturating_sub(cache.fetched_at);
+                let status = if cache.full_catalog { "full" } else { "partial" };
+                (status.to_string(), Some(age), !cache.full_catalog, Some(cache.fetched_at))
+            }
+        }
+    }
+
     pub fn is_cache_stale(&self) -> bool {
         match &self.cache {
             None => true,

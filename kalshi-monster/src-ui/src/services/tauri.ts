@@ -13,6 +13,7 @@ import type {
   OpenRouterResponse,
   PredictionRecord,
   PropAnalysisResult,
+  SecurityPosture,
   ScoredProp,
 } from '../types';
 
@@ -24,6 +25,8 @@ export const configApi = {
   save: (config: AppConfig) => invoke<void>('save_config', { config }),
 
   checkApiStatus: () => invoke<ApiStatus>('check_api_status'),
+
+  getSecurityPosture: () => invoke<SecurityPosture>('get_security_posture'),
 
   getAvailableModels: () => invoke<ModelInfo[]>('get_available_models'),
 };

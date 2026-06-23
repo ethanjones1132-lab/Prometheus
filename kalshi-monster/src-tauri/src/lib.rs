@@ -167,6 +167,7 @@ pub fn run() {
             commands::get_config,
             commands::save_config,
             commands::check_api_status,
+            commands::get_security_posture,
             commands::get_available_models,
             // Chat
             commands::send_message,
@@ -241,6 +242,7 @@ pub fn run() {
             commands::kalshi_get_orderbook,
             commands::kalshi_search_markets,
             commands::kalshi_get_top_markets,
+            commands::kalshi_get_dashboard_bootstrap,
             commands::kalshi_get_category_stats,
             commands::kalshi_get_portfolio,
             commands::kalshi_refresh,
@@ -250,6 +252,7 @@ pub fn run() {
             commands::kalshi_get_grading_summary,
             commands::export_kalshi_predictions_csv,
             commands::kalshi_compute_stake_adjustment,
+            commands::kalshi_get_calibration_status,
             commands::kalshi_snapshot_prices,
             commands::kalshi_get_price_history,
             commands::kalshi_record_paper_decision,

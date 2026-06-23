@@ -196,6 +196,15 @@ export interface ApiStatus {
   error?: string;
 }
 
+export interface SecurityPosture {
+  csp_enforced: boolean;
+  secrets_redacted: boolean;
+  config_file_contains_secrets: boolean;
+  secret_store: string;
+  redacted_fields: string[];
+  warnings: string[];
+}
+
 export interface BankrollConfig {
   total_bankroll: number;
   initial_bankroll: number;

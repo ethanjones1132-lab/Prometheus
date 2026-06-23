@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { bankrollApi, configApi } from '../services/tauri';
-import type { ApiStatus, AppConfig, BankrollConfig, BankrollSummary, ModelInfo } from '../types';
+import type { ApiStatus, AppConfig, BankrollConfig, BankrollSummary, ModelInfo, SecurityPosture } from '../types';
 
 const EMPTY_CONFIG: AppConfig = {
   openrouter_api_key: '',
@@ -39,10 +39,13 @@ export function SettingsView() {
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [apiKeyInput, setApiKeyInput] = useState('');
   const [kalshiPasswordInput, setKalshiPasswordInput] = useState('');
+  const [weatherKeyInput, setWeatherKeyInput] = useState('');
+  const [sportsKeyInput, setSportsKeyInput] = useState('');
   const [discordInput, setDiscordInput] = useState('');
   const [telegramTokenInput, setTelegramTokenInput] = useState('');
   const [leaguesInput, setLeaguesInput] = useState('NFL');
   const [apiStatus, setApiStatus] = useState<ApiStatus | null>(null);
+  const [securityPosture, setSecurityPosture] = useState<SecurityPosture | null>(null);
   const [bankrollSummary, setBankrollSummary] = useState<BankrollSummary | null>(null);
   const [bankrollError, setBankrollError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -56,15 +59,19 @@ export function SettingsView() {
     setLoading(true);
     setError(null);
     try {
-      const [cfg, modelList] = await Promise.all([
+      const [cfg, modelList, posture] = await Promise.all([
         configApi.get(),
         configApi.getAvailableModels(),
+        configApi.getSecurityPosture().catch(() => null),
       ]);
       setConfig(cfg);
       setModels(modelList);
+      setSecurityPosture(posture);
       setLeaguesInput(cfg.preferred_leagues.join(', '));
       setApiKeyInput('');
       setKalshiPasswordInput('');
+      setWeatherKeyInput('');
+      setSportsKeyInput('');
       setDiscordInput('');
       setTelegramTokenInput('');
     } catch (e) {
@@ -105,6 +112,8 @@ export function SettingsView() {
         ...config,
         openrouter_api_key: apiKeyInput.trim() || config.openrouter_api_key,
         kalshi_password: kalshiPasswordInput.trim() || config.kalshi_password,
+        openweathermap_api_key: weatherKeyInput.trim() || config.openweathermap_api_key,
+        api_sports_key: sportsKeyInput.trim() || config.api_sports_key,
         discord_webhook_url: discordInput.trim() || config.discord_webhook_url,
         telegram_bot_token: telegramTokenInput.trim() || config.telegram_bot_token,
         preferred_leagues: leaguesInput
@@ -116,6 +125,8 @@ export function SettingsView() {
       setConfig(next);
       setApiKeyInput('');
       setKalshiPasswordInput('');
+      setWeatherKeyInput('');
+      setSportsKeyInput('');
       setDiscordInput('');
       setTelegramTokenInput('');
       setMessage('Settings saved.');
@@ -168,8 +179,8 @@ export function SettingsView() {
         <div>
           <h2>Settings</h2>
           <p className="muted">
-            OpenRouter, model selection, risk controls, and notification hooks. Secrets are stored locally at{' '}
-            <code>~/.openclaw/kalshi-monster/config.json</code>.
+            OpenRouter, model selection, risk controls, and notification hooks. Secret values stay masked in this view
+            and are redacted from diagnostics.
           </p>
         </div>
         <div className="panelToolbar">
@@ -184,6 +195,35 @@ export function SettingsView() {
 
       {message && <div className="banner success">{message}</div>}
       {error && <div className="banner error">{error}</div>}
+
+      {securityPosture && (
+        <div className="card settingsWide securityPosture">
+          <div className="paperPortfolioHeader">
+            <h3>Security posture</h3>
+            <span className={`statusPill ${securityPosture.csp_enforced ? 'ok' : 'bad'}`}>
+              {securityPosture.csp_enforced ? 'CSP enforced' : 'CSP missing'}
+            </span>
+          </div>
+          <div className="metricGrid">
+            <div className="metricCard">
+              <span>Diagnostics</span>
+              <strong>{securityPosture.secrets_redacted ? 'Secrets redacted from diagnostics' : 'Redaction missing'}</strong>
+            </div>
+            <div className="metricCard">
+              <span>Secret store</span>
+              <strong>{securityPosture.secret_store}</strong>
+            </div>
+            <div className="metricCard">
+              <span>Protected fields</span>
+              <strong>{securityPosture.redacted_fields.length}</strong>
+              <small>{securityPosture.redacted_fields.join(', ') || 'No secrets configured'}</small>
+            </div>
+          </div>
+          {securityPosture.warnings.map((warning) => (
+            <p key={warning} className="warnText">{warning}</p>
+          ))}
+        </div>
+      )}
 
       <div className="card settingsWide">
         <h3>Bankroll & cap sync</h3>
@@ -401,8 +441,9 @@ export function SettingsView() {
               <input
                 type="password"
                 placeholder={config.openweathermap_api_key ? 'Set' : 'Optional'}
-                value={config.openweathermap_api_key}
-                onChange={(e) => setConfig({ ...config, openweathermap_api_key: e.target.value })}
+                value={weatherKeyInput}
+                onChange={(e) => setWeatherKeyInput(e.target.value)}
+                autoComplete="off"
               />
             </label>
             <label>
@@ -410,8 +451,9 @@ export function SettingsView() {
               <input
                 type="password"
                 placeholder={config.api_sports_key ? 'Set' : 'Optional'}
-                value={config.api_sports_key}
-                onChange={(e) => setConfig({ ...config, api_sports_key: e.target.value })}
+                value={sportsKeyInput}
+                onChange={(e) => setSportsKeyInput(e.target.value)}
+                autoComplete="off"
               />
             </label>
           </div>

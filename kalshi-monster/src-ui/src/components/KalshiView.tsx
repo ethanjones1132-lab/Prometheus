@@ -7,20 +7,49 @@ import { KalshiPredictionsPanel } from './KalshiPredictionsPanel';
 const INITIAL_MARKET_LIMIT = 30;
 
 function formatProb(value: number | undefined | null): string {
-  return Number.isFinite(value) ? `${value!.toFixed(1)}%` : '—';
+  return Number.isFinite(value) ? `${value!.toFixed(1)}%` : '-';
 }
 
 function formatSpread(value: number | undefined | null): string {
-  return Number.isFinite(value) ? `${(value! * 100).toFixed(1)}¢` : '—';
+  return Number.isFinite(value) ? `${(value! * 100).toFixed(1)}c` : '-';
 }
 
 function formatVolume(value: number | undefined | null): string {
-  return Number.isFinite(value) ? `$${value!.toLocaleString()}` : '—';
+  return Number.isFinite(value) ? `$${value!.toLocaleString()}` : '-';
 }
 
-export function KalshiView() {
+function formatDateLabel(value?: string | null): string {
+  if (!value) return 'No close listed';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'Invalid close';
+  return new Intl.DateTimeFormat('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    timeZone: 'UTC',
+  }).format(date);
+}
+
+function cacheLabel(status: string, partial: boolean): string {
+  if (partial || status === 'partial') return 'Partial catalog';
+  if (status === 'full') return 'Full catalog';
+  return 'Cold cache';
+}
+
+interface KalshiViewProps {
+  onAnalyzeMarket?: (prompt: string) => void;
+}
+
+export function KalshiView({ onAnalyzeMarket }: KalshiViewProps = {}) {
   const [markets, setMarkets] = useState<KalshiMarketSummary[]>([]);
   const [categories, setCategories] = useState<KalshiCategoryStat[]>([]);
+  const [cacheStatus, setCacheStatus] = useState('cold');
+  const [cacheAgeSecs, setCacheAgeSecs] = useState<number | null>(null);
+  const [partialCatalog, setPartialCatalog] = useState(true);
+  const [lastRefreshAt, setLastRefreshAt] = useState<string | null>(null);
+  const [marketCount, setMarketCount] = useState(0);
+  const [categoryCount, setCategoryCount] = useState(0);
+  const [dataQualityNotes, setDataQualityNotes] = useState<string[]>([]);
   const [selectedCategory, setSelectedCategory] = useState('All');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedMarket, setSelectedMarket] = useState<KalshiMarketSummary | null>(null);
@@ -38,23 +67,36 @@ export function KalshiView() {
     const query = (opts?.query ?? '').trim();
 
     try {
+      if (!query && category === 'All') {
+        const bootstrap = await kalshiApi.getDashboardBootstrap(INITIAL_MARKET_LIMIT);
+        if (id !== requestId.current) return;
+        setMarkets(bootstrap.markets);
+        setCategories(bootstrap.categories);
+        setCacheStatus(bootstrap.cache_status);
+        setCacheAgeSecs(bootstrap.cache_age_secs ?? null);
+        setPartialCatalog(bootstrap.partial_catalog);
+        setLastRefreshAt(bootstrap.last_refresh_at ?? null);
+        setMarketCount(bootstrap.market_count);
+        setCategoryCount(bootstrap.category_count);
+        setDataQualityNotes(bootstrap.data_quality_notes);
+        setMarketsReady(true);
+        return;
+      }
+
       const data = query
         ? await kalshiApi.searchMarkets(query)
-        : category === 'All'
-          ? await kalshiApi.getTopMarkets(INITIAL_MARKET_LIMIT)
-          : await kalshiApi.getMarkets(category);
+        : await kalshiApi.getMarkets(category);
 
       if (id !== requestId.current) return;
 
       setMarkets(data);
       setMarketsReady(true);
 
-      // Categories depend on the Rust-side cache — load after markets, not in parallel
       try {
         const stats = await kalshiApi.getCategoryStats();
         if (id === requestId.current) setCategories(stats);
       } catch {
-        // non-fatal
+        // Category stats are helpful but not required for search results.
       }
     } catch (e) {
       if (id !== requestId.current) return;
@@ -64,7 +106,6 @@ export function KalshiView() {
     }
   }, [selectedCategory]);
 
-  // Initial load + category changes only (not every keystroke)
   useEffect(() => {
     void loadMarkets({ category: selectedCategory });
   }, [selectedCategory, loadMarkets]);
@@ -91,19 +132,30 @@ export function KalshiView() {
       <header className="kalshiHeader">
         <div>
           <h2>Kalshi Markets</h2>
-          <p className="muted">Portfolio-aware Kelly · isotonic calibration · price snapshots</p>
+          <p className="muted">Portfolio-aware Kelly, calibration, price snapshots, and paper decisions.</p>
         </div>
         <button type="button" className="primaryBtn" onClick={() => void refreshAll()} disabled={refreshing || loading}>
-          {refreshing ? 'Refreshing…' : 'Refresh & snapshot'}
+          {refreshing ? 'Refreshing...' : 'Refresh and snapshot'}
         </button>
       </header>
+
+      <div className="dashboardStatus" aria-label="Market data status">
+        <span>{cacheLabel(cacheStatus, partialCatalog)}</span>
+        {cacheAgeSecs != null && <span>Cache age {cacheAgeSecs}s</span>}
+        {lastRefreshAt && <span>Last refresh {formatDateLabel(lastRefreshAt)}</span>}
+        <span>Markets {marketCount}</span>
+        <span>Categories {categoryCount}</span>
+        {dataQualityNotes.map((note) => (
+          <span key={note} className="diagnosticNote">{note}</span>
+        ))}
+      </div>
 
       <div className="kalshiToolbar">
         <input
           className="searchInput"
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
-          placeholder="Search ticker or title…"
+          placeholder="Search ticker or market title..."
           onKeyDown={(e) => e.key === 'Enter' && runSearch()}
         />
         <button type="button" className="ghostBtn" onClick={runSearch} disabled={loading}>
@@ -133,7 +185,7 @@ export function KalshiView() {
         ))}
       </div>
 
-      {loading && <p className="muted pad">Loading markets…</p>}
+      {loading && <p className="muted pad">Loading markets...</p>}
       {error && <p className="error pad">{error}</p>}
 
       {!loading && (
@@ -154,6 +206,9 @@ export function KalshiView() {
                 <span>YES {formatProb(market.yes_prob_pct)}</span>
                 <span>Spread {formatSpread(market.spread)}</span>
                 <span>Vol {formatVolume(market.volume_24h)}</span>
+                <span>Liq {formatVolume(market.liquidity)}</span>
+                <span>Status {market.status}</span>
+                <span>Close {formatDateLabel(market.close_time)}</span>
               </div>
             </button>
           ))}
@@ -167,7 +222,11 @@ export function KalshiView() {
       {marketsReady && <KalshiPredictionsPanel />}
 
       {selectedMarket && (
-        <MarketDetailPanel market={selectedMarket} onClose={() => setSelectedMarket(null)} />
+        <MarketDetailPanel
+          market={selectedMarket}
+          onClose={() => setSelectedMarket(null)}
+          onAnalyzeMarket={onAnalyzeMarket}
+        />
       )}
     </div>
   );

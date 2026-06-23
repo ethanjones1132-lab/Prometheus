@@ -3,13 +3,25 @@ import { useState } from 'react';
 import { ChatView } from './components/ChatView';
 import { KalshiPredictionsPanel } from './components/KalshiPredictionsPanel';
 import { KalshiView } from './components/KalshiView';
-import { PropsView } from './components/PropsView';
 import { SettingsView } from './components/SettingsView';
 
-type Tab = 'props' | 'markets' | 'chat' | 'predictions' | 'settings';
+type Tab = 'markets' | 'chat' | 'predictions' | 'settings';
+
+const tabs: Array<{ id: Tab; label: string }> = [
+  { id: 'markets', label: 'Markets' },
+  { id: 'chat', label: 'Analyst' },
+  { id: 'predictions', label: 'Paper trades' },
+  { id: 'settings', label: 'Settings' },
+];
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<Tab>('props');
+  const [activeTab, setActiveTab] = useState<Tab>('markets');
+  const [analystPrompt, setAnalystPrompt] = useState<string | null>(null);
+
+  const openAnalyst = (prompt: string) => {
+    setAnalystPrompt(prompt);
+    setActiveTab('chat');
+  };
 
   return (
     <div className="appShell">
@@ -22,17 +34,11 @@ export default function App() {
           </div>
         </div>
 
-        {[
-          { id: 'props', label: '🎯 Prop board' },
-          { id: 'markets', label: '📊 Kalshi dashboard' },
-          { id: 'chat', label: '🧠 Analyst chat' },
-          { id: 'predictions', label: '📈 Prediction log' },
-          { id: 'settings', label: '⚙️ Settings' },
-        ].map((tab) => (
+        {tabs.map((tab) => (
           <button
             key={tab.id}
             className={`navButton ${activeTab === tab.id ? 'active' : ''}`}
-            onClick={() => setActiveTab(tab.id as Tab)}
+            onClick={() => setActiveTab(tab.id)}
           >
             {tab.label}
           </button>
@@ -40,15 +46,19 @@ export default function App() {
       </aside>
 
       <main className="main">
-        {activeTab === 'props' && <PropsView />}
-        {activeTab === 'markets' && <KalshiView />}
-        {activeTab === 'chat' && <ChatView />}
+        {activeTab === 'markets' && <KalshiView onAnalyzeMarket={openAnalyst} />}
+        {activeTab === 'chat' && (
+          <ChatView
+            initialPrompt={analystPrompt}
+            onPromptConsumed={() => setAnalystPrompt(null)}
+          />
+        )}
         {activeTab === 'predictions' && (
           <section className="page kalshiPage">
             <header className="kalshiHeader">
               <div>
-                <h2>Prediction log</h2>
-                <p className="muted">Kalshi paper trades with contract-side grading and PnL tracking.</p>
+                <h2>Paper trades</h2>
+                <p className="muted">Kalshi paper decisions with contract-side grading and PnL tracking.</p>
               </div>
             </header>
             <KalshiPredictionsPanel />

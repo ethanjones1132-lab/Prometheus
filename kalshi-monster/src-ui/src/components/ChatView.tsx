@@ -13,7 +13,12 @@ const QUICK_PROMPTS = [
   { label: 'Parlay Opportunities', query: 'Identify potential parlay opportunities on Kalshi with uncorrelated or positively correlated outcomes.' },
 ];
 
-export function ChatView() {
+interface ChatViewProps {
+  initialPrompt?: string | null;
+  onPromptConsumed?: () => void;
+}
+
+export function ChatView({ initialPrompt, onPromptConsumed }: ChatViewProps = {}) {
   const { messages, isStreaming, error, sendMessage, initSession } = useChat();
   const [input, setInput] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -25,6 +30,12 @@ export function ChatView() {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  useEffect(() => {
+    if (!initialPrompt) return;
+    setInput(initialPrompt);
+    onPromptConsumed?.();
+  }, [initialPrompt]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();

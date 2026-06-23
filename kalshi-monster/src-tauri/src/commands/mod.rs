@@ -17,6 +17,20 @@ use tokio::sync::{Mutex, mpsc};
 
 type KalshiState = Arc<Mutex<crate::kalshi::KalshiClient>>;
 
+#[derive(Debug, serde::Serialize)]
+pub struct KalshiDashboardBootstrap {
+    pub markets: Vec<crate::kalshi::KalshiMarketSummary>,
+    pub categories: Vec<crate::kalshi::KalshiCategoryStat>,
+    pub cache_status: String,
+    pub cache_age_secs: Option<u64>,
+    pub partial_catalog: bool,
+    pub last_refresh_at: Option<String>,
+    pub market_count: usize,
+    pub category_count: usize,
+    pub dashboard_generated_at: String,
+    pub data_quality_notes: Vec<String>,
+}
+
 // ═══════════════════════════════════════════════════════════════
 // Tauri Commands — Bridge between frontend and Rust backend
 // ═══════════════════════════════════════════════════════════════
@@ -45,6 +59,14 @@ pub async fn check_api_status(
 ) -> Result<config::ApiStatus, String> {
     let config = state.lock().await.clone();
     Ok(config::check_api_status(&config).await)
+}
+
+#[tauri::command]
+pub async fn get_security_posture(
+    state: State<'_, Arc<Mutex<AppConfig>>>,
+) -> Result<config::SecurityPosture, String> {
+    let config = state.lock().await.clone();
+    Ok(config::security_posture(&config))
 }
 
 #[tauri::command]
@@ -1529,6 +1551,42 @@ pub async fn kalshi_get_top_markets(
     client.get_top_markets(n).await
 }
 
+/// Initial dashboard payload: top markets, category stats, and cache freshness in one IPC call.
+#[tauri::command]
+pub async fn kalshi_get_dashboard_bootstrap(
+    limit: Option<usize>,
+    kalshi: State<'_, KalshiState>,
+) -> Result<KalshiDashboardBootstrap, String> {
+    let n = limit.unwrap_or(30).min(100);
+    let mut client = kalshi.lock().await;
+    let markets = client.get_top_markets(n).await?;
+    let categories = client.category_stats();
+    let (cache_status, cache_age_secs, partial_catalog, fetched_at) = client.cache_metadata();
+    let last_refresh_at = fetched_at
+        .and_then(|ts| chrono::DateTime::from_timestamp(ts as i64, 0))
+        .map(|dt| dt.to_rfc3339());
+    let market_count = markets.len();
+    let category_count = categories.len();
+    let data_quality_notes = if partial_catalog {
+        vec!["Partial catalog loaded for fast first paint".to_string()]
+    } else {
+        vec!["Full catalog cache ready".to_string()]
+    };
+
+    Ok(KalshiDashboardBootstrap {
+        markets,
+        categories,
+        cache_status,
+        cache_age_secs,
+        partial_catalog,
+        last_refresh_at,
+        market_count,
+        category_count,
+        dashboard_generated_at: chrono::Utc::now().to_rfc3339(),
+        data_quality_notes,
+    })
+}
+
 /// Get per-category market counts and 24h volumes.
 #[tauri::command]
 pub async fn kalshi_get_category_stats(
@@ -1694,6 +1752,15 @@ pub async fn kalshi_compute_stake_adjustment(
     }
 
     Ok(adjustment)
+}
+
+#[tauri::command]
+pub async fn kalshi_get_calibration_status(
+    raw_probability_pct: f64,
+) -> Result<crate::analysis::calibration::CalibrationStatus, String> {
+    Ok(crate::analysis::calibration::calibration_status_for_probability(
+        raw_probability_pct,
+    ))
 }
 
 /// Snapshot current Kalshi market prices into local history.
