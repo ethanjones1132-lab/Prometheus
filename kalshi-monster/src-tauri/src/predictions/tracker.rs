@@ -1,6 +1,5 @@
 use serde::{Deserialize, Serialize};
 use sqlx::{Pool, Sqlite};
-#[allow(unused_imports)]
 use sqlx::sqlite::SqlitePoolOptions;
 use uuid::Uuid;
 use chrono::Datelike;
@@ -1458,7 +1457,11 @@ mod tests {
     #[test]
     fn test_extract_emoji_prediction() {
         let tracker = PredictionTracker__extraction_only();
-        let text = "🏈 PICK: Over 285.5 for Patrick Mahomes — Passing Yards\n📊 REASONING: Mahomes averages 290 yards/game. BUF ranks 22nd in pass defense.\n⚡ CONFIDENCE: High\n📈 PROBABILITY: 62% Over\n⚠️ RISK: BUF could lead early";
+        let text = "🏈 PICK: Over 285.5 for Patrick Mahomes — Passing Yards
+📊 REASONING: Mahomes averages 290 yards/game. BUF ranks 22nd in pass defense.
+⚡ CONFIDENCE: High
+📈 PROBABILITY: 62% Over
+⚠️ RISK: BUF could lead early";
 
         let preds = tracker.extract_predictions("test-session", text);
         assert_eq!(preds.len(), 1);
