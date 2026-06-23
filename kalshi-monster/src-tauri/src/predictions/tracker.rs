@@ -1,6 +1,5 @@
 use serde::{Deserialize, Serialize};
 use sqlx::{Pool, Sqlite};
-use sqlx::sqlite::SqlitePoolOptions;
 use uuid::Uuid;
 use chrono::Datelike;
 
@@ -1399,6 +1398,7 @@ impl PredictionTracker {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sqlx::sqlite::SqlitePoolOptions;
 
     #[test]
     fn test_extract_json_prediction() {

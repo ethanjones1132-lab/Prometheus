@@ -1,12 +1,18 @@
 # Kalshi Monster — Priority Roadmap
 
-Last updated: 2026-06-23 (Tier 0+1 finalized: calibration status API, dashboard bootstrap IPC, security posture, test infra)
+Last updated: 2026-06-23 (Tier 0+1 finalized; maintenance pass: fixed unused import warning in predictions/tracker.rs; all health checks green)
 Working copy: `C:\Users\ethan\kalshi-build\kalshi-monster`
 
 Quick status: **P0 done · P1 done · P2 done · P3 2 pending**
 
 ---
 
+
+## Maintenance notes (2026-06-23)
+- Fixed `unused import: sqlx::sqlite::SqlitePoolOptions` in `src-tauri/src/predictions/tracker.rs` (was test-only; moved use into `#[cfg(test)] mod tests`)
+- Verified: cargo check clean, 78 lib tests pass, UI tsc clean.
+- P3 items remain blocked pending accumulated graded data in predictions.db
+- Working tree was clean at start of pass; no remote configured so no push.
 ## High-impact improvements (ranked)
 
 | Priority | Item | Why it matters | Status |
