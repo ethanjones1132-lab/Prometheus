@@ -1,6 +1,6 @@
 # Kalshi Monster — Priority Roadmap
 
-Last updated: 2026-06-22 (Tier 0+1: notification persistence, native correlation graph, count reconciliation)
+Last updated: 2026-06-23 (Tier 0+1 finalized: calibration status API, dashboard bootstrap IPC, security posture, test infra)
 Working copy: `C:\Users\ethan\kalshi-build\kalshi-monster`
 
 Quick status: **P0 done · P1 done · P2 done · P3 2 pending**
@@ -92,12 +92,13 @@ Off-roadmap fix shipped 2026-06-22: notification settings now persist to `~/.ope
 - Optionally slim cache to `KalshiMarketSummary` instead of full `KalshiMarket`
 - **Target:** warm revisit under 300ms; category switch under 500ms
 
-### Phase 3 — Frontend critical-path trim
+### Phase 3 — Frontend critical-path trim (shipped 2026-06-23)
 
 - Keep `KalshiView` mounted across tab switches (avoid cold reload)
-- Combined IPC: `kalshi_get_dashboard_bootstrap` → `{ markets, categories, cache_full }`
+- Combined IPC: `kalshi_get_dashboard_bootstrap` → `{ markets, categories, cache_full }` ✅ Shipped
+- Show partial-cache indicator when `full_catalog == false` ✅ Shipped (cacheLabel/partialCatalog in KalshiView)
 - Defer `KalshiPredictionsPanel` load; debounce `computeStakeAdjustment` in market detail
-- Show partial-cache indicator when `full_catalog == false`
+- Calibration status inline display in MarketDetailPanel ✅ Shipped
 
 ### Phase 4 — Startup prefetch and persistence (optional)
 
