@@ -10,8 +10,8 @@
 //!   p  = probability of winning
 //!   q  = probability of losing (1 - p)
 //!
-//! Also provides flat-staking, percentage-staking, and
-//! confidence-adjusted Kelly variants.
+//! Also provides flat-staking, percentage-staking, confidence-adjusted, and
+//! volatility-adjusted Kelly variants.
 //! ═══════════════════════════════════════════════════════════════
 
 use chrono::{Datelike, Duration, Utc};
@@ -50,6 +50,10 @@ pub struct BankrollConfig {
     /// Track daily/weekly exposure
     pub daily_bet_limit: f64,
     pub weekly_bet_limit: f64,
+    /// Historical Brier score from graded LLM forecasts (0.0 if no history yet).
+    /// Used for P3 volatility-adjusted Kelly. When >0, reduces sizing for poor historical calibration.
+    #[serde(default)]
+    pub historical_brier: f64,
 }
 
 impl Default for BankrollConfig {
@@ -65,6 +69,7 @@ impl Default for BankrollConfig {
             player_risk_multipliers: HashMap::new(),
             daily_bet_limit: 200.0,
             weekly_bet_limit: 500.0,
+            historical_brier: 0.0,
         }
     }
 }
@@ -80,6 +85,8 @@ pub enum StakingStrategy {
     PercentageOfBankroll,
     /// Confidence-adjusted Kelly (scale Kelly by confidence / 100)
     ConfidenceAdjustedKelly,
+    /// Volatility-adjusted Kelly from historical Brier score (P3: shrinks when calibration poor)
+    VolatilityAdjustedKelly,
 }
 
 impl std::fmt::Display for StakingStrategy {
@@ -89,6 +96,7 @@ impl std::fmt::Display for StakingStrategy {
             StakingStrategy::FlatBet => write!(f, "Flat Bet"),
             StakingStrategy::PercentageOfBankroll => write!(f, "% of Bankroll"),
             StakingStrategy::ConfidenceAdjustedKelly => write!(f, "Confidence-Adjusted Kelly"),
+            StakingStrategy::VolatilityAdjustedKelly => write!(f, "Volatility-Adjusted Kelly"),
         }
     }
 }
@@ -104,6 +112,9 @@ impl std::str::FromStr for StakingStrategy {
             }
             "confidence_adjusted" | "confidenceadjustedkelly" | "conf_adjusted" => {
                 Ok(StakingStrategy::ConfidenceAdjustedKelly)
+            }
+            "volatility" | "volatilityadjustedkelly" | "vol_adjusted" | "volatility_adjusted" => {
+                Ok(StakingStrategy::VolatilityAdjustedKelly)
             }
             _ => Err(format!("Unknown staking strategy: {}", s)),
         }
@@ -182,6 +193,20 @@ pub fn kelly_criterion(win_probability: f64, decimal_odds: f64) -> f64 {
     kelly.max(0.0)
 }
 
+/// Volatility-adjusted Kelly using historical Brier score of past LLM forecasts.
+/// This is the start of P3 implementation: when historical_brier > 0 (accumulated graded data),
+/// we shrink the Kelly fraction to account for realized volatility / miscalibration.
+/// Simple linear penalty for now; can be refined with more data.
+pub fn volatility_adjusted_kelly(win_probability: f64, decimal_odds: f64, historical_brier: f64) -> f64 {
+    let base = kelly_criterion(win_probability, decimal_odds);
+    if historical_brier <= 0.0 || historical_brier > 1.0 {
+        return base;
+    }
+    // Penalty: brier~0.1 (excellent) -> factor ~1.4 , brier 0.25 -> factor ~2.0 (more conservative)
+    let penalty = 1.0 + historical_brier * 4.0;
+    (base / penalty).max(0.0)
+}
+
 /// Convert American odds to decimal odds
 pub fn american_to_decimal(american_odds: f64) -> f64 {
     if american_odds > 0.0 {
@@ -244,6 +269,12 @@ pub fn recommend_bet(
         StakingStrategy::ConfidenceAdjustedKelly => {
             let conf_mult = confidence_score.map(|c| c as f64 / 100.0).unwrap_or(0.5);
             let adjusted_kelly = kelly_pct * conf_mult;
+            let stake = config.total_bankroll * adjusted_kelly;
+            stake.clamp(config.min_bet, config.total_bankroll * config.max_bet_pct)
+        }
+        StakingStrategy::VolatilityAdjustedKelly => {
+            let vol_kelly = volatility_adjusted_kelly(prob, decimal_odds, config.historical_brier);
+            let adjusted_kelly = vol_kelly * config.kelly_fraction * risk_mult;
             let stake = config.total_bankroll * adjusted_kelly;
             stake.clamp(config.min_bet, config.total_bankroll * config.max_bet_pct)
         }
