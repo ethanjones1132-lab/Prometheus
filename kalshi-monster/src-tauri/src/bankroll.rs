@@ -218,6 +218,41 @@ pub fn american_to_decimal(american_odds: f64) -> f64 {
     }
 }
 
+/// Compute historical Brier score from all graded predictions (Win/Loss) that have a probability.
+/// Brier score = average of (predicted_prob - actual_outcome)^2 over graded forecasts.
+/// p in [0,1], actual 1 for Win, 0 for Loss.
+/// Returns 0.0 if insufficient graded data (unblocks P3 volatility-adjusted Kelly).
+pub async fn compute_historical_brier(pool: &Pool<Sqlite>) -> Result<f64, String> {
+    let rows = sqlx::query(
+        r#"
+        SELECT probability, outcome
+        FROM predictions
+        WHERE outcome IN ('Win', 'Loss') AND probability IS NOT NULL
+        "#,
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|e| format!("Failed to fetch graded predictions for brier: {}", e))?;
+
+    if rows.is_empty() {
+        return Ok(0.0);
+    }
+
+    let mut sum = 0.0;
+    let mut count = 0usize;
+
+    for row in rows {
+        let prob: f64 = row.get("probability");
+        let outcome: String = row.get("outcome");
+        let p = (prob / 100.0).clamp(0.0, 1.0);
+        let o = if outcome == "Win" { 1.0 } else { 0.0 };
+        sum += (p - o).powi(2);
+        count += 1;
+    }
+
+    Ok(sum / count as f64)
+}
+
 /// Calculate expected value of a bet
 pub fn expected_value(win_probability: f64, decimal_odds: f64, stake: f64) -> f64 {
     let win_amount = stake * (decimal_odds - 1.0);

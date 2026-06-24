@@ -1047,6 +1047,20 @@ pub async fn record_bankroll_result(
     Ok(config)
 }
 
+/// Refresh the historical Brier score in the bankroll config from graded predictions in the DB.
+/// This populates `historical_brier` (P3) so VolatilityAdjustedKelly can use real calibration data
+/// to shrink stakes when past LLM forecasts were miscalibrated. Returns the computed brier (0.0 if none).
+#[tauri::command]
+pub async fn refresh_historical_brier(
+    db_pool: State<'_, Pool<Sqlite>>,
+) -> Result<f64, String> {
+    let mut config = crate::bankroll::load_bankroll_config();
+    let brier = crate::bankroll::compute_historical_brier(&db_pool).await?;
+    config.historical_brier = brier;
+    crate::bankroll::save_bankroll_config(&config).map_err(|e| AppError::Io(e.to_string()))?;
+    Ok(brier)
+}
+
 // ── Multi-Sport Scoreboard Commands ──
 
 /// Fetch the live scoreboard for a specific league from ESPN.

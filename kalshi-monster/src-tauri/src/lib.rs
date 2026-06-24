@@ -214,6 +214,7 @@ pub fn run() {
             commands::recommend_bets,
             commands::recommend_parlay,
             commands::record_bankroll_result,
+            commands::refresh_historical_brier,
             // Multi-Sport Scoreboard
             commands::fetch_league_scoreboard,
             commands::fetch_all_scoreboards,

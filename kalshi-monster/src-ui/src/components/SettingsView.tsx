@@ -85,6 +85,7 @@ export function SettingsView() {
     setBankrollLoading(true);
     setBankrollError(null);
     try {
+      await bankrollApi.refreshHistoricalBrier().catch(() => 0);
       const cfg: BankrollConfig = await bankrollApi.getConfig();
       const summary = await bankrollApi.getSummary(cfg);
       setBankrollSummary(summary);

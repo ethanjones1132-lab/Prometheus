@@ -86,6 +86,9 @@ export const bankrollApi = {
 
   getSummary: (config: BankrollConfig) =>
     invoke<BankrollSummary>('get_bankroll_summary', { config }),
+
+  refreshHistoricalBrier: () =>
+    invoke<number>('refresh_historical_brier'),
 };
 
 // ── Status ──────────────────────────────────────────────────────
