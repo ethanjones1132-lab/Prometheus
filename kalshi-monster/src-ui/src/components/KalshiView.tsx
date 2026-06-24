@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { kalshiApi } from '../services/kalshi';
 import type { KalshiCategoryStat, KalshiMarketSummary } from '../types/kalshi';
 import { MarketDetailPanel } from './MarketDetailPanel';
@@ -18,6 +18,16 @@ function formatVolume(value: number | undefined | null): string {
   return Number.isFinite(value) ? `$${value!.toLocaleString()}` : '-';
 }
 
+function formatCompactMoney(value: number | undefined | null): string {
+  if (!Number.isFinite(value)) return '-';
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    notation: 'compact',
+    maximumFractionDigits: 1,
+  }).format(value!);
+}
+
 function formatDateLabel(value?: string | null): string {
   if (!value) return 'No close listed';
   const date = new Date(value);
@@ -34,6 +44,20 @@ function cacheLabel(status: string, partial: boolean): string {
   if (partial || status === 'partial') return 'Partial catalog';
   if (status === 'full') return 'Full catalog';
   return 'Cold cache';
+}
+
+function opportunityScore(market: KalshiMarketSummary): number {
+  const liquidityScore = Math.min(market.liquidity / 1000, 75);
+  const volumeScore = Math.min(market.volume_24h / 5000, 45);
+  const spreadPenalty = Math.max(market.spread * 100, 0) * 5;
+  const actionablePriceBonus = market.yes_prob_pct > 8 && market.yes_prob_pct < 92 ? 12 : 0;
+  return liquidityScore + volumeScore + actionablePriceBonus - spreadPenalty;
+}
+
+function marketBias(market: KalshiMarketSummary): string {
+  if (market.yes_prob_pct >= 65) return 'Consensus YES';
+  if (market.yes_prob_pct <= 35) return 'Consensus NO';
+  return 'Live disagreement';
 }
 
 interface KalshiViewProps {
@@ -127,17 +151,96 @@ export function KalshiView({ onAnalyzeMarket }: KalshiViewProps = {}) {
     }
   };
 
+  const visibleLiquidity = useMemo(
+    () => markets.reduce((sum, market) => sum + (Number.isFinite(market.liquidity) ? market.liquidity : 0), 0),
+    [markets],
+  );
+
+  const visibleVolume = useMemo(
+    () => markets.reduce((sum, market) => sum + (Number.isFinite(market.volume_24h) ? market.volume_24h : 0), 0),
+    [markets],
+  );
+
+  const averageSpread = useMemo(() => {
+    if (markets.length === 0) return null;
+    return markets.reduce((sum, market) => sum + market.spread, 0) / markets.length;
+  }, [markets]);
+
+  const topCategories = useMemo(
+    () =>
+      [...categories]
+        .sort((a, b) => (b.volume_24h || 0) - (a.volume_24h || 0) || b.count - a.count)
+        .slice(0, 4),
+    [categories],
+  );
+
+  const highValueMarkets = useMemo(
+    () =>
+      [...markets]
+        .filter((market) => market.status.toLowerCase() === 'open')
+        .sort((a, b) => opportunityScore(b) - opportunityScore(a))
+        .slice(0, 4),
+    [markets],
+  );
+
+  const dashboardTips = useMemo(() => {
+    const tips = [
+      'Start with tight spreads and visible liquidity before arguing with the market price.',
+      'Use the analyst on one market at a time: thesis, breakpoints, side, then stake.',
+      'Record paper decisions before the close so the portfolio view can grade the process.',
+    ];
+
+    if (partialCatalog) {
+      tips.unshift('Refresh the catalog before sizing. Partial mode is fast, but it is not the final board.');
+    }
+
+    if (averageSpread != null && averageSpread > 0.08) {
+      tips.unshift('Spreads are wide on the visible board. Demand a larger edge or watch for a better entry.');
+    }
+
+    return tips.slice(0, 4);
+  }, [averageSpread, partialCatalog]);
+
+  const heroStats = [
+    { label: 'Open market tape', value: marketCount || markets.length, detail: `${categoryCount || categories.length} categories` },
+    { label: 'Visible liquidity', value: formatCompactMoney(visibleLiquidity), detail: `${formatCompactMoney(visibleVolume)} 24h volume` },
+    {
+      label: 'Average spread',
+      value: averageSpread == null ? '-' : formatSpread(averageSpread),
+      detail: partialCatalog ? 'Fast discovery mode' : cacheStatus === 'full' ? 'Full tape online' : 'Cache warming',
+    },
+  ];
+
   return (
     <div className="kalshiPage">
-      <header className="kalshiHeader">
-        <div>
-          <h2>Kalshi Markets</h2>
-          <p className="muted">Portfolio-aware Kelly, calibration, price snapshots, and paper decisions.</p>
+      <section className="kalshiHero">
+        <div className="heroCopy">
+          <p className="eyebrow">Kalshi command desk</p>
+          <h1>Find the contract worth your next decision.</h1>
+          <p>
+            A Kalshi-first dashboard for market structure, paper portfolio discipline,
+            analyst prompts, and high-signal opportunities across the live event tape.
+          </p>
+          <div className="heroActions">
+            <button type="button" className="primaryBtn" onClick={() => void refreshAll()} disabled={refreshing || loading}>
+              {refreshing ? 'Refreshing...' : 'Refresh and snapshot'}
+            </button>
+            <span className="muted small">
+              {cacheAgeSecs != null ? `Cache age ${cacheAgeSecs}s` : 'Cache warming'}
+              {lastRefreshAt ? ` - last refresh ${formatDateLabel(lastRefreshAt)}` : ''}
+            </span>
+          </div>
         </div>
-        <button type="button" className="primaryBtn" onClick={() => void refreshAll()} disabled={refreshing || loading}>
-          {refreshing ? 'Refreshing...' : 'Refresh and snapshot'}
-        </button>
-      </header>
+        <div className="heroLedger" aria-label="Kalshi dashboard summary">
+          {heroStats.map((stat) => (
+            <div className="ledgerTile" key={stat.label}>
+              <span>{stat.label}</span>
+              <strong>{stat.value}</strong>
+              <small>{stat.detail}</small>
+            </div>
+          ))}
+        </div>
+      </section>
 
       <div className="dashboardStatus" aria-label="Market data status">
         <span>{cacheLabel(cacheStatus, partialCatalog)}</span>
@@ -149,6 +252,77 @@ export function KalshiView({ onAnalyzeMarket }: KalshiViewProps = {}) {
           <span key={note} className="diagnosticNote">{note}</span>
         ))}
       </div>
+
+      <section className="dashboardGrid">
+        <article className="commandPanel">
+          <div className="panelEyebrow">High-value shortlist</div>
+          <div className="panelHeader">
+            <h2>Best markets to inspect now</h2>
+            <p className="muted">Ranked by liquidity, 24h activity, tradable price, and spread discipline.</p>
+          </div>
+          <div className="opportunityList">
+            {highValueMarkets.map((market, index) => (
+              <button
+                key={market.ticker}
+                type="button"
+                className="opportunityCard"
+                aria-label={`Open high-value market ${index + 1}`}
+                onClick={() => setSelectedMarket(market)}
+              >
+                <span className="rankLabel">{String(index + 1).padStart(2, '0')}</span>
+                <div>
+                  <code>{market.category}</code>
+                  <h3>{market.ticker}</h3>
+                  <div className="marketStats">
+                    <span>{marketBias(market)}</span>
+                    <span>YES {formatProb(market.yes_prob_pct)}</span>
+                    <span>Spread {formatSpread(market.spread)}</span>
+                    <span>Liq {formatCompactMoney(market.liquidity)}</span>
+                  </div>
+                </div>
+              </button>
+            ))}
+            {!loading && highValueMarkets.length === 0 && (
+              <p className="muted pad">No open markets are ready for the shortlist yet.</p>
+            )}
+          </div>
+        </article>
+
+        <aside className="insightRail" aria-label="Dashboard guidance">
+          <article className="insightCard accent">
+            <span>Trading posture</span>
+            <strong>{partialCatalog ? 'Refresh before size' : 'Full tape online'}</strong>
+            <p>
+              {partialCatalog
+                ? 'Use this view for discovery, then refresh before committing a paper position.'
+                : 'The catalog is ready for deeper analyst review and paper trade recording.'}
+            </p>
+          </article>
+          <article className="insightCard">
+            <span>Category pulse</span>
+            {topCategories.length > 0 ? (
+              <div className="categoryPulse">
+                {topCategories.map((cat) => (
+                  <div key={cat.category}>
+                    <strong>{cat.category}</strong>
+                    <small>{cat.count} markets - {formatCompactMoney(cat.volume_24h)} vol</small>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="muted small">Category stats will appear after the first market load.</p>
+            )}
+          </article>
+          <article className="insightCard">
+            <span>Decision tips</span>
+            <ul className="tipList">
+              {dashboardTips.map((tip) => (
+                <li key={tip}>{tip}</li>
+              ))}
+            </ul>
+          </article>
+        </aside>
+      </section>
 
       <div className="kalshiToolbar">
         <input
@@ -189,30 +363,39 @@ export function KalshiView({ onAnalyzeMarket }: KalshiViewProps = {}) {
       {error && <p className="error pad">{error}</p>}
 
       {!loading && (
-        <div className="marketGrid">
-          {markets.map((market) => (
-            <button
-              key={market.ticker}
-              type="button"
-              className="marketCard"
-              onClick={() => setSelectedMarket(market)}
-            >
-              <div className="marketCardTop">
-                <code>{market.ticker}</code>
-                <span className="chip small">{market.category}</span>
-              </div>
-              <h3>{market.title}</h3>
-              <div className="marketStats">
-                <span>YES {formatProb(market.yes_prob_pct)}</span>
-                <span>Spread {formatSpread(market.spread)}</span>
-                <span>Vol {formatVolume(market.volume_24h)}</span>
-                <span>Liq {formatVolume(market.liquidity)}</span>
-                <span>Status {market.status}</span>
-                <span>Close {formatDateLabel(market.close_time)}</span>
-              </div>
-            </button>
-          ))}
-        </div>
+        <section className="marketTape">
+          <div className="tapeHeader">
+            <div>
+              <p className="panelEyebrow">Market tape</p>
+              <h2>Searchable Kalshi catalog</h2>
+            </div>
+            <span className="muted small">{markets.length} visible market{markets.length === 1 ? '' : 's'}</span>
+          </div>
+          <div className="marketGrid">
+            {markets.map((market) => (
+              <button
+                key={market.ticker}
+                type="button"
+                className="marketCard"
+                onClick={() => setSelectedMarket(market)}
+              >
+                <div className="marketCardTop">
+                  <code>{market.ticker}</code>
+                  <span className="chip small">{market.category}</span>
+                </div>
+                <h3>{market.title}</h3>
+                <div className="marketStats">
+                  <span>YES {formatProb(market.yes_prob_pct)}</span>
+                  <span>Spread {formatSpread(market.spread)}</span>
+                  <span>Vol {formatVolume(market.volume_24h)}</span>
+                  <span>Liq {formatVolume(market.liquidity)}</span>
+                  <span>Status {market.status}</span>
+                  <span>Close {formatDateLabel(market.close_time)}</span>
+                </div>
+              </button>
+            ))}
+          </div>
+        </section>
       )}
 
       {!loading && markets.length === 0 && !error && (

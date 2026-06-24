@@ -8,9 +8,9 @@ import { SettingsView } from './components/SettingsView';
 type Tab = 'markets' | 'chat' | 'predictions' | 'settings';
 
 const tabs: Array<{ id: Tab; label: string }> = [
-  { id: 'markets', label: 'Markets' },
+  { id: 'markets', label: 'Command desk' },
   { id: 'chat', label: 'Analyst' },
-  { id: 'predictions', label: 'Paper trades' },
+  { id: 'predictions', label: 'Paper portfolio' },
   { id: 'settings', label: 'Settings' },
 ];
 
@@ -30,8 +30,14 @@ export default function App() {
           <div className="logo">KM</div>
           <div>
             <strong>Kalshi Monster</strong>
-            <span>Prediction market intelligence</span>
+            <span>Event market command desk</span>
           </div>
+        </div>
+
+        <div className="sidebarIntel">
+          <span>Default mode</span>
+          <strong>Kalshi-first</strong>
+          <p>Markets, analyst prompts, and paper risk stay centered on event contracts.</p>
         </div>
 
         {tabs.map((tab) => (

@@ -31,11 +31,11 @@ vi.mock('./components/SettingsView', () => ({
 }));
 
 describe('App shell', () => {
-  test('opens to Kalshi markets and keeps prop tooling out of primary navigation', () => {
+  test('opens to the Kalshi command desk and keeps prop tooling out of primary navigation', () => {
     render(<App />);
 
     expect(screen.getByLabelText('Kalshi markets surface')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Markets' })).toHaveClass('active');
+    expect(screen.getByRole('button', { name: 'Command desk' })).toHaveClass('active');
     expect(screen.queryByRole('button', { name: /prop board/i })).not.toBeInTheDocument();
   });
 

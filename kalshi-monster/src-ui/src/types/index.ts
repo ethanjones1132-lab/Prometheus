@@ -216,6 +216,7 @@ export interface BankrollConfig {
   player_risk_multipliers: Record<string, number>;
   daily_bet_limit: number;
   weekly_bet_limit: number;
+  historical_brier: number;
 }
 
 export interface BankrollSummary {

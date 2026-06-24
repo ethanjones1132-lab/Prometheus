@@ -79,6 +79,7 @@ describe('SettingsView', () => {
       player_risk_multipliers: {},
       daily_bet_limit: 100,
       weekly_bet_limit: 400,
+      historical_brier: 0.129,
     });
     vi.mocked(bankrollApi.getSummary).mockResolvedValue({
       config: {
@@ -92,6 +93,7 @@ describe('SettingsView', () => {
         player_risk_multipliers: {},
         daily_bet_limit: 100,
         weekly_bet_limit: 400,
+        historical_brier: 0.129,
       },
       roi_pct: 0,
       total_wagered: 0,
