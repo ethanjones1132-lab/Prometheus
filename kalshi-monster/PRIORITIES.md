@@ -1,18 +1,23 @@
 # Kalshi Monster — Priority Roadmap
 
-Last updated: 2026-06-23 (Tier 0+1 finalized; maintenance pass: fixed unused import warning in predictions/tracker.rs; all health checks green)
-Working copy: `C:\Users\ethan\kalshi-build\kalshi-monster`
+Last updated: 2026-06-24 (P3 VolatilityAdjustedKelly brier support wired + committed; maintenance pass; health checks green)
+Working copy: `C:\\Users\\ethan\\kalshi-build\\kalshi-monster`
 
-Quick status: **P0 done · P1 done · P2 done · P3 2 pending**
+Quick status: **P0 done · P1 done · P2 done · P3 1 pending**
 
 ---
-
 
 ## Maintenance notes (2026-06-23)
 - Fixed `unused import: sqlx::sqlite::SqlitePoolOptions` in `src-tauri/src/predictions/tracker.rs` (was test-only; moved use into `#[cfg(test)] mod tests`)
 - Verified: cargo check clean, 78 lib tests pass, UI tsc clean.
 - P3 items remain blocked pending accumulated graded data in predictions.db
 - Working tree was clean at start of pass; no remote configured so no push.
+
+## Maintenance notes (2026-06-24)
+- Wired `compute_historical_brier` (from graded Win/Loss predictions in predictions.db), `refresh_historical_brier` Tauri command, and UI trigger in SettingsView.tsx. `VolatilityAdjustedKelly` strategy (with `volatility_adjusted_kelly` fn) now uses real `historical_brier` for auto-shrinkage when graded history exists. (P3 brier support complete; strategy was in prior commit)
+- Committed changes from maintenance pass (no remote, skipped push).
+- Re-ran health checks post-commit: cargo check, tsc, 78 tests all green.
+
 ## High-impact improvements (ranked)
 
 | Priority | Item | Why it matters | Status |
@@ -23,11 +28,11 @@ Quick status: **P0 done · P1 done · P2 done · P3 2 pending**
 | **P1** | Wire `edge_eval` calibrator into Kalshi decision path | Isotonic calibrator applied to `analyze_single_prop` (sports props), not LLM `KalshiTradeDecision` forecasts | ✅ Done |
 | **P1** | Kalshi historical price/spread snapshots | `line_tracker.rs` is PrizePicks-only; no candlestick API in `kalshi/client.rs` — blocks CLV tracking and momentum signals | ✅ Done |
 | **P1** | Kalshi-native correlation engine | `correlation.rs` is NFL prop families; portfolio checks were ticker-prefix heuristics. Now a native correlation cluster graph links distinct series by shared macro/political driver | ✅ Done |
-|| **P2** | Persist `localMaxBetPct` to config | Now a persisted `max_bet_pct` config field, read/written by SettingsView + MarketDetailPanel | ✅ Done |
-|| **P2** | Sync bankroll limits from `predictions.db` + paper positions | Makes daily/weekly cap warnings and `BankrollView` accurate | ✅ Done |
-|| **P2** | Model disagreement flags at entry | Flag when `fair_probability_pct` diverges sharply from market implied prob at decision time | ✅ Done |
-|| **P2** | CLV per prediction | Grading records close price and CLV on paper predictions | ✅ Done |
-| **P3** | Volatility-adjusted Kelly from historical Brier | Shrinkage slider is manual; handoffs call for Brier-driven auto-shrinkage | ⬜ Not started |
+| **P2** | Persist `localMaxBetPct` to config | Now a persisted `max_bet_pct` config field, read/written by SettingsView + MarketDetailPanel | ✅ Done |
+| **P2** | Sync bankroll limits from `predictions.db` + paper positions | Makes daily/weekly cap warnings and `BankrollView` accurate | ✅ Done |
+| **P2** | Model disagreement flags at entry | Flag when `fair_probability_pct` diverges sharply from market implied prob at decision time | ✅ Done |
+| **P2** | CLV per prediction | Grading records close price and CLV on paper predictions | ✅ Done |
+| **P3** | Volatility-adjusted Kelly from historical Brier | Shrinkage slider is manual; handoffs call for Brier-driven auto-shrinkage | ✅ Done (2026-06-24; brier compute/refresh/strategy wired) |
 | **P3** | Multi-category ML classifiers (politics/econ/weather) | Current ML is scikit-learn on sports prop features via Python subprocess; README still lists ML training as unchecked | ⬜ Not started |
 
 ---
@@ -39,9 +44,9 @@ Quick status: **P0 done · P1 done · P2 done · P3 2 pending**
 | P0 | 2 | **0** |
 | P1 | 4 | **0** |
 | P2 | 4 | **0** |
-| P3 | 0 | **2** |
+| P3 | 1 | **1** |
 
-**2 items left** (both P3). Plus the off-roadmap notification-settings persistence fix (now shipped).
+**1 item left** (Multi-category ML classifiers). VolatilityAdjustedKelly brier support shipped 2026-06-24. Plus the off-roadmap notification-settings persistence fix (now shipped).
 
 ---
 
@@ -78,10 +83,10 @@ Quick status: **P0 done · P1 done · P2 done · P3 2 pending**
 
 ## Suggested next target: P3
 
-P0–P2 are complete. Remaining work is both P3:
+P0–P2 are complete. 
 
-1. Volatility-adjusted Kelly from historical Brier (auto-shrinkage) — blocked on graded LLM forecast history accumulating in `predictions.db`
-2. Multi-category ML classifiers (politics/econ/weather)
+1. Volatility-adjusted Kelly from historical Brier (auto-shrinkage) — ✅ Done (2026-06-24; `volatility_adjusted_kelly` fn + `compute_historical_brier` + `refresh_historical_brier` command + UI trigger wired; strategy now uses real data for shrinkage when graded history accumulates in predictions.db)
+2. Multi-category ML classifiers (politics/econ/weather) — ⬜ Not started (blocked pending feature extraction for non-sports categories)
 
 Off-roadmap fix shipped 2026-06-22: notification settings now persist to `~/.openclaw/kalshi-monster/notification_settings.json` (`notification::load_settings`/`save_settings`); previously `save_notification_settings` only logged and `get_notification_settings` always returned defaults.
 
@@ -117,4 +122,4 @@ Off-roadmap fix shipped 2026-06-22: notification settings now persist to `~/.ope
 ## Environment notes
 
 - Canonical WSL repo (`~/.openclaw/agents/coderclaw/workspace/kalshi-monster`) was unreachable as of 2026-06-17
-- `edge-eval` and `monster-edge-core` live at `C:\Users\ethan\kalshi-build\` (sibling paths)
+- `edge-eval` and `monster-edge-core` live at `C:\\Users\\ethan\\kalshi-build\\` (sibling paths)
