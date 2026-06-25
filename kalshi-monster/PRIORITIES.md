@@ -1,6 +1,6 @@
 # Kalshi Monster — Priority Roadmap
 
-Last updated: 2026-06-25 (P3 Multi-category ML classifiers: started Kalshi support - extended feature extraction in ml_predictor.py to parse full_decision_json for category_code, fair prob, edge, liquidity etc for politics/econ/weather; now trains on Kalshi graded data too. Health green)
+Last updated: 2026-06-25 (P3 multi-category ML: category_code wired Rust↔Python; train meta + ml_get_model_status expose category_stats/trainable flags per politics/econ/weather; health green, 80 tests)
 
 Working copy: `C:\\Users\\ethan\\kalshi-build\\kalshi-monster`
 
@@ -18,6 +18,13 @@ Quick status: **P0 done · P1 done · P2 done · P3 1 pending**
 - Wired `compute_historical_brier` (from graded Win/Loss predictions in predictions.db), `refresh_historical_brier` Tauri command, and UI trigger in SettingsView.tsx. `VolatilityAdjustedKelly` strategy (with `volatility_adjusted_kelly` fn) now uses real `historical_brier` for auto-shrinkage when graded history exists. (P3 brier support complete; strategy was in prior commit)
 - Committed changes from maintenance pass (no remote, skipped push).
 - Re-ran health checks post-commit: cargo check, tsc, 78 tests all green.
+
+## Maintenance notes (2026-06-25, afternoon pass)
+- Completed Rust wiring for `category_code` on `MLPrediction` (predict JSON + prompt context).
+- Python: shared `CATEGORY_MAP`, training `category_breakdown` in `_meta.json` and train response.
+- Rust: `MLCategoryStats` + `fetch_category_stats` (SQLite `json_extract` on `full_decision_json`); `MLModelStatus.category_stats` / `training_category_breakdown`; readiness text in status message.
+- `enhanced_prompt.rs`: non-sports ML rows show `[cat:N]` when category_code > 0.
+- Health: cargo check, tsc, **80** lib tests pass.
 
 ## Maintenance notes (2026-06-25)
 - Extended `ml_predictor.py` (extract_features_from_db + predict_batch) to support Kalshi predictions: now queries rows with full_decision_json, parses category/fair_probability_pct/edge_points/liquidity etc into category_code + shared numeric features. Sports path unchanged. Enables P3 multi-category ML (politics/econ/weather) once graded Kalshi history accumulates.
@@ -42,7 +49,7 @@ Quick status: **P0 done · P1 done · P2 done · P3 1 pending**
 | **P2** | Model disagreement flags at entry | Flag when `fair_probability_pct` diverges sharply from market implied prob at decision time | ✅ Done |
 | **P2** | CLV per prediction | Grading records close price and CLV on paper predictions | ✅ Done |
 | **P3** | Volatility-adjusted Kelly from historical Brier | Shrinkage slider is manual; handoffs call for Brier-driven auto-shrinkage | ✅ Done (2026-06-24; brier compute/refresh/strategy wired) |
-| **P3** | Multi-category ML classifiers (politics/econ/weather) | Current ML is scikit-learn on sports prop features via Python subprocess; README still lists ML training as unchecked | ⬜ In progress (2026-06-25; Kalshi feature extraction via full_decision_json + category_code started) |
+| **P3** | Multi-category ML classifiers (politics/econ/weather) | Current ML is scikit-learn on sports prop features via Python subprocess; README still lists ML training as unchecked | ⬜ In progress (2026-06-25; Kalshi features + category_code + per-category readiness stats in ml_get_model_status; dedicated per-category models still blocked on 10+ graded samples each) |
 
 ---
 
@@ -95,7 +102,7 @@ Quick status: **P0 done · P1 done · P2 done · P3 1 pending**
 P0–P2 are complete. 
 
 1. Volatility-adjusted Kelly from historical Brier (auto-shrinkage) — ✅ Done (2026-06-24; `volatility_adjusted_kelly` fn + `compute_historical_brier` + `refresh_historical_brier` command + UI trigger wired; strategy now uses real data for shrinkage when graded history accumulates in predictions.db)
-2. Multi-category ML classifiers (politics/econ/weather) — ⬜ In progress (2026-06-25; feature extraction for Kalshi categories started in ml_predictor.py using full_decision_json, category_code, fair_probability_pct, edge etc. Sports path preserved. Will enable training on non-sports once graded history exists.)
+2. Multi-category ML classifiers (politics/econ/weather) — ⬜ In progress (2026-06-25; unified model trains on sports + Kalshi via category_code; `ml_get_model_status` reports per-category resolved counts and trainable flags; next step: split trainers once politics/econ/weather each have 10+ graded rows)
 
 Off-roadmap fix shipped 2026-06-22: notification settings now persist to `~/.openclaw/kalshi-monster/notification_settings.json` (`notification::load_settings`/`save_settings`); previously `save_notification_settings` only logged and `get_notification_settings` always returned defaults.
 

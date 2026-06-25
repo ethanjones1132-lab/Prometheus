@@ -35,6 +35,8 @@ pub struct MLTrainingResult {
     pub model_path: Option<String>,
     pub feature_importance: Option<Vec<MLFeatureImportance>>,
     pub message: String,
+    #[serde(default)]
+    pub category_breakdown: Option<std::collections::HashMap<String, i64>>,
 }
 
 /// Feature importance from the trained model
@@ -56,6 +58,8 @@ pub struct MLPrediction {
     pub original_confidence: i64,
     pub original_probability: Option<f64>,
     pub line_change: f64,
+    #[serde(default)]
+    pub category_code: Option<i64>,
 }
 
 /// Batch prediction result
@@ -66,6 +70,16 @@ pub struct MLPredictionBatch {
     pub predictions_count: i64,
     pub predictions: Vec<MLPrediction>,
     pub message: String,
+}
+
+/// Resolved prediction counts per market category (for multi-category ML readiness)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MLCategoryStats {
+    pub category: String,
+    pub resolved_count: i64,
+    pub pending_count: i64,
+    /// True when resolved_count >= min for a dedicated per-category model
+    pub trainable: bool,
 }
 
 /// ML model status for the frontend
@@ -81,6 +95,12 @@ pub struct MLModelStatus {
     pub feature_importance: Option<Vec<MLFeatureImportance>>,
     pub pending_predictions: i64,
     pub resolved_predictions: i64,
+    /// Live DB counts by category (Kalshi politics/econ/weather + sports)
+    #[serde(default)]
+    pub category_stats: Vec<MLCategoryStats>,
+    /// Last training set mix (from model _meta.json when available)
+    #[serde(default)]
+    pub training_category_breakdown: Option<std::collections::HashMap<String, i64>>,
     pub message: String,
 }
 
@@ -282,6 +302,58 @@ pub async fn predict_batch(
     Ok(result)
 }
 
+/// Minimum resolved samples before a per-category dedicated model is considered viable
+const MIN_CATEGORY_TRAIN_SAMPLES: i64 = 10;
+
+/// Aggregate resolved/pending counts by market category for multi-category ML readiness
+async fn fetch_category_stats(pool: &Pool<Sqlite>) -> Vec<MLCategoryStats> {
+    let rows = sqlx::query(
+        r#"
+        SELECT
+            COALESCE(
+                NULLIF(json_extract(full_decision_json, '$.category'), ''),
+                NULLIF(stat_category, ''),
+                'Sports'
+            ) AS category,
+            SUM(CASE WHEN outcome IN ('Win', 'Loss', 'Push') THEN 1 ELSE 0 END) AS resolved_count,
+            SUM(CASE WHEN outcome = 'Pending' THEN 1 ELSE 0 END) AS pending_count
+        FROM predictions
+        WHERE line IS NOT NULL OR full_decision_json IS NOT NULL
+        GROUP BY category
+        ORDER BY resolved_count DESC, category ASC
+        "#,
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+
+    rows.iter()
+        .map(|r| {
+            let resolved: i64 = r.try_get("resolved_count").unwrap_or(0);
+            MLCategoryStats {
+                category: r.try_get("category").unwrap_or_else(|_| "Other".to_string()),
+                resolved_count: resolved,
+                pending_count: r.try_get("pending_count").unwrap_or(0),
+                trainable: resolved >= MIN_CATEGORY_TRAIN_SAMPLES,
+            }
+        })
+        .collect()
+}
+
+fn format_category_readiness(stats: &[MLCategoryStats]) -> String {
+    if stats.is_empty() {
+        return String::new();
+    }
+    let parts: Vec<String> = stats
+        .iter()
+        .map(|s| {
+            let flag = if s.trainable { "ready" } else { "need 10+" };
+            format!("{}: {} resolved ({})", s.category, s.resolved_count, flag)
+        })
+        .collect();
+    format!(" Category mix: {}.", parts.join("; "))
+}
+
 /// Get ML model status including training metadata
 pub async fn get_model_status(
     pool: &Pool<Sqlite>,
@@ -295,7 +367,15 @@ pub async fn get_model_status(
     let model_exists = model.exists();
 
     // Load metadata if available
-    let (trained_at, samples, cv_mean, cv_std, win_rate, feature_importance) = if meta_path.exists() {
+    let (
+        trained_at,
+        samples,
+        cv_mean,
+        cv_std,
+        win_rate,
+        feature_importance,
+        training_category_breakdown,
+    ) = if meta_path.exists() {
         let content = std::fs::read_to_string(&meta_path)
             .map_err(|e| format!("Failed to read model meta: {}", e))?;
         #[derive(Deserialize)]
@@ -306,6 +386,8 @@ pub async fn get_model_status(
             cv_accuracy_std: f64,
             win_rate: f64,
             feature_importance: Vec<MLFeatureImportance>,
+            #[serde(default)]
+            category_breakdown: Option<std::collections::HashMap<String, i64>>,
         }
         match serde_json::from_str::<Meta>(&content) {
             Ok(m) => (
@@ -315,12 +397,15 @@ pub async fn get_model_status(
                 Some(m.cv_accuracy_std),
                 Some(m.win_rate),
                 Some(m.feature_importance),
+                m.category_breakdown,
             ),
-            Err(_) => (None, None, None, None, None, None),
+            Err(_) => (None, None, None, None, None, None, None),
         }
     } else {
-        (None, None, None, None, None, None)
+        (None, None, None, None, None, None, None)
     };
+
+    let category_stats = fetch_category_stats(pool).await;
 
     // Count predictions
     let pending: i64 = sqlx::query_scalar(
@@ -337,16 +422,24 @@ pub async fn get_model_status(
     .await
     .unwrap_or(0);
 
+    let readiness = format_category_readiness(&category_stats);
     let message = if !model_exists {
-        "No model trained yet. Need at least 10 resolved predictions to train.".to_string()
+        format!(
+            "No model trained yet. Need at least 10 resolved predictions to train.{}",
+            readiness
+        )
     } else if let Some(s) = samples {
         format!(
-            "Model trained on {} samples. CV accuracy: {:.1}%",
+            "Model trained on {} samples. CV accuracy: {:.1}%.{}",
             s,
-            cv_mean.unwrap_or(0.0) * 100.0
+            cv_mean.unwrap_or(0.0) * 100.0,
+            readiness
         )
     } else {
-        "Model file exists but metadata is missing. Retrain for best results.".to_string()
+        format!(
+            "Model file exists but metadata is missing. Retrain for best results.{}",
+            readiness
+        )
     };
 
     Ok(MLModelStatus {
@@ -360,6 +453,8 @@ pub async fn get_model_status(
         feature_importance,
         pending_predictions: pending,
         resolved_predictions: resolved,
+        category_stats,
+        training_category_breakdown,
         message,
     })
 }
@@ -474,6 +569,7 @@ pub async fn get_stored_ml_predictions(
             original_confidence: r.get::<Option<i64>, _>("confidence_score").unwrap_or(50),
             original_probability: r.get("probability"),
             line_change: 0.0,  // not stored in ml_predictions table
+            category_code: None,
         })
         .collect())
 }
@@ -496,11 +592,12 @@ pub fn generate_ml_context(predictions: &[MLPrediction], accuracy: Option<f64>) 
             "❌"
         };
         ctx.push_str(&format!(
-            "  {} {} {} {} — ML Win Prob: {:.1}% ({}), Line: {:.1}\n",
+            "  {} {} {} {} (cat:{}) — ML Win Prob: {:.1}% ({}), Line: {:.1}\n",
             emoji,
             pred.player_name,
             pred.ml_prediction,
             pred.stat_category,
+            pred.category_code.unwrap_or(0),
             pred.ml_win_probability * 100.0,
             if pred.ml_win_probability >= 0.5 {
                 "Lean Over"
@@ -568,4 +665,48 @@ pub async fn export_features_csv(
     .map_err(|e| format!("Task join error: {}", e))??;
 
     Ok(result.output_path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ml_prediction_deserializes_category_code() {
+        let json = r#"{
+            "prediction_id": "p1",
+            "player_name": "FED-25DEC",
+            "stat_category": "Economics",
+            "line": 62.0,
+            "ml_win_probability": 0.55,
+            "ml_prediction": "Win",
+            "original_confidence": 55,
+            "original_probability": 0.55,
+            "line_change": 0.0,
+            "category_code": 2
+        }"#;
+        let pred: MLPrediction = serde_json::from_str(json).expect("parse");
+        assert_eq!(pred.category_code, Some(2));
+    }
+
+    #[test]
+    fn format_category_readiness_lists_trainable_flags() {
+        let stats = vec![
+            MLCategoryStats {
+                category: "Politics".into(),
+                resolved_count: 12,
+                pending_count: 1,
+                trainable: true,
+            },
+            MLCategoryStats {
+                category: "Weather".into(),
+                resolved_count: 3,
+                pending_count: 0,
+                trainable: false,
+            },
+        ];
+        let msg = format_category_readiness(&stats);
+        assert!(msg.contains("Politics: 12 resolved (ready)"));
+        assert!(msg.contains("Weather: 3 resolved (need 10+)"));
+    }
 }

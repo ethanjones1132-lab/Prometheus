@@ -94,8 +94,13 @@ pub async fn build_ultimate_prompt(
             for pred in preds.iter().take(15) {
                 let emoji = if pred.ml_win_probability >= 0.55 { "✅" } else if pred.ml_win_probability >= 0.45 { "⚠️" } else { "❌" };
                 let lean = if pred.ml_win_probability >= 0.5 { "Lean OVER" } else { "Lean UNDER" };
-                let _ = write!(prompt, "  {} {} — {} {} | Line: {:.1} | ML Win Prob: {:.1}% ({})",
-                    emoji, pred.player_name, pred.ml_prediction, pred.stat_category,
+                let cat_label = pred
+                    .category_code
+                    .filter(|c| *c > 0)
+                    .map(|c| format!(" [cat:{}]", c))
+                    .unwrap_or_default();
+                let _ = write!(prompt, "  {} {}{} — {} {} | Line: {:.1} | ML Win Prob: {:.1}% ({})",
+                    emoji, pred.player_name, cat_label, pred.ml_prediction, pred.stat_category,
                     pred.line, pred.ml_win_probability * 100.0, lean);
                 if let Some(orig_prob) = pred.original_probability {
                     let agreement = (pred.ml_win_probability >= 0.5) == (orig_prob >= 50.0);

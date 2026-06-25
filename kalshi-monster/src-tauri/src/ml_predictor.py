@@ -41,6 +41,17 @@ FEATURE_COLUMNS = [
     # outcome_encoded is target, not a feature
 ]
 
+CATEGORY_MAP = {
+    "Sports": 0,
+    "Politics": 1,
+    "Economics": 2,
+    "Crypto": 3,
+    "Finance": 4,
+    "Weather": 5,
+    "Other": 6,
+}
+CODE_TO_CATEGORY = {code: name for name, code in CATEGORY_MAP.items()}
+
 def extract_features_from_db(db_path: str) -> dict:
     """Extract training features from the SQLite database."""
     conn = sqlite3.connect(db_path)
@@ -101,8 +112,7 @@ def extract_features_from_db(db_path: str) -> dict:
             try:
                 dec = json.loads(full_dec_json) if isinstance(full_dec_json, (str, bytes)) else (full_dec_json or {})
                 cat = dec.get("category", "Other") if isinstance(dec, dict) else "Other"
-                cat_map = {"Sports": 0, "Politics": 1, "Economics": 2, "Crypto": 3, "Finance": 4, "Weather": 5, "Other": 6}
-                category_code = cat_map.get(cat, 6)
+                category_code = CATEGORY_MAP.get(cat, 6)
                 fair = float(dec.get("fair_probability_pct", 50.0)) if isinstance(dec, dict) else 50.0
                 mkt = float(dec.get("market_price_pct", 50.0)) if isinstance(dec, dict) else 50.0
                 edge_pct = float(dec.get("edge_points", 0.0)) if isinstance(dec, dict) else 0.0
@@ -202,7 +212,6 @@ def extract_features_from_db(db_path: str) -> dict:
         "metadata": metadata,
     }
 
-
 def train_model(db_path: str, output_path: str) -> dict:
     """Train a model on historical data."""
     from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier
@@ -255,6 +264,14 @@ def train_model(db_path: str, output_path: str) -> dict:
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     joblib.dump(pipeline, output_path)
 
+    from collections import Counter
+
+    cat_counts = Counter(m.get("category_code", 0) for m in data["metadata"])
+    category_breakdown = {
+        CODE_TO_CATEGORY.get(code, "Other"): int(count)
+        for code, count in sorted(cat_counts.items())
+    }
+
     # Also save feature metadata
     meta_path = output_path.replace(".joblib", "_meta.json")
     with open(meta_path, "w") as f:
@@ -265,6 +282,7 @@ def train_model(db_path: str, output_path: str) -> dict:
             "cv_accuracy_std": float(cv_scores.std()),
             "feature_importance": [{"feature": ft, "importance": float(imp)} for ft, imp in feature_importance],
             "win_rate": float(y.mean()),
+            "category_breakdown": category_breakdown,
         }, f, indent=2)
 
     return {
@@ -275,9 +293,9 @@ def train_model(db_path: str, output_path: str) -> dict:
         "win_rate": round(float(y.mean()), 4),
         "model_path": output_path,
         "feature_importance": [{"feature": ft, "importance": round(float(imp), 4)} for ft, imp in feature_importance],
+        "category_breakdown": category_breakdown,
         "message": f"Trained on {len(X)} samples. CV accuracy: {cv_scores.mean():.1%} ± {cv_scores.std():.1%}",
     }
-
 
 def predict_batch(db_path: str, model_path: str) -> dict:
     """Generate predictions for all pending props."""
@@ -338,8 +356,7 @@ def predict_batch(db_path: str, model_path: str) -> dict:
             try:
                 dec = json.loads(full_dec_json) if isinstance(full_dec_json, (str, bytes)) else (full_dec_json or {})
                 cat = dec.get("category", "Other") if isinstance(dec, dict) else "Other"
-                cat_map = {"Sports": 0, "Politics": 1, "Economics": 2, "Crypto": 3, "Finance": 4, "Weather": 5, "Other": 6}
-                category_code = cat_map.get(cat, 6)
+                category_code = CATEGORY_MAP.get(cat, 6)
                 fair = float(dec.get("fair_probability_pct", 50.0)) if isinstance(dec, dict) else 50.0
                 mkt = float(dec.get("market_price_pct", 50.0)) if isinstance(dec, dict) else 50.0
                 edge_pct = float(dec.get("edge_points", 0.0)) if isinstance(dec, dict) else 0.0
@@ -433,6 +450,7 @@ def predict_batch(db_path: str, model_path: str) -> dict:
             "original_confidence": conf,
             "original_probability": pred["probability"],
             "line_change": round(line_change, 2),
+            "category_code": category_code,
         })
 
     return {
@@ -441,7 +459,6 @@ def predict_batch(db_path: str, model_path: str) -> dict:
         "predictions_count": len(results),
         "predictions": results,
     }
-
 
 def export_features_csv(db_path: str, output_path: str) -> dict:
     """Export feature matrix as CSV for external analysis."""
@@ -466,7 +483,6 @@ def export_features_csv(db_path: str, output_path: str) -> dict:
         "samples": len(X),
         "output_path": output_path,
     }
-
 
 def main():
     parser = argparse.ArgumentParser(description="Kalshi / PrizePicks Monster ML Engine")
@@ -512,7 +528,6 @@ def main():
         sys.exit(1)
 
     print(json.dumps(result, indent=2))
-
 
 if __name__ == "__main__":
     main()
