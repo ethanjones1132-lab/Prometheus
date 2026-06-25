@@ -250,3 +250,29 @@ export interface DataSourceStatus {
   kalshi_index_size: number;
   openrouter_configured: boolean;
 }
+
+export interface MLCategoryStat {
+  category: string;
+  resolved_count: number;
+  pending_count: number;
+  trainable: boolean;
+}
+
+export interface MLPerCategoryModel {
+  samples: number;
+  cv_accuracy_mean?: number;
+  model_exists: boolean;
+}
+
+export interface MLModelStatus {
+  model_exists: boolean;
+  model_path: string;
+  trained_at?: string;
+  samples?: number;
+  cv_accuracy_mean?: number;
+  pending_predictions: number;
+  resolved_predictions: number;
+  category_stats: MLCategoryStat[];
+  per_category_models?: Record<string, MLPerCategoryModel>;
+  message: string;
+}

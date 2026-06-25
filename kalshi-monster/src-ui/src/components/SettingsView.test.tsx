@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { SettingsView } from './SettingsView';
-import { bankrollApi, configApi } from '../services/tauri';
+import { bankrollApi, configApi, mlApi } from '../services/tauri';
 
 vi.mock('../services/tauri', () => ({
   configApi: {
@@ -10,8 +10,12 @@ vi.mock('../services/tauri', () => ({
     getSecurityPosture: vi.fn(),
   },
   bankrollApi: {
+    refreshHistoricalBrier: vi.fn(),
     getConfig: vi.fn(),
     getSummary: vi.fn(),
+  },
+  mlApi: {
+    getModelStatus: vi.fn(),
   },
 }));
 
@@ -115,6 +119,17 @@ describe('SettingsView', () => {
       paper_cash_balance: 10000,
       paper_realized_pnl: 0,
       synced_at: '2026-06-22T17:00:00Z',
+    });
+    vi.mocked(bankrollApi.refreshHistoricalBrier).mockResolvedValue(0.129);
+    vi.mocked(mlApi.getModelStatus).mockResolvedValue({
+      model_exists: false,
+      model_path: '/tmp/ml_model.joblib',
+      pending_predictions: 2,
+      resolved_predictions: 5,
+      category_stats: [
+        { category: 'Sports', resolved_count: 5, pending_count: 2, trainable: false },
+      ],
+      message: 'No model trained yet.',
     });
   });
 

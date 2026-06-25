@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { bankrollApi, configApi } from '../services/tauri';
-import type { ApiStatus, AppConfig, BankrollConfig, BankrollSummary, ModelInfo, SecurityPosture } from '../types';
+import { bankrollApi, configApi, mlApi } from '../services/tauri';
+import type { ApiStatus, AppConfig, BankrollConfig, BankrollSummary, MLModelStatus, ModelInfo, SecurityPosture } from '../types';
 
 const EMPTY_CONFIG: AppConfig = {
   openrouter_api_key: '',
@@ -48,6 +48,8 @@ export function SettingsView() {
   const [securityPosture, setSecurityPosture] = useState<SecurityPosture | null>(null);
   const [bankrollSummary, setBankrollSummary] = useState<BankrollSummary | null>(null);
   const [bankrollError, setBankrollError] = useState<string | null>(null);
+  const [mlStatus, setMlStatus] = useState<MLModelStatus | null>(null);
+  const [mlError, setMlError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [bankrollLoading, setBankrollLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -96,13 +98,24 @@ export function SettingsView() {
     }
   }, []);
 
+  const loadMlStatus = useCallback(async () => {
+    setMlError(null);
+    try {
+      const status = await mlApi.getModelStatus();
+      setMlStatus(status);
+    } catch (e) {
+      setMlError(e instanceof Error ? e.message : String(e));
+    }
+  }, []);
+
   useEffect(() => {
     void load();
   }, [load]);
 
   useEffect(() => {
     void loadBankroll();
-  }, [loadBankroll]);
+    void loadMlStatus();
+  }, [loadBankroll, loadMlStatus]);
 
   const handleSave = async () => {
     setSaving(true);
@@ -280,6 +293,59 @@ export function SettingsView() {
             </p>
           </>
         ) : null}
+      </div>
+
+      <div className="card settingsWide">
+        <h3>ML multi-category readiness</h3>
+        {mlError ? (
+          <div className="banner error">{mlError}</div>
+        ) : mlStatus ? (
+          <>
+            <p className="muted">{mlStatus.message}</p>
+            <div className="metricGrid">
+              <div className="metricCard">
+                <span>Unified model</span>
+                <strong>{mlStatus.model_exists ? 'Trained' : 'Not trained'}</strong>
+                <small>
+                  {mlStatus.resolved_predictions} resolved · {mlStatus.pending_predictions} pending
+                </small>
+              </div>
+              {mlStatus.samples != null && mlStatus.cv_accuracy_mean != null ? (
+                <div className="metricCard">
+                  <span>CV accuracy</span>
+                  <strong>{(mlStatus.cv_accuracy_mean * 100).toFixed(1)}%</strong>
+                  <small>{mlStatus.samples} training samples</small>
+                </div>
+              ) : null}
+            </div>
+            {mlStatus.category_stats.length > 0 ? (
+              <ul className="muted" style={{ marginTop: '0.75rem' }}>
+                {mlStatus.category_stats.map((s) => (
+                  <li key={s.category}>
+                    {s.category}: {s.resolved_count} resolved, {s.pending_count} pending —{' '}
+                    {s.trainable ? 'ready for sidecar model' : 'need 10+ graded'}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="muted">No categorized predictions in DB yet.</p>
+            )}
+            {mlStatus.per_category_models && Object.keys(mlStatus.per_category_models).length > 0 ? (
+              <p className="muted">
+                Active sidecars:{' '}
+                {Object.entries(mlStatus.per_category_models)
+                  .map(([name, m]) =>
+                    m.model_exists
+                      ? `${name} (${m.samples} samples)`
+                      : `${name} (missing file)`,
+                  )
+                  .join(' · ')}
+              </p>
+            ) : null}
+          </>
+        ) : (
+          <div className="state">Loading ML status…</div>
+        )}
       </div>
 
       <div className="settingsGrid">

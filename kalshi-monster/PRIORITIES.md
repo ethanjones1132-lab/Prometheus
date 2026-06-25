@@ -1,6 +1,6 @@
 # Kalshi Monster — Priority Roadmap
 
-Last updated: 2026-06-25 (P3 multi-category ML: category_code wired Rust↔Python; train meta + ml_get_model_status expose category_stats/trainable flags per politics/econ/weather; health green, 80 tests)
+Last updated: 2026-06-25 (P3: per-category ML sidecar train/predict + Settings readiness panel; gitignore __pycache__; health green, 80 tests)
 
 Working copy: `C:\\Users\\ethan\\kalshi-build\\kalshi-monster`
 
@@ -18,6 +18,13 @@ Quick status: **P0 done · P1 done · P2 done · P3 1 pending**
 - Wired `compute_historical_brier` (from graded Win/Loss predictions in predictions.db), `refresh_historical_brier` Tauri command, and UI trigger in SettingsView.tsx. `VolatilityAdjustedKelly` strategy (with `volatility_adjusted_kelly` fn) now uses real `historical_brier` for auto-shrinkage when graded history exists. (P3 brier support complete; strategy was in prior commit)
 - Committed changes from maintenance pass (no remote, skipped push).
 - Re-ran health checks post-commit: cargo check, tsc, 78 tests all green.
+
+## Maintenance notes (2026-06-25, evening pass)
+- `ml_predictor.py`: trains optional sidecar models for Politics/Economics/Weather when each has 10+ graded samples; `predict_batch` routes to sidecar when present.
+- `ml_predictor.rs`: `MLPerCategoryModel` + `per_category_models` on `MLModelStatus` (from `_meta.json` + on-disk joblib check).
+- Settings: **ML multi-category readiness** card (`ml_get_model_status`, per-category resolved counts and sidecar status).
+- `.gitignore`: `__pycache__` / `*.pyc`.
+- Health: cargo check, tsc, **80** lib tests pass.
 
 ## Maintenance notes (2026-06-25, afternoon pass)
 - Completed Rust wiring for `category_code` on `MLPrediction` (predict JSON + prompt context).
@@ -49,7 +56,7 @@ Quick status: **P0 done · P1 done · P2 done · P3 1 pending**
 | **P2** | Model disagreement flags at entry | Flag when `fair_probability_pct` diverges sharply from market implied prob at decision time | ✅ Done |
 | **P2** | CLV per prediction | Grading records close price and CLV on paper predictions | ✅ Done |
 | **P3** | Volatility-adjusted Kelly from historical Brier | Shrinkage slider is manual; handoffs call for Brier-driven auto-shrinkage | ✅ Done (2026-06-24; brier compute/refresh/strategy wired) |
-| **P3** | Multi-category ML classifiers (politics/econ/weather) | Current ML is scikit-learn on sports prop features via Python subprocess; README still lists ML training as unchecked | ⬜ In progress (2026-06-25; Kalshi features + category_code + per-category readiness stats in ml_get_model_status; dedicated per-category models still blocked on 10+ graded samples each) |
+| **P3** | Multi-category ML classifiers (politics/econ/weather) | Current ML is scikit-learn on sports prop features via Python subprocess; README still lists ML training as unchecked | ⬜ In progress (2026-06-25; unified + sidecar trainers when 10+ graded/category; predict routing; Settings + `ml_get_model_status` UI; awaits graded Kalshi history) |
 
 ---
 
@@ -102,7 +109,7 @@ Quick status: **P0 done · P1 done · P2 done · P3 1 pending**
 P0–P2 are complete. 
 
 1. Volatility-adjusted Kelly from historical Brier (auto-shrinkage) — ✅ Done (2026-06-24; `volatility_adjusted_kelly` fn + `compute_historical_brier` + `refresh_historical_brier` command + UI trigger wired; strategy now uses real data for shrinkage when graded history accumulates in predictions.db)
-2. Multi-category ML classifiers (politics/econ/weather) — ⬜ In progress (2026-06-25; unified model trains on sports + Kalshi via category_code; `ml_get_model_status` reports per-category resolved counts and trainable flags; next step: split trainers once politics/econ/weather each have 10+ graded rows)
+2. Multi-category ML classifiers (politics/econ/weather) — ⬜ In progress (2026-06-25; sidecar train/infer wired; UI readiness in Settings; fully active once politics/econ/weather each accumulate 10+ graded rows)
 
 Off-roadmap fix shipped 2026-06-22: notification settings now persist to `~/.openclaw/kalshi-monster/notification_settings.json` (`notification::load_settings`/`save_settings`); previously `save_notification_settings` only logged and `get_notification_settings` always returned defaults.
 

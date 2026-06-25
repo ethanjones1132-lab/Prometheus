@@ -52,6 +52,62 @@ CATEGORY_MAP = {
 }
 CODE_TO_CATEGORY = {code: name for name, code in CATEGORY_MAP.items()}
 
+MIN_CATEGORY_TRAIN_SAMPLES = 10
+PER_CATEGORY_MODEL_NAMES = ("Politics", "Economics", "Weather")
+
+
+def category_sidecar_path(output_path: str, category: str) -> str:
+    p = Path(output_path)
+    return str(p.with_name(f"{p.stem}_{category.lower()}.joblib"))
+
+
+def _fit_gradient_boosting_pipeline(X: np.ndarray, y: np.ndarray):
+    from sklearn.ensemble import GradientBoostingClassifier
+    from sklearn.model_selection import cross_val_score
+    from sklearn.preprocessing import StandardScaler
+    from sklearn.pipeline import Pipeline
+
+    pipeline = Pipeline([
+        ("scaler", StandardScaler()),
+        ("model", GradientBoostingClassifier(
+            n_estimators=min(100, max(10, len(X) // 2)),
+            max_depth=min(5, max(2, len(X) // 10)),
+            learning_rate=0.1,
+            random_state=42,
+        )),
+    ])
+
+    cv_folds = min(5, len(X))
+    if cv_folds >= 2:
+        cv_scores = cross_val_score(pipeline, X, y, cv=cv_folds, scoring="accuracy")
+    else:
+        cv_scores = np.array([0.0])
+
+    pipeline.fit(X, y)
+    model = pipeline.named_steps["model"]
+    importances = model.feature_importances_.tolist()
+    feature_importance = sorted(
+        zip(FEATURE_COLUMNS, importances),
+        key=lambda x: x[1],
+        reverse=True,
+    )
+    return pipeline, cv_scores, feature_importance
+
+
+def _load_category_sidecars(model_path: str) -> dict:
+    import joblib
+
+    sidecars = {}
+    for cat in PER_CATEGORY_MODEL_NAMES:
+        path = category_sidecar_path(model_path, cat)
+        if Path(path).exists():
+            try:
+                sidecars[cat] = joblib.load(path)
+            except Exception:
+                pass
+    return sidecars
+
+
 def extract_features_from_db(db_path: str) -> dict:
     """Extract training features from the SQLite database."""
     conn = sqlite3.connect(db_path)
@@ -213,11 +269,7 @@ def extract_features_from_db(db_path: str) -> dict:
     }
 
 def train_model(db_path: str, output_path: str) -> dict:
-    """Train a model on historical data."""
-    from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier
-    from sklearn.model_selection import cross_val_score
-    from sklearn.preprocessing import StandardScaler
-    from sklearn.pipeline import Pipeline
+    """Train unified model plus per-category sidecars when enough graded samples exist."""
     import joblib
 
     data = extract_features_from_db(db_path)
@@ -230,37 +282,8 @@ def train_model(db_path: str, output_path: str) -> dict:
             "message": f"Need at least 10 resolved predictions, found {len(X)}. Resolve more predictions first.",
         }
 
-    # GradientBoosting with StandardScaler
-    pipeline = Pipeline([
-        ("scaler", StandardScaler()),
-        ("model", GradientBoostingClassifier(
-            n_estimators=min(100, max(10, len(X) // 2)),
-            max_depth=min(5, max(2, len(X) // 10)),
-            learning_rate=0.1,
-            random_state=42,
-        )),
-    ])
+    pipeline, cv_scores, feature_importance = _fit_gradient_boosting_pipeline(X, y)
 
-    # Cross-validation
-    cv_folds = min(5, len(X))
-    if cv_folds >= 2:
-        cv_scores = cross_val_score(pipeline, X, y, cv=cv_folds, scoring="accuracy")
-    else:
-        cv_scores = np.array([0.0])
-
-    # Train on full data
-    pipeline.fit(X, y)
-
-    # Feature importances
-    model = pipeline.named_steps["model"]
-    importances = model.feature_importances_.tolist()
-    feature_importance = sorted(
-        zip(FEATURE_COLUMNS, importances),
-        key=lambda x: x[1],
-        reverse=True,
-    )
-
-    # Save model
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     joblib.dump(pipeline, output_path)
 
@@ -272,7 +295,26 @@ def train_model(db_path: str, output_path: str) -> dict:
         for code, count in sorted(cat_counts.items())
     }
 
-    # Also save feature metadata
+    per_category_models = {}
+    for cat_name in PER_CATEGORY_MODEL_NAMES:
+        code = CATEGORY_MAP[cat_name]
+        indices = [
+            i for i, m in enumerate(data["metadata"])
+            if m.get("category_code") == code
+        ]
+        if len(indices) < MIN_CATEGORY_TRAIN_SAMPLES:
+            continue
+        X_cat = X[indices]
+        y_cat = y[indices]
+        cat_pipeline, cat_cv, _ = _fit_gradient_boosting_pipeline(X_cat, y_cat)
+        cat_path = category_sidecar_path(output_path, cat_name)
+        joblib.dump(cat_pipeline, cat_path)
+        per_category_models[cat_name] = {
+            "model_path": cat_path,
+            "samples": len(X_cat),
+            "cv_accuracy_mean": round(float(cat_cv.mean()), 4),
+        }
+
     meta_path = output_path.replace(".joblib", "_meta.json")
     with open(meta_path, "w") as f:
         json.dump({
@@ -283,7 +325,13 @@ def train_model(db_path: str, output_path: str) -> dict:
             "feature_importance": [{"feature": ft, "importance": float(imp)} for ft, imp in feature_importance],
             "win_rate": float(y.mean()),
             "category_breakdown": category_breakdown,
+            "per_category_models": per_category_models,
         }, f, indent=2)
+
+    sidecar_note = ""
+    if per_category_models:
+        names = ", ".join(per_category_models.keys())
+        sidecar_note = f" Sidecar models: {names}."
 
     return {
         "status": "trained",
@@ -294,7 +342,8 @@ def train_model(db_path: str, output_path: str) -> dict:
         "model_path": output_path,
         "feature_importance": [{"feature": ft, "importance": round(float(imp), 4)} for ft, imp in feature_importance],
         "category_breakdown": category_breakdown,
-        "message": f"Trained on {len(X)} samples. CV accuracy: {cv_scores.mean():.1%} ± {cv_scores.std():.1%}",
+        "per_category_models": per_category_models,
+        "message": f"Trained on {len(X)} samples. CV accuracy: {cv_scores.mean():.1%} ± {cv_scores.std():.1%}.{sidecar_note}",
     }
 
 def predict_batch(db_path: str, model_path: str) -> dict:
@@ -305,6 +354,7 @@ def predict_batch(db_path: str, model_path: str) -> dict:
         return {"status": "no_model", "message": f"Model not found at {model_path}. Train first."}
 
     pipeline = joblib.load(model_path)
+    category_pipelines = _load_category_sidecars(model_path)
 
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
@@ -437,7 +487,9 @@ def predict_batch(db_path: str, model_path: str) -> dict:
             float(category_code),
         ]])
 
-        ml_win_prob = float(pipeline.predict_proba(features)[0][1])
+        cat_name = CODE_TO_CATEGORY.get(category_code, "Other")
+        scorer = category_pipelines.get(cat_name, pipeline)
+        ml_win_prob = float(scorer.predict_proba(features)[0][1])
         ml_prediction = "Win" if ml_win_prob >= 0.5 else "Loss"
 
         results.append({

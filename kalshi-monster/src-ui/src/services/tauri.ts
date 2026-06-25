@@ -15,6 +15,7 @@ import type {
   PropAnalysisResult,
   SecurityPosture,
   ScoredProp,
+  MLModelStatus,
 } from '../types';
 
 // ── Config ──────────────────────────────────────────────────────
@@ -95,4 +96,10 @@ export const bankrollApi = {
 
 export const statusApi = {
   getDataSourceStatus: () => invoke<DataSourceStatus>('get_data_source_status'),
+};
+
+// ── ML (multi-category readiness) ───────────────────────────────
+
+export const mlApi = {
+  getModelStatus: () => invoke<MLModelStatus>('ml_get_model_status', { modelPath: null }),
 };

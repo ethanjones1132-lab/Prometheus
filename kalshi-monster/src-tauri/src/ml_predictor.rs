@@ -82,6 +82,14 @@ pub struct MLCategoryStats {
     pub trainable: bool,
 }
 
+/// Per-category sidecar model summary (politics/econ/weather)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MLPerCategoryModel {
+    pub samples: i64,
+    pub cv_accuracy_mean: Option<f64>,
+    pub model_exists: bool,
+}
+
 /// ML model status for the frontend
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MLModelStatus {
@@ -101,6 +109,9 @@ pub struct MLModelStatus {
     /// Last training set mix (from model _meta.json when available)
     #[serde(default)]
     pub training_category_breakdown: Option<std::collections::HashMap<String, i64>>,
+    /// Trained sidecar classifiers per non-sports category (when 10+ graded samples)
+    #[serde(default)]
+    pub per_category_models: Option<std::collections::HashMap<String, MLPerCategoryModel>>,
     pub message: String,
 }
 
@@ -375,9 +386,18 @@ pub async fn get_model_status(
         win_rate,
         feature_importance,
         training_category_breakdown,
+        per_category_models,
     ) = if meta_path.exists() {
         let content = std::fs::read_to_string(&meta_path)
             .map_err(|e| format!("Failed to read model meta: {}", e))?;
+        #[derive(Deserialize)]
+        struct CatMetaRaw {
+            samples: i64,
+            #[serde(default)]
+            cv_accuracy_mean: Option<f64>,
+            #[serde(default)]
+            model_path: Option<String>,
+        }
         #[derive(Deserialize)]
         struct Meta {
             trained_at: String,
@@ -388,21 +408,56 @@ pub async fn get_model_status(
             feature_importance: Vec<MLFeatureImportance>,
             #[serde(default)]
             category_breakdown: Option<std::collections::HashMap<String, i64>>,
+            #[serde(default)]
+            per_category_models: Option<std::collections::HashMap<String, CatMetaRaw>>,
         }
         match serde_json::from_str::<Meta>(&content) {
-            Ok(m) => (
-                Some(m.trained_at),
-                Some(m.samples),
-                Some(m.cv_accuracy_mean),
-                Some(m.cv_accuracy_std),
-                Some(m.win_rate),
-                Some(m.feature_importance),
-                m.category_breakdown,
-            ),
-            Err(_) => (None, None, None, None, None, None, None),
+            Ok(m) => {
+                let per_cat = m.per_category_models.map(|raw| {
+                    raw.into_iter()
+                        .map(|(name, info)| {
+                            let path = info.model_path.as_ref().map(PathBuf::from);
+                            let exists = path
+                                .as_ref()
+                                .map(|p| p.exists())
+                                .unwrap_or_else(|| {
+                                    let stem = model
+                                        .file_stem()
+                                        .unwrap_or_default()
+                                        .to_string_lossy();
+                                    let sidecar = model.with_file_name(format!(
+                                        "{}_{}.joblib",
+                                        stem,
+                                        name.to_lowercase()
+                                    ));
+                                    sidecar.exists()
+                                });
+                            (
+                                name,
+                                MLPerCategoryModel {
+                                    samples: info.samples,
+                                    cv_accuracy_mean: info.cv_accuracy_mean,
+                                    model_exists: exists,
+                                },
+                            )
+                        })
+                        .collect()
+                });
+                (
+                    Some(m.trained_at),
+                    Some(m.samples),
+                    Some(m.cv_accuracy_mean),
+                    Some(m.cv_accuracy_std),
+                    Some(m.win_rate),
+                    Some(m.feature_importance),
+                    m.category_breakdown,
+                    per_cat,
+                )
+            }
+            Err(_) => (None, None, None, None, None, None, None, None),
         }
     } else {
-        (None, None, None, None, None, None, None)
+        (None, None, None, None, None, None, None, None)
     };
 
     let category_stats = fetch_category_stats(pool).await;
@@ -455,6 +510,7 @@ pub async fn get_model_status(
         resolved_predictions: resolved,
         category_stats,
         training_category_breakdown,
+        per_category_models,
         message,
     })
 }
