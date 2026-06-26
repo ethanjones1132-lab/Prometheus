@@ -1582,10 +1582,19 @@ pub async fn kalshi_get_dashboard_bootstrap(
         .map(|dt| dt.to_rfc3339());
     let market_count = markets.len();
     let category_count = categories.len();
-    let data_quality_notes = if partial_catalog {
-        vec!["Partial catalog loaded for fast first paint".to_string()]
-    } else {
-        vec!["Full catalog cache ready".to_string()]
+    let data_quality_notes = {
+        let mut notes = if partial_catalog {
+            vec!["Partial catalog loaded for fast first paint".to_string()]
+        } else {
+            vec!["Full catalog cache ready".to_string()]
+        };
+        if client.showing_persisted_snapshot() {
+            notes.push(
+                "Instant paint from saved market snapshot; live refresh runs in background"
+                    .to_string(),
+            );
+        }
+        notes
     };
 
     Ok(KalshiDashboardBootstrap {

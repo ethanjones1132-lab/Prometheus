@@ -127,7 +127,14 @@ describe('SettingsView', () => {
       pending_predictions: 2,
       resolved_predictions: 5,
       category_stats: [
-        { category: 'Sports', resolved_count: 5, pending_count: 2, trainable: false },
+        {
+          category: 'Sports',
+          resolved_count: 5,
+          pending_count: 2,
+          trainable: false,
+          samples_until_trainable: 5,
+          min_resolved_for_sidecar: 10,
+        },
       ],
       message: 'No model trained yet.',
     });

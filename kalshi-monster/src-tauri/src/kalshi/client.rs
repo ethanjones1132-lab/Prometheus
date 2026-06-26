@@ -52,6 +52,8 @@ pub struct KalshiClient {
     fetch_in_progress: Arc<AtomicBool>,
     /// When set, market cache snapshots are written to SQLite after each update
     persist_pool: Option<Arc<Pool<Sqlite>>>,
+    /// True when in-memory cache was restored from SQLite (not yet refreshed from API)
+    cache_from_persisted: bool,
 }
 
 impl KalshiClient {
@@ -73,6 +75,7 @@ impl KalshiClient {
             shared_cache,
             fetch_in_progress: Arc::new(AtomicBool::new(false)),
             persist_pool,
+            cache_from_persisted: false,
         }
     }
 
@@ -102,6 +105,11 @@ impl KalshiClient {
                 (status.to_string(), Some(age), !cache.full_catalog, Some(cache.fetched_at))
             }
         }
+    }
+
+    /// Whether the visible cache was rehydrated from SQLite and not yet replaced by a live fetch.
+    pub fn showing_persisted_snapshot(&self) -> bool {
+        self.cache_from_persisted && self.cache.is_some()
     }
 
     pub fn is_cache_stale(&self) -> bool {
@@ -520,6 +528,7 @@ impl KalshiClient {
             cache.markets.len(),
             cache.full_catalog
         );
+        self.cache_from_persisted = true;
         self.apply_cache(cache);
     }
 
@@ -530,6 +539,7 @@ impl KalshiClient {
             full_catalog,
         };
         self.apply_cache(cache);
+        self.cache_from_persisted = false;
         self.schedule_persist();
     }
 

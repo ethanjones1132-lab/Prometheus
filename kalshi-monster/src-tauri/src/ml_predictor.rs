@@ -80,6 +80,10 @@ pub struct MLCategoryStats {
     pub pending_count: i64,
     /// True when resolved_count >= min for a dedicated per-category model
     pub trainable: bool,
+    /// Graded samples still needed before a per-category sidecar can train
+    pub samples_until_trainable: i64,
+    /// Threshold used for `trainable` (exported for Settings UI)
+    pub min_resolved_for_sidecar: i64,
 }
 
 /// Per-category sidecar model summary (politics/econ/weather)
@@ -341,11 +345,14 @@ async fn fetch_category_stats(pool: &Pool<Sqlite>) -> Vec<MLCategoryStats> {
     rows.iter()
         .map(|r| {
             let resolved: i64 = r.try_get("resolved_count").unwrap_or(0);
+            let until = (MIN_CATEGORY_TRAIN_SAMPLES - resolved).max(0);
             MLCategoryStats {
                 category: r.try_get("category").unwrap_or_else(|_| "Other".to_string()),
                 resolved_count: resolved,
                 pending_count: r.try_get("pending_count").unwrap_or(0),
                 trainable: resolved >= MIN_CATEGORY_TRAIN_SAMPLES,
+                samples_until_trainable: until,
+                min_resolved_for_sidecar: MIN_CATEGORY_TRAIN_SAMPLES,
             }
         })
         .collect()
@@ -358,8 +365,17 @@ fn format_category_readiness(stats: &[MLCategoryStats]) -> String {
     let parts: Vec<String> = stats
         .iter()
         .map(|s| {
-            let flag = if s.trainable { "ready" } else { "need 10+" };
-            format!("{}: {} resolved ({})", s.category, s.resolved_count, flag)
+            let flag = if s.trainable {
+                "ready".to_string()
+            } else {
+                format!(
+                    "{}/{} graded ({} more for sidecar)",
+                    s.resolved_count,
+                    s.min_resolved_for_sidecar,
+                    s.samples_until_trainable
+                )
+            };
+            format!("{}: {}", s.category, flag)
         })
         .collect();
     format!(" Category mix: {}.", parts.join("; "))
@@ -753,16 +769,20 @@ mod tests {
                 resolved_count: 12,
                 pending_count: 1,
                 trainable: true,
+                samples_until_trainable: 0,
+                min_resolved_for_sidecar: 10,
             },
             MLCategoryStats {
                 category: "Weather".into(),
                 resolved_count: 3,
                 pending_count: 0,
                 trainable: false,
+                samples_until_trainable: 7,
+                min_resolved_for_sidecar: 10,
             },
         ];
         let msg = format_category_readiness(&stats);
-        assert!(msg.contains("Politics: 12 resolved (ready)"));
-        assert!(msg.contains("Weather: 3 resolved (need 10+)"));
+        assert!(msg.contains("Politics: ready"));
+        assert!(msg.contains("Weather: 3/10 graded (7 more for sidecar)"));
     }
 }

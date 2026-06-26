@@ -256,6 +256,8 @@ export interface MLCategoryStat {
   resolved_count: number;
   pending_count: number;
   trainable: boolean;
+  samples_until_trainable: number;
+  min_resolved_for_sidecar: number;
 }
 
 export interface MLPerCategoryModel {

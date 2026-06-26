@@ -1,12 +1,19 @@
 # Kalshi Monster — Priority Roadmap
 
-Last updated: 2026-06-26 (Phase 4 SQLite market cache persistence; health green, 81 tests)
+Last updated: 2026-06-26 (P3 ML sidecar progress UX + persisted snapshot dashboard note; health green, 82 tests)
 
 Working copy: `C:\\Users\\ethan\\kalshi-build\\kalshi-monster`
 
 Quick status: **P0 done · P1 done · P2 done · P3 1 pending**
 
 ---
+
+## Maintenance notes (2026-06-26, evening pass) — P3 readiness UX + Phase 4 polish
+
+- **`MLCategoryStats`:** `samples_until_trainable` + `min_resolved_for_sidecar` for Settings progress (e.g. `3/10 graded, 7 more for sidecar`).
+- **Dashboard bootstrap:** notes when tape is still the SQLite rehydrate (`showing_persisted_snapshot`) before live refresh completes.
+- **`market_cache_store`:** async SQLite roundtrip test for save/load.
+- Health: cargo check, tsc, **82** lib tests pass.
 
 ## Maintenance notes (2026-06-26, 4pm pass) — Dashboard Phase 4 (SQLite persistence)
 

@@ -140,4 +140,41 @@ mod tests {
         assert_eq!(back.fetched_at, cache.fetched_at);
         assert!(!back.full_catalog);
     }
+
+    #[tokio::test]
+    async fn save_and_load_persisted_cache_roundtrip() {
+        use sqlx::sqlite::SqlitePoolOptions;
+
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("pool");
+        init_market_cache_table(&pool).await.expect("init");
+
+        let fetched_at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        let cache = KalshiCache {
+            markets: vec![KalshiMarket {
+                ticker: "PERSIST-1".to_string(),
+                event_ticker: "EVT".to_string(),
+                title: "Persist test".to_string(),
+                ..Default::default()
+            }],
+            fetched_at,
+            full_catalog: true,
+        };
+        save_persisted_cache(&pool, &cache).await.expect("save");
+
+        let loaded = load_persisted_cache(&pool)
+            .await
+            .expect("load")
+            .expect("some cache");
+        assert_eq!(loaded.markets.len(), 1);
+        assert_eq!(loaded.markets[0].ticker, "PERSIST-1");
+        assert!(loaded.full_catalog);
+    }
 }

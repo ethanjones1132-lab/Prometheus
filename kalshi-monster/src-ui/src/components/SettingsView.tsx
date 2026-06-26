@@ -322,8 +322,11 @@ export function SettingsView() {
               <ul className="muted" style={{ marginTop: '0.75rem' }}>
                 {mlStatus.category_stats.map((s) => (
                   <li key={s.category}>
-                    {s.category}: {s.resolved_count} resolved, {s.pending_count} pending —{' '}
-                    {s.trainable ? 'ready for sidecar model' : 'need 10+ graded'}
+                    {s.category}: {s.resolved_count}/{s.min_resolved_for_sidecar} graded,{' '}
+                    {s.pending_count} pending —{' '}
+                    {s.trainable
+                      ? 'ready for sidecar model'
+                      : `${s.samples_until_trainable} more graded needed for sidecar`}
                   </li>
                 ))}
               </ul>
