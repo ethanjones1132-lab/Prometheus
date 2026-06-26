@@ -16,6 +16,7 @@ use tauri::{Emitter, State};
 use tokio::sync::{Mutex, mpsc};
 
 type KalshiState = Arc<Mutex<crate::kalshi::KalshiClient>>;
+type SharedCacheState = Arc<tokio::sync::RwLock<Option<crate::kalshi::KalshiCache>>>;
 
 #[derive(Debug, serde::Serialize)]
 pub struct KalshiDashboardBootstrap {
@@ -2665,4 +2666,57 @@ pub async fn ml_export_features(
     // Use the db_pool to get the actual database path
     let _db_path = format!("sqlite://{}", crate::ml_predictor::default_db_path().display());
     crate::ml_predictor::export_features_csv(output_path.as_deref()).await
+}
+
+/// Read-only cache state snapshot (does not lock the KalshiClient mutex).
+#[derive(Debug, serde::Serialize)]
+pub struct KalshiCacheStateResponse {
+    pub has_cache: bool,
+    pub is_stale: bool,
+    pub full_catalog: bool,
+    pub market_count: usize,
+    pub cache_age_secs: Option<u64>,
+    pub fetch_in_progress: bool,
+}
+
+#[tauri::command]
+pub async fn kalshi_get_cache_state(
+    kalshi: State<'_, KalshiState>,
+    shared_cache: State<'_, SharedCacheState>,
+) -> Result<KalshiCacheStateResponse, String> {
+    // Read from shared cache — no client mutex required
+    let cached = shared_cache.read().await;
+    let (has_cache, is_stale, full_catalog, market_count, cache_age_secs) = match &*cached {
+        Some(cache) => {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            let age = (now as i64 - cache.fetched_at as i64).max(0) as u64;
+            (
+                true,
+                age > 60, // CACHE_TTL_SECS
+                cache.full_catalog,
+                cache.markets.len(),
+                Some(age),
+            )
+        }
+        None => (false, false, false, 0, None),
+    };
+    drop(cached);
+
+    // Check fetch_in_progress through the client (brief lock)
+    let fetch_in_progress = {
+        let client = kalshi.lock().await;
+        client.is_fetch_in_progress()
+    };
+
+    Ok(KalshiCacheStateResponse {
+        has_cache,
+        is_stale,
+        full_catalog,
+        market_count,
+        cache_age_secs,
+        fetch_in_progress,
+    })
 }

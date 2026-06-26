@@ -88,8 +88,11 @@ pub fn run() {
     let weather_client = Arc::new(Mutex::new(WeatherClient::new(
         config::load_config().openweathermap_api_key,
     )));
+    // Shared cache that read-only commands access without locking the client mutex
+    let kalshi_cache_holder: kalshi::SharedCache = Arc::new(tokio::sync::RwLock::new(None));
     let kalshi_client = Arc::new(Mutex::new(kalshi::KalshiClient::new(
         kalshi::kalshi_config_from_app(&config::load_config()),
+        kalshi_cache_holder.clone(),
     )));
     let api_client = Arc::new(Mutex::new(
         SportsApiClient::new(SportsApiConfig::default())
@@ -160,6 +163,7 @@ pub fn run() {
         .manage(weather_client)
         .manage(api_client)
         .manage(kalshi_client)
+        .manage(kalshi_cache_holder)
         .manage(prizepicks_fetcher)
         .manage(db_pool_state)
         .invoke_handler(tauri::generate_handler![
@@ -244,6 +248,7 @@ pub fn run() {
             commands::kalshi_search_markets,
             commands::kalshi_get_top_markets,
             commands::kalshi_get_dashboard_bootstrap,
+            commands::kalshi_get_cache_state,
             commands::kalshi_get_category_stats,
             commands::kalshi_get_portfolio,
             commands::kalshi_refresh,
