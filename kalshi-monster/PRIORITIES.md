@@ -1,12 +1,18 @@
 # Kalshi Monster — Priority Roadmap
 
-Last updated: 2026-06-26 (Dashboard Phase 2 — shared cache decoupling; health green, 80 tests)
+Last updated: 2026-06-26 (Phase 4 startup quick-cache prefetch + stake debounce; health green, 80 tests)
 
 Working copy: `C:\\Users\\ethan\\kalshi-build\\kalshi-monster`
 
 Quick status: **P0 done · P1 done · P2 done · P3 1 pending**
 
 ---
+
+## Maintenance notes (2026-06-26, 4pm pass) — Dashboard Phase 4 (partial)
+
+- **Startup quick-cache prefetch:** `lib.rs` spawns `ensure_quick_cache()` immediately on app setup; full catalog warm still runs after 8s idle.
+- **Market detail:** 300ms debounce on `computeStakeAdjustment` IPC while editing stake/side (Phase 3 frontend trim).
+- Health: cargo check, tsc, **80** lib tests pass, MarketDetailPanel vitest green.
 
 ## Maintenance notes (2026-06-26) — Dashboard Phase 2 (shared cache decoupling)
 
@@ -142,13 +148,13 @@ Off-roadmap fix shipped 2026-06-22: notification settings now persist to `~/.ope
 - Keep `KalshiView` mounted across tab switches (avoid cold reload)
 - Combined IPC: `kalshi_get_dashboard_bootstrap` → `{ markets, categories, cache_full }` ✅ Shipped
 - Show partial-cache indicator when `full_catalog == false` ✅ Shipped (cacheLabel/partialCatalog in KalshiView)
-- Defer `KalshiPredictionsPanel` load; debounce `computeStakeAdjustment` in market detail
+- Defer `KalshiPredictionsPanel` load; debounce `computeStakeAdjustment` in market detail ✅ Shipped (predictions deferred via `marketsReady`; stake debounce 300ms in MarketDetailPanel)
 - Calibration status inline display in MarketDetailPanel ✅ Shipped
 
 ### Phase 4 — Startup prefetch and persistence (optional)
 
-- Prefetch quick cache at app startup (before user opens dashboard)
-- Delay full warm until quick cache exists + idle window (or explicit Refresh only)
+- Prefetch quick cache at app startup (before user opens dashboard) ✅ Shipped (2026-06-26)
+- Delay full warm until quick cache exists + idle window (or explicit Refresh only) ✅ (quick prefetch + 8s delayed full warm)
 - Persist summary cache to SQLite for instant next-launch paint
 
 ---

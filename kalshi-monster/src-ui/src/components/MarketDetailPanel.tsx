@@ -143,7 +143,10 @@ export function MarketDetailPanel({ market, onClose, onAnalyzeMarket }: Props) {
   }, [market.ticker, market.category, contractSide, rawStake]);
 
   useEffect(() => {
-    void loadAdjustment();
+    const handle = window.setTimeout(() => {
+      void loadAdjustment();
+    }, 300);
+    return () => window.clearTimeout(handle);
   }, [loadAdjustment]);
 
   useEffect(() => {

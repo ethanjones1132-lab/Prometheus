@@ -138,7 +138,18 @@ pub fn run() {
                 kalshi_auto_grade_secs,
             );
 
-            // Warm full Kalshi catalog in the background (dashboard uses quick cache first)
+            // Phase 4: prefetch quick cache at startup so the dashboard is warm before first open
+            let kalshi_quick = kalshi_for_warm.clone();
+            tauri::async_runtime::spawn(async move {
+                let mut client = kalshi_quick.lock().await;
+                if let Err(e) = client.ensure_quick_cache().await {
+                    tracing::warn!("kalshi startup quick cache prefetch failed: {}", e);
+                } else {
+                    tracing::info!("kalshi startup quick cache prefetched");
+                }
+            });
+
+            // Full catalog warm after idle window (quick cache already painted the dashboard)
             let kalshi_warm = kalshi_for_warm.clone();
             tauri::async_runtime::spawn(async move {
                 tokio::time::sleep(std::time::Duration::from_secs(8)).await;
