@@ -1,12 +1,19 @@
 # Kalshi Monster — Priority Roadmap
 
-Last updated: 2026-06-26 (Phase 4 startup quick-cache prefetch + stake debounce; health green, 80 tests)
+Last updated: 2026-06-26 (Phase 4 SQLite market cache persistence; health green, 81 tests)
 
 Working copy: `C:\\Users\\ethan\\kalshi-build\\kalshi-monster`
 
 Quick status: **P0 done · P1 done · P2 done · P3 1 pending**
 
 ---
+
+## Maintenance notes (2026-06-26, 4pm pass) — Dashboard Phase 4 (SQLite persistence)
+
+- **`kalshi_market_cache` table:** JSON snapshot of last quick/full cache in `predictions.db` (`market_cache_store.rs`).
+- **Startup:** `load_persisted_cache` rehydrates `KalshiClient` + `SharedCache` when snapshot age ≤ 24h; API refresh still runs when in-memory TTL (60s) is stale.
+- **After fetch:** `store_cache` async-persists to SQLite on every quick/full warm.
+- Health: cargo check, tsc, **81** lib tests pass.
 
 ## Maintenance notes (2026-06-26, 4pm pass) — Dashboard Phase 4 (partial)
 
@@ -155,7 +162,7 @@ Off-roadmap fix shipped 2026-06-22: notification settings now persist to `~/.ope
 
 - Prefetch quick cache at app startup (before user opens dashboard) ✅ Shipped (2026-06-26)
 - Delay full warm until quick cache exists + idle window (or explicit Refresh only) ✅ (quick prefetch + 8s delayed full warm)
-- Persist summary cache to SQLite for instant next-launch paint
+- Persist summary cache to SQLite for instant next-launch paint ✅ Shipped (2026-06-26; `kalshi_market_cache` + startup rehydrate)
 
 ---
 

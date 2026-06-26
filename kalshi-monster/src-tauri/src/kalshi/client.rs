@@ -2,6 +2,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE, USER_AGENT};
+use sqlx::{Pool, Sqlite};
 use tokio::sync::RwLock;
 use crate::kalshi::models::{
     KalshiCache, KalshiConfig, KalshiEvent, KalshiEventsResponse, KalshiMarket,
@@ -49,10 +50,16 @@ pub struct KalshiClient {
     shared_cache: Arc<RwLock<Option<KalshiCache>>>,
     /// Prevents concurrent full-catalog fetches; set before pagination, cleared after
     fetch_in_progress: Arc<AtomicBool>,
+    /// When set, market cache snapshots are written to SQLite after each update
+    persist_pool: Option<Arc<Pool<Sqlite>>>,
 }
 
 impl KalshiClient {
-    pub fn new(config: KalshiConfig, shared_cache: Arc<RwLock<Option<KalshiCache>>>) -> Self {
+    pub fn new(
+        config: KalshiConfig,
+        shared_cache: Arc<RwLock<Option<KalshiCache>>>,
+        persist_pool: Option<Arc<Pool<Sqlite>>>,
+    ) -> Self {
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(15))
             .build()
@@ -65,6 +72,7 @@ impl KalshiClient {
             cache: None,
             shared_cache,
             fetch_in_progress: Arc::new(AtomicBool::new(false)),
+            persist_pool,
         }
     }
 
@@ -483,18 +491,46 @@ impl KalshiClient {
         }
     }
 
+    fn apply_cache(&mut self, cache: KalshiCache) {
+        {
+            let mut shared = self.shared_cache.blocking_write();
+            *shared = Some(cache.clone());
+        }
+        self.cache = Some(cache);
+    }
+
+    fn schedule_persist(&self) {
+        if let (Some(pool), Some(cache)) = (&self.persist_pool, &self.cache) {
+            let pool = pool.clone();
+            let cache = cache.clone();
+            tokio::spawn(async move {
+                if let Err(e) =
+                    crate::kalshi::market_cache_store::save_persisted_cache(&pool, &cache).await
+                {
+                    tracing::warn!("kalshi market cache persist failed: {}", e);
+                }
+            });
+        }
+    }
+
+    /// Restore cache from SQLite at startup (no disk write).
+    pub fn hydrate_cache(&mut self, cache: KalshiCache) {
+        tracing::info!(
+            "Kalshi cache rehydrated from SQLite: {} markets (full_catalog={})",
+            cache.markets.len(),
+            cache.full_catalog
+        );
+        self.apply_cache(cache);
+    }
+
     fn store_cache(&mut self, markets: Vec<KalshiMarket>, full_catalog: bool) {
         let cache = KalshiCache {
             markets,
             fetched_at: Self::now_secs(),
             full_catalog,
         };
-        // Write to shared cache so read-only commands don't need the client mutex
-        {
-            let mut shared = self.shared_cache.blocking_write();
-            *shared = Some(cache.clone());
-        }
-        self.cache = Some(cache);
+        self.apply_cache(cache);
+        self.schedule_persist();
     }
 
     pub fn needs_full_catalog(&self) -> bool {

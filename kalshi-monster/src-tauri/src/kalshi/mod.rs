@@ -3,6 +3,7 @@ pub mod client;
 pub mod grading;
 pub mod portfolio_risk;
 pub mod price_tracker;
+pub mod market_cache_store;
 
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -19,3 +20,7 @@ pub use portfolio_risk::{
     StakeAdjustment, PortfolioExposure,
 };
 pub use price_tracker::{get_price_history, snapshot_markets, KalshiPriceHistory, KalshiSnapshotBatch};
+pub use market_cache_store::{
+    init_market_cache_table, load_persisted_cache, save_persisted_cache,
+    PERSISTED_REHYDRATE_MAX_AGE_SECS,
+};

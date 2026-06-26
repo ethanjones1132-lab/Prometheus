@@ -61,6 +61,13 @@ pub fn run() {
         }
     });
 
+    // Initialize Kalshi market cache persistence (dashboard instant launch)
+    rt.block_on(async {
+        if let Err(e) = kalshi::init_market_cache_table(&db_pool).await {
+            tracing::warn!("Failed to init kalshi market cache table: {}", e);
+        }
+    });
+
     // Initialize ML prediction tables
     rt.block_on(async {
         if let Err(e) = ml_predictor::init_ml_tables(&db_pool).await {
@@ -90,10 +97,23 @@ pub fn run() {
     )));
     // Shared cache that read-only commands access without locking the client mutex
     let kalshi_cache_holder: kalshi::SharedCache = Arc::new(tokio::sync::RwLock::new(None));
-    let kalshi_client = Arc::new(Mutex::new(kalshi::KalshiClient::new(
+    let kalshi_persisted = rt.block_on(async {
+        kalshi::load_persisted_cache(&db_pool)
+            .await
+            .unwrap_or_else(|e| {
+                tracing::warn!("kalshi persisted cache load failed: {}", e);
+                None
+            })
+    });
+    let mut kalshi_client_inner = kalshi::KalshiClient::new(
         kalshi::kalshi_config_from_app(&config::load_config()),
         kalshi_cache_holder.clone(),
-    )));
+        Some(Arc::new(db_pool.clone())),
+    );
+    if let Some(cache) = kalshi_persisted {
+        kalshi_client_inner.hydrate_cache(cache);
+    }
+    let kalshi_client = Arc::new(Mutex::new(kalshi_client_inner));
     let api_client = Arc::new(Mutex::new(
         SportsApiClient::new(SportsApiConfig::default())
             .expect("Failed to create sports API client"),
