@@ -1,12 +1,22 @@
 # Kalshi Monster — Priority Roadmap
 
-Last updated: 2026-06-25 (P3: per-category ML sidecar train/predict + Settings readiness panel; gitignore __pycache__; health green, 80 tests)
+Last updated: 2026-06-26 (Dashboard Phase 2 — shared cache decoupling; health green, 80 tests)
 
 Working copy: `C:\\Users\\ethan\\kalshi-build\\kalshi-monster`
 
 Quick status: **P0 done · P1 done · P2 done · P3 1 pending**
 
 ---
+
+## Maintenance notes (2026-06-26) — Dashboard Phase 2 (shared cache decoupling)
+
+- `Arc<RwLock<Option<KalshiCache>>>` (SharedCache) so cache writes populate both `KalshiClient.cache` + `shared_cache`.
+- `FetchInProgressGuard` (AtomicBool) prevents stacked full-catalog warm cycles.
+- `kalshi_get_cache_state` Tauri command reads cache state without locking the client mutex.
+- `KalshiClient::new()` now accepts `shared_cache: Arc<RwLock<Option<KalshiCache>>>`.
+- Managed as Tauri state: `.manage(kalshi_cache_holder)`.
+- Health: cargo check, tsc, **80** lib tests pass.
+- Committed as `feat(kalshi): decouple KalshiCache into shared Arc<RwLock> for lock-free reads`.
 
 ## Maintenance notes (2026-06-23)
 - Fixed `unused import: sqlx::sqlite::SqlitePoolOptions` in `src-tauri/src/predictions/tracker.rs` (was test-only; moved use into `#[cfg(test)] mod tests`)
@@ -119,10 +129,11 @@ Off-roadmap fix shipped 2026-06-22: notification settings now persist to `~/.ope
 
 **Phase 1 (shipped 2026-06-17):** flat `GET /markets` quick cache (replaces nested `/events` for dashboard load). See `kalshi/client.rs` — `fetch_markets_flat_pages`, `ensure_quick_cache`.
 
-### Phase 2 — Decouple cache reads from long fetches
+### Phase 2 — Decouple cache reads from long fetches ✅ Done (2026-06-26)
 
-- Extract `Arc<RwLock<KalshiCache>>` + `fetch_in_progress` guard so UI reads never block on 20-page full warm
-- Background full-catalog warm writes cache without holding the outer `KalshiClient` mutex across HTTP pagination
+- Extract `Arc<RwLock<KalshiCache>>` + `fetch_in_progress` guard so UI reads never block on 20-page full warm ✅
+- Background full-catalog warm writes cache without holding the outer `KalshiClient` mutex across HTTP pagination ✅
+- Add `kalshi_get_cache_state` Tauri command (read-only, no client lock) ✅
 - Optionally slim cache to `KalshiMarketSummary` instead of full `KalshiMarket`
 - **Target:** warm revisit under 300ms; category switch under 500ms
 
