@@ -282,6 +282,7 @@ export interface MLModelStatus {
   pending_predictions: number;
   resolved_predictions: number;
   category_stats: MLCategoryStat[];
+  training_category_breakdown?: Record<string, number>;
   per_category_models?: Record<string, MLPerCategoryModel>;
   message: string;
 }

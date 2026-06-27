@@ -8,6 +8,7 @@ A market-app codebase currently branded around Kalshi Monster, with shared infra
 ## Read first
 - `README.md` — current repo overview and calibration posture
 - `PRIORITIES.md` — ranked P0–P3 improvement backlog and completion status
+- `ROADMAP.md` — phased plan and Phase 3 ML success metrics
 
 ## Agent automations (for AI agents, not user CI)
 

@@ -1,12 +1,19 @@
 # Kalshi Monster — Priority Roadmap
 
-Last updated: 2026-06-27 (maintenance — ML retrain after auto-grade + Settings train button; health green, 85 tests)
+Last updated: 2026-06-27 (maintenance — ROADMAP.md + Settings ML trained_at/training mix UX; health green, 86 tests)
 
 Working copy: `C:\\Users\\ethan\\kalshi-build\\kalshi-monster`
 
 Quick status: **P0 done · P1 done · P2 done · P3 1 pending**
 
 ---
+
+## Maintenance notes (2026-06-27, maintenance pass) — ML Settings visibility + ROADMAP
+
+- **`ROADMAP.md`:** Created phased plan (P0–P4) with Phase 3 ML success metrics; complements `PRIORITIES.md`.
+- **Settings UI:** Auto-retrain helper text; show `trained_at` on unified model card; surface `training_category_breakdown` from `_meta.json`.
+- **`ml_predictor.rs`:** `should_retrain_after_grading` gate + unit test.
+- Health: cargo check, tsc, lib tests.
 
 ## Maintenance notes (2026-06-27, maintenance pass) — P3 ML training loop
 

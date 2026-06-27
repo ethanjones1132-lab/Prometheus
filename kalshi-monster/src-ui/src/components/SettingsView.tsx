@@ -350,6 +350,10 @@ export function SettingsView() {
 
       <div className="card settingsWide">
         <h3>ML multi-category readiness</h3>
+        <p className="muted" style={{ marginTop: 0 }}>
+          Unified + per-category sidecars retrain automatically in the background when the Kalshi
+          auto-grader resolves markets. Use manual train to refresh on demand.
+        </p>
         <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.75rem', flexWrap: 'wrap' }}>
           <button
             type="button"
@@ -380,6 +384,9 @@ export function SettingsView() {
                 <strong>{mlStatus.model_exists ? 'Trained' : 'Not trained'}</strong>
                 <small>
                   {mlStatus.resolved_predictions} resolved · {mlStatus.pending_predictions} pending
+                  {mlStatus.trained_at
+                    ? ` · last trained ${new Date(mlStatus.trained_at).toLocaleString()}`
+                    : ''}
                 </small>
               </div>
               {mlStatus.samples != null && mlStatus.cv_accuracy_mean != null ? (
@@ -405,6 +412,15 @@ export function SettingsView() {
             ) : (
               <p className="muted">No categorized predictions in DB yet.</p>
             )}
+            {mlStatus.training_category_breakdown &&
+            Object.keys(mlStatus.training_category_breakdown).length > 0 ? (
+              <p className="muted">
+                Last training mix:{' '}
+                {Object.entries(mlStatus.training_category_breakdown)
+                  .map(([cat, n]) => `${cat} (${n})`)
+                  .join(' · ')}
+              </p>
+            ) : null}
             {mlStatus.per_category_models && Object.keys(mlStatus.per_category_models).length > 0 ? (
               <p className="muted">
                 Active sidecars:{' '}

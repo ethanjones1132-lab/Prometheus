@@ -233,7 +233,7 @@ pub async fn train_model(
 
 /// Retrain unified + per-category sidecars after Kalshi auto-grader resolves markets.
 pub async fn retrain_after_grading(graded_count: u32) {
-    if graded_count == 0 {
+    if !should_retrain_after_grading(graded_count) {
         return;
     }
     match train_model(None, None).await {
@@ -252,6 +252,11 @@ pub async fn retrain_after_grading(graded_count: u32) {
             tracing::debug!("ml: retrain after grading skipped: {}", e);
         }
     }
+}
+
+/// Gate for background ML retrain after auto-grade (testable, no Python spawn).
+pub(crate) fn should_retrain_after_grading(graded_count: u32) -> bool {
+    graded_count > 0
 }
 
 /// Generate ML predictions for all pending props
@@ -807,5 +812,11 @@ mod tests {
         let msg = format_category_readiness(&stats);
         assert!(msg.contains("Politics: ready"));
         assert!(msg.contains("Weather: 3/10 graded (7 more for sidecar)"));
+    }
+
+    #[test]
+    fn should_retrain_after_grading_requires_positive_count() {
+        assert!(!should_retrain_after_grading(0));
+        assert!(should_retrain_after_grading(1));
     }
 }
