@@ -266,6 +266,13 @@ export interface MLPerCategoryModel {
   model_exists: boolean;
 }
 
+export interface MLTrainingResult {
+  status: string;
+  samples?: number;
+  cv_accuracy_mean?: number;
+  message: string;
+}
+
 export interface MLModelStatus {
   model_exists: boolean;
   model_path: string;

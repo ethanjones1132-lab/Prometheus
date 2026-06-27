@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import type {
+  MLTrainingResult,
   AnalysisContext,
   ApiStatus,
   AppConfig,
@@ -103,6 +104,9 @@ export const statusApi = {
 
 export const mlApi = {
   getModelStatus: () => invoke<MLModelStatus>('ml_get_model_status', { modelPath: null }),
+
+  trainModel: () =>
+    invoke<MLTrainingResult>('ml_train_model', { dbPath: null, outputPath: null }),
 };
 
 // ── In-app notifications ────────────────────────────────────────

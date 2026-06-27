@@ -231,6 +231,29 @@ pub async fn train_model(
     Ok(result)
 }
 
+/// Retrain unified + per-category sidecars after Kalshi auto-grader resolves markets.
+pub async fn retrain_after_grading(graded_count: u32) {
+    if graded_count == 0 {
+        return;
+    }
+    match train_model(None, None).await {
+        Ok(r) if r.status == "trained" => {
+            tracing::info!(
+                "ml: retrained after {} new grades — {} samples, CV {:.1}%",
+                graded_count,
+                r.samples.unwrap_or(0),
+                r.cv_accuracy_mean.unwrap_or(0.0) * 100.0
+            );
+        }
+        Ok(r) => {
+            tracing::info!("ml: retrain after grading: {}", r.message);
+        }
+        Err(e) => {
+            tracing::debug!("ml: retrain after grading skipped: {}", e);
+        }
+    }
+}
+
 /// Generate ML predictions for all pending props
 pub async fn predict_batch(
     db_path: Option<&str>,

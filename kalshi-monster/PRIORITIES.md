@@ -1,12 +1,19 @@
 # Kalshi Monster — Priority Roadmap
 
-Last updated: 2026-06-27 (maintenance — Kalshi notification prefs + Settings toggle; health green, 85 tests)
+Last updated: 2026-06-27 (maintenance — ML retrain after auto-grade + Settings train button; health green, 85 tests)
 
 Working copy: `C:\\Users\\ethan\\kalshi-build\\kalshi-monster`
 
 Quick status: **P0 done · P1 done · P2 done · P3 1 pending**
 
 ---
+
+## Maintenance notes (2026-06-27, maintenance pass) — P3 ML training loop
+
+- **`ml_predictor.rs`:** `retrain_after_grading` — background unified + sidecar retrain after new grades land.
+- **`kalshi/grading.rs`:** Auto-grader spawns ML retrain when `graded > 0` (non-blocking).
+- **Settings UI:** **Train unified + sidecar models** + **Refresh status** on ML readiness card (`ml_train_model` IPC).
+- Health: cargo check, tsc, **85** lib tests pass.
 
 ## Maintenance notes (2026-06-27, maintenance pass) — Kalshi notification prefs wired
 
@@ -101,7 +108,7 @@ Quick status: **P0 done · P1 done · P2 done · P3 1 pending**
 | **P2** | Model disagreement flags at entry | Flag when `fair_probability_pct` diverges sharply from market implied prob at decision time | ✅ Done |
 | **P2** | CLV per prediction | Grading records close price and CLV on paper predictions | ✅ Done |
 | **P3** | Volatility-adjusted Kelly from historical Brier | Shrinkage slider is manual; handoffs call for Brier-driven auto-shrinkage | ✅ Done (2026-06-24; brier compute/refresh/strategy wired) |
-| **P3** | Multi-category ML classifiers (politics/econ/weather) | Current ML is scikit-learn on sports prop features via Python subprocess; README still lists ML training as unchecked | ⬜ In progress (2026-06-25; unified + sidecar trainers when 10+ graded/category; predict routing; Settings + `ml_get_model_status` UI; awaits graded Kalshi history) |
+| **P3** | Multi-category ML classifiers (politics/econ/weather) | Current ML is scikit-learn on sports prop features via Python subprocess; README still lists ML training as unchecked | ⬜ In progress (2026-06-27; auto-retrain after Kalshi auto-grade + Settings train button; sidecar trainers when 10+ graded/category; awaits graded Kalshi history) |
 
 ---
 

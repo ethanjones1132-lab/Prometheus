@@ -71,6 +71,8 @@ export function SettingsView() {
   const [bankrollError, setBankrollError] = useState<string | null>(null);
   const [mlStatus, setMlStatus] = useState<MLModelStatus | null>(null);
   const [mlError, setMlError] = useState<string | null>(null);
+  const [mlTraining, setMlTraining] = useState(false);
+  const [mlTrainMessage, setMlTrainMessage] = useState<string | null>(null);
   const [notificationSettings, setNotificationSettings] =
     useState<NotificationSettings>(DEFAULT_NOTIFICATION_SETTINGS);
   const [loading, setLoading] = useState(true);
@@ -132,6 +134,31 @@ export function SettingsView() {
       setMlError(e instanceof Error ? e.message : String(e));
     }
   }, []);
+
+  const handleTrainMl = async () => {
+    setMlTraining(true);
+    setMlTrainMessage(null);
+    setMlError(null);
+    try {
+      const result = await mlApi.trainModel();
+      if (result.status === 'trained') {
+        const acc =
+          result.cv_accuracy_mean != null
+            ? ` — CV ${(result.cv_accuracy_mean * 100).toFixed(1)}%`
+            : '';
+        setMlTrainMessage(
+          `Training complete (${result.samples ?? 0} samples${acc}).`,
+        );
+      } else {
+        setMlTrainMessage(result.message);
+      }
+      await loadMlStatus();
+    } catch (e) {
+      setMlError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setMlTraining(false);
+    }
+  };
 
   useEffect(() => {
     void load();
@@ -323,6 +350,25 @@ export function SettingsView() {
 
       <div className="card settingsWide">
         <h3>ML multi-category readiness</h3>
+        <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.75rem', flexWrap: 'wrap' }}>
+          <button
+            type="button"
+            className="primaryBtn"
+            disabled={mlTraining}
+            onClick={() => void handleTrainMl()}
+          >
+            {mlTraining ? 'Training…' : 'Train unified + sidecar models'}
+          </button>
+          <button
+            type="button"
+            className="ghostBtn"
+            disabled={mlTraining}
+            onClick={() => void loadMlStatus()}
+          >
+            Refresh status
+          </button>
+        </div>
+        {mlTrainMessage ? <p className="muted">{mlTrainMessage}</p> : null}
         {mlError ? (
           <div className="banner error">{mlError}</div>
         ) : mlStatus ? (

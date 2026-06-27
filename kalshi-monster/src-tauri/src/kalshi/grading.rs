@@ -360,6 +360,11 @@ pub fn spawn_auto_grade_task(
                     summary.losses,
                     summary.total_pnl
                 );
+
+                let graded = summary.graded;
+                tauri::async_runtime::spawn(async move {
+                    crate::ml_predictor::retrain_after_grading(graded).await;
+                });
             }
         }
     });
