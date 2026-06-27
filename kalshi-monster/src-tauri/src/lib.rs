@@ -148,6 +148,8 @@ pub fn run() {
             kalshi::spawn_auto_grade_task(
                 kalshi_for_grade.clone(),
                 prediction_tracker_for_setup.clone(),
+                db_pool.clone(),
+                app.handle().clone(),
                 kalshi_auto_grade_secs,
             );
 

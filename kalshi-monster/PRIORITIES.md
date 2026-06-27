@@ -1,12 +1,20 @@
 # Kalshi Monster — Priority Roadmap
 
-Last updated: 2026-06-26 (P3 ML sidecar progress UX + persisted snapshot dashboard note; health green, 82 tests)
+Last updated: 2026-06-27 (overnight — Kalshi market resolution notifications; health green, 82 tests)
 
 Working copy: `C:\\Users\\ethan\\kalshi-build\\kalshi-monster`
 
 Quick status: **P0 done · P1 done · P2 done · P3 1 pending**
 
 ---
+
+## Maintenance notes (2026-06-27, overnight pass) — Kalshi market resolution notifications
+
+- **`notification.rs`:** Added `KalshiMarketWin`, `KalshiMarketLoss` variants to `NotificationType`, `kalshi_notifications_enabled` setting.
+- **`kalshi/grading.rs`:** `spawn_auto_grade_task` now accepts AppHandle + DB pool; emits per-prediction Win/Loss notifications and a GradingComplete summary when the auto-grader resolves markets.
+- **`lib.rs`:** Passes AppHandle + db_pool to auto-grader.
+- You'll now see a notification pop up when a Kalshi paper prediction market resolves (Win ❌ / Loss ✅) with title, ticker, stake, and PnL.
+- Health: cargo check, tsc, **82** lib tests pass.
 
 ## Maintenance notes (2026-06-26, evening pass) — P3 readiness UX + Phase 4 polish
 

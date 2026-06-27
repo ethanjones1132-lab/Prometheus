@@ -54,6 +54,10 @@ pub enum NotificationType {
     PredictionLoss,
     PredictionPush,
     GradingComplete,
+    /// A Kalshi market prediction was graded as a win
+    KalshiMarketWin,
+    /// A Kalshi market prediction was graded as a loss
+    KalshiMarketLoss,
     Info,
 }
 
@@ -67,6 +71,8 @@ impl std::fmt::Display for NotificationType {
             NotificationType::PredictionLoss => write!(f, "prediction_loss"),
             NotificationType::PredictionPush => write!(f, "prediction_push"),
             NotificationType::GradingComplete => write!(f, "grading_complete"),
+            NotificationType::KalshiMarketWin => write!(f, "kalshi_market_win"),
+            NotificationType::KalshiMarketLoss => write!(f, "kalshi_market_loss"),
             NotificationType::Info => write!(f, "info"),
         }
     }
@@ -83,6 +89,8 @@ impl std::str::FromStr for NotificationType {
             "prediction_loss" => Ok(NotificationType::PredictionLoss),
             "prediction_push" => Ok(NotificationType::PredictionPush),
             "grading_complete" => Ok(NotificationType::GradingComplete),
+            "kalshi_market_win" => Ok(NotificationType::KalshiMarketWin),
+            "kalshi_market_loss" => Ok(NotificationType::KalshiMarketLoss),
             "info" => Ok(NotificationType::Info),
             _ => Err(format!("Unknown notification type: {}", s)),
         }
@@ -97,6 +105,7 @@ pub struct NotificationSettings {
     pub game_final_enabled: bool,
     pub prediction_graded_enabled: bool,
     pub grading_complete_enabled: bool,
+    pub kalshi_notifications_enabled: bool,
     pub poll_interval_secs: u64,
     pub game_starting_minutes_before: u32,
     pub show_os_notifications: bool,
@@ -110,6 +119,7 @@ impl Default for NotificationSettings {
             game_final_enabled: true,
             prediction_graded_enabled: true,
             grading_complete_enabled: true,
+            kalshi_notifications_enabled: true,
             poll_interval_secs: 60,
             game_starting_minutes_before: 30,
             show_os_notifications: true,
