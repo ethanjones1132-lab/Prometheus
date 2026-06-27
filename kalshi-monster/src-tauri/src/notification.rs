@@ -105,6 +105,7 @@ pub struct NotificationSettings {
     pub game_final_enabled: bool,
     pub prediction_graded_enabled: bool,
     pub grading_complete_enabled: bool,
+    #[serde(default = "default_kalshi_notifications_enabled")]
     pub kalshi_notifications_enabled: bool,
     pub poll_interval_secs: u64,
     pub game_starting_minutes_before: u32,
@@ -128,6 +129,10 @@ impl Default for NotificationSettings {
 }
 
 const NOTIFICATION_SETTINGS_FILE: &str = "notification_settings.json";
+
+fn default_kalshi_notifications_enabled() -> bool {
+    true
+}
 
 /// Path to the persisted notification settings file (alongside `config.json`).
 pub fn settings_path() -> std::path::PathBuf {
@@ -158,6 +163,16 @@ pub fn save_settings(settings: &NotificationSettings) -> Result<(), String> {
     std::fs::write(&path, json)
         .map_err(|e| format!("Failed to write notification settings: {}", e))?;
     Ok(())
+}
+
+/// Whether Kalshi market win/loss notifications should be emitted.
+pub fn kalshi_market_notifications_enabled(settings: &NotificationSettings) -> bool {
+    settings.enabled && settings.kalshi_notifications_enabled
+}
+
+/// Whether grading-complete summary notifications should be emitted.
+pub fn grading_summary_notifications_enabled(settings: &NotificationSettings) -> bool {
+    settings.enabled && settings.grading_complete_enabled
 }
 
 /// Tracked game state for detecting transitions
@@ -722,4 +737,49 @@ pub fn spawn_polling_task(
             }
         }
     });
+}
+
+#[cfg(test)]
+mod notification_settings_tests {
+    use super::*;
+    use std::str::FromStr;
+
+    #[test]
+    fn notification_type_kalshi_roundtrip() {
+        assert_eq!(
+            NotificationType::KalshiMarketWin.to_string(),
+            "kalshi_market_win"
+        );
+        assert_eq!(
+            NotificationType::from_str("kalshi_market_loss").unwrap(),
+            NotificationType::KalshiMarketLoss
+        );
+    }
+
+    #[test]
+    fn settings_missing_kalshi_field_defaults_true() {
+        let json = r#"{
+            "enabled": true,
+            "game_starting_enabled": true,
+            "game_final_enabled": true,
+            "prediction_graded_enabled": true,
+            "grading_complete_enabled": true,
+            "poll_interval_secs": 60,
+            "game_starting_minutes_before": 30,
+            "show_os_notifications": true
+        }"#;
+        let s: NotificationSettings = serde_json::from_str(json).unwrap();
+        assert!(s.kalshi_notifications_enabled);
+    }
+
+    #[test]
+    fn kalshi_market_gated_by_master_switch() {
+        let mut s = NotificationSettings::default();
+        assert!(kalshi_market_notifications_enabled(&s));
+        s.enabled = false;
+        assert!(!kalshi_market_notifications_enabled(&s));
+        s.enabled = true;
+        s.kalshi_notifications_enabled = false;
+        assert!(!kalshi_market_notifications_enabled(&s));
+    }
 }

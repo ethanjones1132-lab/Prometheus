@@ -278,3 +278,15 @@ export interface MLModelStatus {
   per_category_models?: Record<string, MLPerCategoryModel>;
   message: string;
 }
+
+export interface NotificationSettings {
+  enabled: boolean;
+  game_starting_enabled: boolean;
+  game_final_enabled: boolean;
+  prediction_graded_enabled: boolean;
+  grading_complete_enabled: boolean;
+  kalshi_notifications_enabled: boolean;
+  poll_interval_secs: number;
+  game_starting_minutes_before: number;
+  show_os_notifications: boolean;
+}

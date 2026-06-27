@@ -283,63 +283,75 @@ pub fn spawn_auto_grade_task(
                 }
             };
             if summary.graded > 0 {
-                // Emit notifications for each graded prediction
-                for result in &summary.results {
-                    let notif_type = if result.outcome == "Win" {
-                        NotificationType::KalshiMarketWin
-                    } else {
-                        NotificationType::KalshiMarketLoss
-                    };
-                    let emoji = if result.outcome == "Win" { "✅" } else { "❌" };
-                    let notif = AppNotification {
+                let settings = notification::load_settings();
+                let emit_kalshi =
+                    notification::kalshi_market_notifications_enabled(&settings);
+                let emit_summary =
+                    notification::grading_summary_notifications_enabled(&settings);
+
+                if emit_kalshi {
+                    for result in &summary.results {
+                        let notif_type = if result.outcome == "Win" {
+                            NotificationType::KalshiMarketWin
+                        } else {
+                            NotificationType::KalshiMarketLoss
+                        };
+                        let emoji = if result.outcome == "Win" { "✅" } else { "❌" };
+                        let notif = AppNotification {
+                            id: uuid::Uuid::new_v4().to_string(),
+                            notification_type: notif_type,
+                            title: format!(
+                                "{} Kalshi Market Resolved: {}",
+                                emoji, result.ticker
+                            ),
+                            body: format!(
+                                "{} — {} (Stake: ${:.2}, PnL: ${:.2})",
+                                result.title,
+                                result.outcome,
+                                result.stake_amount,
+                                result.pnl
+                            ),
+                            player_name: None,
+                            game_id: None,
+                            prediction_id: Some(result.prediction_id.clone()),
+                            created_at: chrono::Utc::now().to_rfc3339(),
+                            read: false,
+                            dismissed: false,
+                        };
+                        if let Err(e) = notification::insert_notification(&pool, &notif).await
+                        {
+                            tracing::warn!("kalshi grade notif persist: {}", e);
+                        }
+                        let _ = app_handle.emit("notification-new", &notif);
+                    }
+                }
+
+                if emit_summary {
+                    let summary_notif = AppNotification {
                         id: uuid::Uuid::new_v4().to_string(),
-                        notification_type: notif_type,
-                        title: format!("{} Kalshi Market Resolved: {}", emoji, result.ticker),
+                        notification_type: NotificationType::GradingComplete,
+                        title: format!(
+                            "📊 Kalshi Grading Complete: {} graded",
+                            summary.graded
+                        ),
                         body: format!(
-                            "{} — {} (Stake: ${:.2}, PnL: ${:.2})",
-                            result.title,
-                            result.outcome,
-                            result.stake_amount,
-                            result.pnl
+                            "W: {} | L: {} | PnL: ${:.2}",
+                            summary.wins, summary.losses, summary.total_pnl
                         ),
                         player_name: None,
                         game_id: None,
-                        prediction_id: Some(result.prediction_id.clone()),
+                        prediction_id: None,
                         created_at: chrono::Utc::now().to_rfc3339(),
                         read: false,
                         dismissed: false,
                     };
-                    // Persist notification to DB
-                    if let Err(e) = notification::insert_notification(&pool, &notif).await {
-                        tracing::warn!("kalshi grade notif persist: {}", e);
+                    if let Err(e) =
+                        notification::insert_notification(&pool, &summary_notif).await
+                    {
+                        tracing::warn!("kalshi grade summary notif persist: {}", e);
                     }
-                    // Emit in-app event
-                    let _ = app_handle.emit("notification-new", &notif);
+                    let _ = app_handle.emit("notification-new", &summary_notif);
                 }
-
-                // Emit grading complete summary
-                let summary_notif = AppNotification {
-                    id: uuid::Uuid::new_v4().to_string(),
-                    notification_type: NotificationType::GradingComplete,
-                    title: format!(
-                        "📊 Kalshi Grading Complete: {} graded",
-                        summary.graded
-                    ),
-                    body: format!(
-                        "W: {} | L: {} | PnL: ${:.2}",
-                        summary.wins, summary.losses, summary.total_pnl
-                    ),
-                    player_name: None,
-                    game_id: None,
-                    prediction_id: None,
-                    created_at: chrono::Utc::now().to_rfc3339(),
-                    read: false,
-                    dismissed: false,
-                };
-                if let Err(e) = notification::insert_notification(&pool, &summary_notif).await {
-                    tracing::warn!("kalshi grade summary notif persist: {}", e);
-                }
-                let _ = app_handle.emit("notification-new", &summary_notif);
 
                 tracing::info!(
                     "kalshi auto-grade: {} graded ({}W/{}L, ${:.2})",

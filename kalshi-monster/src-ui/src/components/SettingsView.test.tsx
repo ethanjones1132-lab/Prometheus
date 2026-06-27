@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { SettingsView } from './SettingsView';
-import { bankrollApi, configApi, mlApi } from '../services/tauri';
+import { bankrollApi, configApi, mlApi, notificationApi } from '../services/tauri';
 
 vi.mock('../services/tauri', () => ({
   configApi: {
@@ -16,6 +16,10 @@ vi.mock('../services/tauri', () => ({
   },
   mlApi: {
     getModelStatus: vi.fn(),
+  },
+  notificationApi: {
+    getSettings: vi.fn(),
+    saveSettings: vi.fn(),
   },
 }));
 
@@ -137,6 +141,17 @@ describe('SettingsView', () => {
         },
       ],
       message: 'No model trained yet.',
+    });
+    vi.mocked(notificationApi.getSettings).mockResolvedValue({
+      enabled: true,
+      game_starting_enabled: true,
+      game_final_enabled: true,
+      prediction_graded_enabled: true,
+      grading_complete_enabled: true,
+      kalshi_notifications_enabled: true,
+      poll_interval_secs: 60,
+      game_starting_minutes_before: 30,
+      show_os_notifications: true,
     });
   });
 

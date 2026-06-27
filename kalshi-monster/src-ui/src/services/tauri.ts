@@ -16,6 +16,7 @@ import type {
   SecurityPosture,
   ScoredProp,
   MLModelStatus,
+  NotificationSettings,
 } from '../types';
 
 // ── Config ──────────────────────────────────────────────────────
@@ -102,4 +103,13 @@ export const statusApi = {
 
 export const mlApi = {
   getModelStatus: () => invoke<MLModelStatus>('ml_get_model_status', { modelPath: null }),
+};
+
+// ── In-app notifications ────────────────────────────────────────
+
+export const notificationApi = {
+  getSettings: () => invoke<NotificationSettings>('get_notification_settings'),
+
+  saveSettings: (settings: NotificationSettings) =>
+    invoke<void>('save_notification_settings', { settings }),
 };

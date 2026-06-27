@@ -1,12 +1,19 @@
 # Kalshi Monster — Priority Roadmap
 
-Last updated: 2026-06-27 (overnight — Kalshi market resolution notifications; health green, 82 tests)
+Last updated: 2026-06-27 (maintenance — Kalshi notification prefs + Settings toggle; health green, 85 tests)
 
 Working copy: `C:\\Users\\ethan\\kalshi-build\\kalshi-monster`
 
 Quick status: **P0 done · P1 done · P2 done · P3 1 pending**
 
 ---
+
+## Maintenance notes (2026-06-27, maintenance pass) — Kalshi notification prefs wired
+
+- **`kalshi/grading.rs`:** Auto-grader respects `notification_settings.json` — skips win/loss alerts when `kalshi_notifications_enabled` or master `enabled` is off; grading summary gated by `grading_complete_enabled`.
+- **`notification.rs`:** Helpers + backward-compatible deserialize for missing `kalshi_notifications_enabled` (defaults on); 3 unit tests.
+- **Settings UI:** Toggle **Kalshi market resolved alerts** loads/saves via notification IPC.
+- Health: cargo check, tsc, **85** lib tests pass.
 
 ## Maintenance notes (2026-06-27, overnight pass) — Kalshi market resolution notifications
 

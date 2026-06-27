@@ -1,6 +1,27 @@
 import { useCallback, useEffect, useState } from 'react';
-import { bankrollApi, configApi, mlApi } from '../services/tauri';
-import type { ApiStatus, AppConfig, BankrollConfig, BankrollSummary, MLModelStatus, ModelInfo, SecurityPosture } from '../types';
+import { bankrollApi, configApi, mlApi, notificationApi } from '../services/tauri';
+import type {
+  ApiStatus,
+  AppConfig,
+  BankrollConfig,
+  BankrollSummary,
+  MLModelStatus,
+  ModelInfo,
+  NotificationSettings,
+  SecurityPosture,
+} from '../types';
+
+const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings = {
+  enabled: true,
+  game_starting_enabled: true,
+  game_final_enabled: true,
+  prediction_graded_enabled: true,
+  grading_complete_enabled: true,
+  kalshi_notifications_enabled: true,
+  poll_interval_secs: 60,
+  game_starting_minutes_before: 30,
+  show_os_notifications: true,
+};
 
 const EMPTY_CONFIG: AppConfig = {
   openrouter_api_key: '',
@@ -50,6 +71,8 @@ export function SettingsView() {
   const [bankrollError, setBankrollError] = useState<string | null>(null);
   const [mlStatus, setMlStatus] = useState<MLModelStatus | null>(null);
   const [mlError, setMlError] = useState<string | null>(null);
+  const [notificationSettings, setNotificationSettings] =
+    useState<NotificationSettings>(DEFAULT_NOTIFICATION_SETTINGS);
   const [loading, setLoading] = useState(true);
   const [bankrollLoading, setBankrollLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -61,14 +84,16 @@ export function SettingsView() {
     setLoading(true);
     setError(null);
     try {
-      const [cfg, modelList, posture] = await Promise.all([
+      const [cfg, modelList, posture, notifSettings] = await Promise.all([
         configApi.get(),
         configApi.getAvailableModels(),
         configApi.getSecurityPosture().catch(() => null),
+        notificationApi.getSettings().catch(() => DEFAULT_NOTIFICATION_SETTINGS),
       ]);
       setConfig(cfg);
       setModels(modelList);
       setSecurityPosture(posture);
+      setNotificationSettings(notifSettings);
       setLeaguesInput(cfg.preferred_leagues.join(', '));
       setApiKeyInput('');
       setKalshiPasswordInput('');
@@ -136,6 +161,7 @@ export function SettingsView() {
           .filter(Boolean),
       };
       await configApi.save(next);
+      await notificationApi.saveSettings(notificationSettings);
       setConfig(next);
       setApiKeyInput('');
       setKalshiPasswordInput('');
@@ -590,6 +616,19 @@ export function SettingsView() {
                 onChange={(e) => setConfig({ ...config, bot_grading_results_enabled: e.target.checked })}
               />
               Grading results
+            </label>
+            <label className="toggleLabel">
+              <input
+                type="checkbox"
+                checked={notificationSettings.kalshi_notifications_enabled}
+                onChange={(e) =>
+                  setNotificationSettings({
+                    ...notificationSettings,
+                    kalshi_notifications_enabled: e.target.checked,
+                  })
+                }
+              />
+              Kalshi market resolved alerts
             </label>
           </div>
         </div>
