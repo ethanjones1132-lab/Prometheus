@@ -1,12 +1,19 @@
 # Kalshi Monster — Priority Roadmap
 
-Last updated: 2026-06-28 (maintenance — ML auto-retrain ≥10 resolved gate, sidecar CV in Settings, ROADMAP metrics; health green, 87 tests)
+Last updated: 2026-06-28 (maintenance — Phase 3 progress counter in ML status + Settings; health green, 88 tests)
 
 Working copy: `C:\\Users\\ethan\\kalshi-build\\kalshi-monster`
 
 Quick status: **P0 done · P1 done · P2 done · P3 1 pending**
 
 ---
+
+## Maintenance notes (2026-06-28, maintenance pass) — Phase 3 progress UX
+
+- **`ml_predictor.rs`:** `trainable_non_sports_categories` / `non_sports_sidecar_target` on `MLModelStatus`; `count_trainable_non_sports_categories` + unit test; debug log when auto-retrain skipped (<10 resolved).
+- **Settings UI:** Phase 3 progress line (X/3 Politics/Economics/Weather); clarified ≥10 total graded rows for auto-retrain.
+- **`ROADMAP.md`:** Notes Settings tracks the ≥3-category data metric.
+- Health: cargo check, tsc, **88** lib tests pass.
 
 ## Maintenance notes (2026-06-28, maintenance pass) — P3 ML polish
 

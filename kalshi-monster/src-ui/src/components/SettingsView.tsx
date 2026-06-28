@@ -351,8 +351,9 @@ export function SettingsView() {
       <div className="card settingsWide">
         <h3>ML multi-category readiness</h3>
         <p className="muted" style={{ marginTop: 0 }}>
-          Unified + per-category sidecars retrain automatically in the background when the Kalshi
-          auto-grader resolves markets. Use manual train to refresh on demand.
+          Unified + per-category sidecars retrain automatically when the Kalshi auto-grader
+          resolves markets and you have at least 10 total graded rows. Use manual train to refresh on
+          demand.
         </p>
         <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.75rem', flexWrap: 'wrap' }}>
           <button
@@ -378,6 +379,14 @@ export function SettingsView() {
         ) : mlStatus ? (
           <>
             <p className="muted">{mlStatus.message}</p>
+            <p className="muted">
+              Phase 3 progress:{' '}
+              <strong>
+                {mlStatus.trainable_non_sports_categories ?? 0}/
+                {mlStatus.non_sports_sidecar_target ?? 3}
+              </strong>{' '}
+              non-sports categories ready for sidecars (Politics, Economics, Weather).
+            </p>
             <div className="metricGrid">
               <div className="metricCard">
                 <span>Unified model</span>

@@ -30,7 +30,7 @@ Desktop research app for Kalshi prediction markets: calibrated LLM + paper journ
 
 **Success metrics:**
 
-- [ ] ≥3 non-sports categories each with 10+ resolved rows in DB
+- [ ] ≥3 non-sports categories each with 10+ resolved rows in DB (tracked in Settings as Phase 3 progress)
 - [x] Sidecar joblib files on disk and listed in Settings “Active sidecars” (when trained)
 - [x] `predict_batch` routes non-sports rows through sidecars when present (Python)
 - [x] CV accuracy and training mix visible in Settings after train (unified + per-sidecar CV)

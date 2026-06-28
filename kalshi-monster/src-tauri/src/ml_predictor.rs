@@ -116,7 +116,29 @@ pub struct MLModelStatus {
     /// Trained sidecar classifiers per non-sports category (when 10+ graded samples)
     #[serde(default)]
     pub per_category_models: Option<std::collections::HashMap<String, MLPerCategoryModel>>,
+    /// Politics/Economics/Weather categories with ≥10 graded rows (Phase 3 ROADMAP)
+    #[serde(default)]
+    pub trainable_non_sports_categories: i64,
+    /// Target count for Phase 3 multi-category ML success metric
+    #[serde(default = "default_non_sports_sidecar_target")]
+    pub non_sports_sidecar_target: i64,
     pub message: String,
+}
+
+fn default_non_sports_sidecar_target() -> i64 {
+    3
+}
+
+const NON_SPORTS_SIDECAR_CATEGORIES: &[&str] = &["Politics", "Economics", "Weather"];
+
+/// Count non-sports categories that meet the sidecar training threshold (ROADMAP Phase 3).
+pub(crate) fn count_trainable_non_sports_categories(stats: &[MLCategoryStats]) -> i64 {
+    stats
+        .iter()
+        .filter(|s| {
+            s.trainable && NON_SPORTS_SIDECAR_CATEGORIES.contains(&s.category.as_str())
+        })
+        .count() as i64
 }
 
 /// ML-enhanced analysis context — extends the existing AnalysisContext
@@ -244,6 +266,11 @@ pub async fn retrain_after_grading(graded_count: u32, pool: Option<&Pool<Sqlite>
         MIN_CATEGORY_TRAIN_SAMPLES
     };
     if !should_retrain_given_resolved(graded_count, resolved) {
+        tracing::debug!(
+            "ml: skip retrain after grading (graded={}, resolved={}, need >=10 resolved)",
+            graded_count,
+            resolved
+        );
         return;
     }
     match train_model(None, None).await {
@@ -556,6 +583,8 @@ pub async fn get_model_status(
         )
     };
 
+    let trainable_non_sports = count_trainable_non_sports_categories(&category_stats);
+
     Ok(MLModelStatus {
         model_exists,
         model_path: model.display().to_string(),
@@ -570,6 +599,8 @@ pub async fn get_model_status(
         category_stats,
         training_category_breakdown,
         per_category_models,
+        trainable_non_sports_categories: trainable_non_sports,
+        non_sports_sidecar_target: default_non_sports_sidecar_target(),
         message,
     })
 }
@@ -840,5 +871,44 @@ mod tests {
         assert!(!should_retrain_given_resolved(1, 9));
         assert!(should_retrain_given_resolved(1, 10));
         assert!(!should_retrain_given_resolved(0, 100));
+    }
+
+    #[test]
+    fn count_trainable_non_sports_ignores_sports_and_subthreshold() {
+        let stats = vec![
+            MLCategoryStats {
+                category: "Politics".into(),
+                resolved_count: 11,
+                pending_count: 0,
+                trainable: true,
+                samples_until_trainable: 0,
+                min_resolved_for_sidecar: 10,
+            },
+            MLCategoryStats {
+                category: "Economics".into(),
+                resolved_count: 10,
+                pending_count: 0,
+                trainable: true,
+                samples_until_trainable: 0,
+                min_resolved_for_sidecar: 10,
+            },
+            MLCategoryStats {
+                category: "Weather".into(),
+                resolved_count: 4,
+                pending_count: 0,
+                trainable: false,
+                samples_until_trainable: 6,
+                min_resolved_for_sidecar: 10,
+            },
+            MLCategoryStats {
+                category: "Sports".into(),
+                resolved_count: 50,
+                pending_count: 0,
+                trainable: true,
+                samples_until_trainable: 0,
+                min_resolved_for_sidecar: 10,
+            },
+        ];
+        assert_eq!(count_trainable_non_sports_categories(&stats), 2);
     }
 }
