@@ -122,6 +122,11 @@ pub struct MLModelStatus {
     /// Target count for Phase 3 multi-category ML success metric
     #[serde(default = "default_non_sports_sidecar_target")]
     pub non_sports_sidecar_target: i64,
+    /// Non-sports category closest to the 10-sample sidecar threshold (UX hint)
+    #[serde(default)]
+    pub next_sidecar_category: Option<String>,
+    #[serde(default)]
+    pub next_sidecar_samples_needed: Option<i64>,
     pub message: String,
 }
 
@@ -139,6 +144,48 @@ pub(crate) fn count_trainable_non_sports_categories(stats: &[MLCategoryStats]) -
             s.trainable && NON_SPORTS_SIDECAR_CATEGORIES.contains(&s.category.as_str())
         })
         .count() as i64
+}
+
+fn zero_sidecar_stat(category: &str) -> MLCategoryStats {
+    MLCategoryStats {
+        category: category.to_string(),
+        resolved_count: 0,
+        pending_count: 0,
+        trainable: false,
+        samples_until_trainable: MIN_CATEGORY_TRAIN_SAMPLES,
+        min_resolved_for_sidecar: MIN_CATEGORY_TRAIN_SAMPLES,
+    }
+}
+
+/// Ensure Politics/Economics/Weather rows exist so Settings always shows Phase 3 targets.
+pub(crate) fn ensure_non_sports_sidecar_stats(mut stats: Vec<MLCategoryStats>) -> Vec<MLCategoryStats> {
+    for cat in NON_SPORTS_SIDECAR_CATEGORIES {
+        if !stats.iter().any(|s| s.category == *cat) {
+            stats.push(zero_sidecar_stat(cat));
+        }
+    }
+    stats.sort_by(|a, b| {
+        let a_target = NON_SPORTS_SIDECAR_CATEGORIES.contains(&a.category.as_str());
+        let b_target = NON_SPORTS_SIDECAR_CATEGORIES.contains(&b.category.as_str());
+        b_target
+            .cmp(&a_target)
+            .then_with(|| b.resolved_count.cmp(&a.resolved_count))
+            .then_with(|| a.category.cmp(&b.category))
+    });
+    stats
+}
+
+/// Pick the non-sports category that needs the fewest additional graded rows for a sidecar.
+pub(crate) fn nearest_non_sports_sidecar_unlock(
+    stats: &[MLCategoryStats],
+) -> Option<(String, i64)> {
+    stats
+        .iter()
+        .filter(|s| {
+            NON_SPORTS_SIDECAR_CATEGORIES.contains(&s.category.as_str()) && !s.trainable
+        })
+        .min_by_key(|s| s.samples_until_trainable)
+        .map(|s| (s.category.clone(), s.samples_until_trainable))
 }
 
 /// ML-enhanced analysis context — extends the existing AnalysisContext
@@ -546,7 +593,7 @@ pub async fn get_model_status(
         (None, None, None, None, None, None, None, None)
     };
 
-    let category_stats = fetch_category_stats(pool).await;
+    let category_stats = ensure_non_sports_sidecar_stats(fetch_category_stats(pool).await);
 
     // Count predictions
     let pending: i64 = sqlx::query_scalar(
@@ -584,6 +631,7 @@ pub async fn get_model_status(
     };
 
     let trainable_non_sports = count_trainable_non_sports_categories(&category_stats);
+    let next_unlock = nearest_non_sports_sidecar_unlock(&category_stats);
 
     Ok(MLModelStatus {
         model_exists,
@@ -601,6 +649,8 @@ pub async fn get_model_status(
         per_category_models,
         trainable_non_sports_categories: trainable_non_sports,
         non_sports_sidecar_target: default_non_sports_sidecar_target(),
+        next_sidecar_category: next_unlock.as_ref().map(|(c, _)| c.clone()),
+        next_sidecar_samples_needed: next_unlock.map(|(_, n)| n),
         message,
     })
 }
@@ -910,5 +960,52 @@ mod tests {
             },
         ];
         assert_eq!(count_trainable_non_sports_categories(&stats), 2);
+    }
+
+    #[test]
+    fn ensure_non_sports_sidecar_stats_adds_missing_targets() {
+        let stats = vec![MLCategoryStats {
+            category: "Sports".into(),
+            resolved_count: 20,
+            pending_count: 0,
+            trainable: true,
+            samples_until_trainable: 0,
+            min_resolved_for_sidecar: 10,
+        }];
+        let merged = ensure_non_sports_sidecar_stats(stats);
+        assert!(merged.iter().any(|s| s.category == "Politics"));
+        assert!(merged.iter().any(|s| s.category == "Economics"));
+        assert!(merged.iter().any(|s| s.category == "Weather"));
+        let politics = merged
+            .iter()
+            .find(|s| s.category == "Politics")
+            .expect("politics");
+        assert_eq!(politics.resolved_count, 0);
+        assert_eq!(politics.samples_until_trainable, 10);
+    }
+
+    #[test]
+    fn nearest_non_sports_sidecar_unlock_picks_smallest_gap() {
+        let stats = ensure_non_sports_sidecar_stats(vec![
+            MLCategoryStats {
+                category: "Politics".into(),
+                resolved_count: 8,
+                pending_count: 0,
+                trainable: false,
+                samples_until_trainable: 2,
+                min_resolved_for_sidecar: 10,
+            },
+            MLCategoryStats {
+                category: "Weather".into(),
+                resolved_count: 3,
+                pending_count: 0,
+                trainable: false,
+                samples_until_trainable: 7,
+                min_resolved_for_sidecar: 10,
+            },
+        ]);
+        let nearest = nearest_non_sports_sidecar_unlock(&stats).expect("hint");
+        assert_eq!(nearest.0, "Politics");
+        assert_eq!(nearest.1, 2);
     }
 }

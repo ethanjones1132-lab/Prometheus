@@ -286,6 +286,8 @@ export interface MLModelStatus {
   per_category_models?: Record<string, MLPerCategoryModel>;
   trainable_non_sports_categories?: number;
   non_sports_sidecar_target?: number;
+  next_sidecar_category?: string;
+  next_sidecar_samples_needed?: number;
   message: string;
 }
 

@@ -387,6 +387,16 @@ export function SettingsView() {
               </strong>{' '}
               non-sports categories ready for sidecars (Politics, Economics, Weather).
             </p>
+            {mlStatus.next_sidecar_category != null &&
+            mlStatus.next_sidecar_samples_needed != null ? (
+              <p className="muted">
+                Next sidecar unlock:{' '}
+                <strong>{mlStatus.next_sidecar_category}</strong> needs{' '}
+                <strong>{mlStatus.next_sidecar_samples_needed}</strong> more graded
+                prediction
+                {mlStatus.next_sidecar_samples_needed === 1 ? '' : 's'}.
+              </p>
+            ) : null}
             <div className="metricGrid">
               <div className="metricCard">
                 <span>Unified model</span>

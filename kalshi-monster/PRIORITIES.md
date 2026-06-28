@@ -1,12 +1,18 @@
 # Kalshi Monster — Priority Roadmap
 
-Last updated: 2026-06-28 (maintenance — Phase 3 progress counter in ML status + Settings; health green, 88 tests)
+Last updated: 2026-06-28 (maintenance — Phase 3 ML always shows Politics/Economics/Weather + next sidecar unlock hint; health green, 90 tests)
 
 Working copy: `C:\\Users\\ethan\\kalshi-build\\kalshi-monster`
 
 Quick status: **P0 done · P1 done · P2 done · P3 1 pending**
 
 ---
+
+## Maintenance notes (2026-06-28, maintenance pass) — Phase 3 category visibility
+
+- **`ml_predictor.rs`:** `ensure_non_sports_sidecar_stats` merges placeholder Politics/Economics/Weather rows when DB has no graded rows in those categories; `nearest_non_sports_sidecar_unlock` + `next_sidecar_*` on `MLModelStatus`; +2 unit tests.
+- **Settings UI:** “Next sidecar unlock” line when a target category is still below 10 graded.
+- Health: cargo check, tsc, **90** lib tests pass.
 
 ## Maintenance notes (2026-06-28, maintenance pass) — Phase 3 progress UX
 
