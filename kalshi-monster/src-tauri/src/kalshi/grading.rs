@@ -362,8 +362,9 @@ pub fn spawn_auto_grade_task(
                 );
 
                 let graded = summary.graded;
+                let pool_for_ml = pool.clone();
                 tauri::async_runtime::spawn(async move {
-                    crate::ml_predictor::retrain_after_grading(graded).await;
+                    crate::ml_predictor::retrain_after_grading(graded, Some(&pool_for_ml)).await;
                 });
             }
         }

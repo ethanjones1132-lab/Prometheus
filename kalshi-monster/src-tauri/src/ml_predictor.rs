@@ -232,8 +232,18 @@ pub async fn train_model(
 }
 
 /// Retrain unified + per-category sidecars after Kalshi auto-grader resolves markets.
-pub async fn retrain_after_grading(graded_count: u32) {
-    if !should_retrain_after_grading(graded_count) {
+pub async fn retrain_after_grading(graded_count: u32, pool: Option<&Pool<Sqlite>>) {
+    let resolved = if let Some(p) = pool {
+        sqlx::query_scalar(
+            "SELECT COUNT(*) FROM predictions WHERE outcome IN ('Win', 'Loss', 'Push')",
+        )
+        .fetch_one(p)
+        .await
+        .unwrap_or(0)
+    } else {
+        MIN_CATEGORY_TRAIN_SAMPLES
+    };
+    if !should_retrain_given_resolved(graded_count, resolved) {
         return;
     }
     match train_model(None, None).await {
@@ -347,6 +357,11 @@ pub async fn predict_batch(
 
 /// Minimum resolved samples before a per-category dedicated model is considered viable
 const MIN_CATEGORY_TRAIN_SAMPLES: i64 = 10;
+
+/// Full gate: new grades landed and enough resolved rows for unified training (≥10).
+pub(crate) fn should_retrain_given_resolved(graded_count: u32, resolved_predictions: i64) -> bool {
+    graded_count > 0 && resolved_predictions >= MIN_CATEGORY_TRAIN_SAMPLES
+}
 
 /// Aggregate resolved/pending counts by market category for multi-category ML readiness
 async fn fetch_category_stats(pool: &Pool<Sqlite>) -> Vec<MLCategoryStats> {
@@ -818,5 +833,12 @@ mod tests {
     fn should_retrain_after_grading_requires_positive_count() {
         assert!(!should_retrain_after_grading(0));
         assert!(should_retrain_after_grading(1));
+    }
+
+    #[test]
+    fn should_retrain_given_resolved_requires_ten_graded_rows() {
+        assert!(!should_retrain_given_resolved(1, 9));
+        assert!(should_retrain_given_resolved(1, 10));
+        assert!(!should_retrain_given_resolved(0, 100));
     }
 }

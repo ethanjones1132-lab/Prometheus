@@ -425,11 +425,15 @@ export function SettingsView() {
               <p className="muted">
                 Active sidecars:{' '}
                 {Object.entries(mlStatus.per_category_models)
-                  .map(([name, m]) =>
-                    m.model_exists
-                      ? `${name} (${m.samples} samples)`
-                      : `${name} (missing file)`,
-                  )
+                  .map(([name, m]) => {
+                    const cv =
+                      m.cv_accuracy_mean != null
+                        ? `, CV ${(m.cv_accuracy_mean * 100).toFixed(1)}%`
+                        : '';
+                    return m.model_exists
+                      ? `${name} (${m.samples} samples${cv})`
+                      : `${name} (missing file)`;
+                  })
                   .join(' · ')}
               </p>
             ) : null}

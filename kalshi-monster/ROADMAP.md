@@ -1,6 +1,6 @@
 # Kalshi Monster — Roadmap
 
-Last updated: 2026-06-27
+Last updated: 2026-06-28
 
 Canonical backlog detail lives in `PRIORITIES.md`. This document is the phased plan and success metrics.
 
@@ -31,9 +31,9 @@ Desktop research app for Kalshi prediction markets: calibrated LLM + paper journ
 **Success metrics:**
 
 - [ ] ≥3 non-sports categories each with 10+ resolved rows in DB
-- [ ] Sidecar joblib files on disk and listed in Settings “Active sidecars”
-- [ ] `predict_batch` routes non-sports rows through sidecars when present
-- [ ] CV accuracy and training mix visible in Settings after train
+- [x] Sidecar joblib files on disk and listed in Settings “Active sidecars” (when trained)
+- [x] `predict_batch` routes non-sports rows through sidecars when present (Python)
+- [x] CV accuracy and training mix visible in Settings after train (unified + per-sidecar CV)
 
 **Blocker:** Accumulated graded Kalshi paper history (user/runtime data, not code).
 

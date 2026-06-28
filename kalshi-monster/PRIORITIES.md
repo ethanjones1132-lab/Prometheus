@@ -1,12 +1,19 @@
 # Kalshi Monster — Priority Roadmap
 
-Last updated: 2026-06-27 (maintenance — ROADMAP.md + Settings ML trained_at/training mix UX; health green, 86 tests)
+Last updated: 2026-06-28 (maintenance — ML auto-retrain ≥10 resolved gate, sidecar CV in Settings, ROADMAP metrics; health green, 87 tests)
 
 Working copy: `C:\\Users\\ethan\\kalshi-build\\kalshi-monster`
 
 Quick status: **P0 done · P1 done · P2 done · P3 1 pending**
 
 ---
+
+## Maintenance notes (2026-06-28, maintenance pass) — P3 ML polish
+
+- **`ml_predictor.rs`:** Auto-retrain after grading only when ≥10 resolved rows (`should_retrain_given_resolved`); passes DB pool from auto-grader; +1 unit test.
+- **Settings UI:** Active sidecars show per-model CV accuracy when present in `_meta.json`.
+- **`ROADMAP.md`:** Marked code-complete Phase 3 success metrics (sidecar listing, predict routing, CV/mix visibility).
+- Health: cargo check, tsc, lib tests.
 
 ## Maintenance notes (2026-06-27, maintenance pass) — ML Settings visibility + ROADMAP
 
