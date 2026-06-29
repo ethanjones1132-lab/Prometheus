@@ -397,6 +397,17 @@ export function SettingsView() {
                 {mlStatus.next_sidecar_samples_needed === 1 ? '' : 's'}.
               </p>
             ) : null}
+            {mlStatus.auto_retrain_eligible === false &&
+            (mlStatus.resolved_until_auto_retrain ?? 0) > 0 ? (
+              <p className="muted">
+                Auto-retrain after grading unlocks at 10 total resolved predictions —{' '}
+                <strong>{mlStatus.resolved_until_auto_retrain}</strong> more needed.
+              </p>
+            ) : mlStatus.auto_retrain_eligible ? (
+              <p className="muted">
+                Auto-retrain after grading: <strong>active</strong> (≥10 resolved predictions).
+              </p>
+            ) : null}
             <div className="metricGrid">
               <div className="metricCard">
                 <span>Unified model</span>

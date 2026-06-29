@@ -288,6 +288,8 @@ export interface MLModelStatus {
   non_sports_sidecar_target?: number;
   next_sidecar_category?: string;
   next_sidecar_samples_needed?: number;
+  auto_retrain_eligible?: boolean;
+  resolved_until_auto_retrain?: number;
   message: string;
 }
 

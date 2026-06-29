@@ -127,6 +127,12 @@ pub struct MLModelStatus {
     pub next_sidecar_category: Option<String>,
     #[serde(default)]
     pub next_sidecar_samples_needed: Option<i64>,
+    /// True when total resolved rows meet the auto-retrain-after-grade threshold (≥10).
+    #[serde(default)]
+    pub auto_retrain_eligible: bool,
+    /// Additional resolved predictions needed before auto-retrain can run after grading.
+    #[serde(default)]
+    pub resolved_until_auto_retrain: i64,
     pub message: String,
 }
 
@@ -434,7 +440,17 @@ const MIN_CATEGORY_TRAIN_SAMPLES: i64 = 10;
 
 /// Full gate: new grades landed and enough resolved rows for unified training (≥10).
 pub(crate) fn should_retrain_given_resolved(graded_count: u32, resolved_predictions: i64) -> bool {
-    graded_count > 0 && resolved_predictions >= MIN_CATEGORY_TRAIN_SAMPLES
+    graded_count > 0 && auto_retrain_eligible(resolved_predictions)
+}
+
+/// Whether total resolved predictions satisfy the unified auto-retrain threshold.
+pub(crate) fn auto_retrain_eligible(resolved_predictions: i64) -> bool {
+    resolved_predictions >= MIN_CATEGORY_TRAIN_SAMPLES
+}
+
+/// Resolved rows still needed before auto-retrain can run (0 when eligible).
+pub(crate) fn resolved_until_auto_retrain(resolved_predictions: i64) -> i64 {
+    (MIN_CATEGORY_TRAIN_SAMPLES - resolved_predictions).max(0)
 }
 
 /// Aggregate resolved/pending counts by market category for multi-category ML readiness
@@ -651,6 +667,8 @@ pub async fn get_model_status(
         non_sports_sidecar_target: default_non_sports_sidecar_target(),
         next_sidecar_category: next_unlock.as_ref().map(|(c, _)| c.clone()),
         next_sidecar_samples_needed: next_unlock.map(|(_, n)| n),
+        auto_retrain_eligible: auto_retrain_eligible(resolved),
+        resolved_until_auto_retrain: resolved_until_auto_retrain(resolved),
         message,
     })
 }
@@ -677,13 +695,6 @@ pub async fn init_ml_tables(pool: &Pool<Sqlite>) -> Result<(), String> {
 
     sqlx::query(
         "CREATE INDEX IF NOT EXISTS idx_ml_pred_prediction ON ml_predictions(prediction_id)",
-    )
-    .execute(pool)
-    .await
-    .ok();
-
-    sqlx::query(
-        "CREATE INDEX IF NOT EXISTS idx_ml_pred_ticker ON ml_predictions(ticker)",
     )
     .execute(pool)
     .await
@@ -1007,5 +1018,13 @@ mod tests {
         let nearest = nearest_non_sports_sidecar_unlock(&stats).expect("hint");
         assert_eq!(nearest.0, "Politics");
         assert_eq!(nearest.1, 2);
+    }
+
+    #[test]
+    fn auto_retrain_threshold_helpers() {
+        assert!(!auto_retrain_eligible(9));
+        assert!(auto_retrain_eligible(10));
+        assert_eq!(resolved_until_auto_retrain(9), 1);
+        assert_eq!(resolved_until_auto_retrain(10), 0);
     }
 }

@@ -1,12 +1,18 @@
 # Kalshi Monster — Priority Roadmap
 
-Last updated: 2026-06-28 (maintenance — Phase 3 ML always shows Politics/Economics/Weather + next sidecar unlock hint; health green, 90 tests)
+Last updated: 2026-06-29 (maintenance — ML auto-retrain eligibility in Settings + fix ml_predictions index; health green, 91 tests)
 
 Working copy: `C:\\Users\\ethan\\kalshi-build\\kalshi-monster`
 
 Quick status: **P0 done · P1 done · P2 done · P3 1 pending**
 
 ---
+
+## Maintenance notes (2026-06-29, maintenance pass) — Phase 3 auto-retrain UX
+
+- **`ml_predictor.rs`:** `auto_retrain_eligible` / `resolved_until_auto_retrain` on `MLModelStatus`; helpers + unit test; removed invalid `idx_ml_pred_ticker` index (no `ticker` column on `ml_predictions`).
+- **Settings UI:** Shows when auto-retrain after grading is active vs how many resolved rows are still needed (≥10 gate).
+- Health: cargo check, tsc, **91** lib tests pass.
 
 ## Maintenance notes (2026-06-28, maintenance pass) — Phase 3 category visibility
 
