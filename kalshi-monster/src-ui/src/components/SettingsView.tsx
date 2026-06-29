@@ -386,6 +386,18 @@ export function SettingsView() {
                 {mlStatus.non_sports_sidecar_target ?? 3}
               </strong>{' '}
               non-sports categories ready for sidecars (Politics, Economics, Weather).
+              {mlStatus.phase_3_data_metric_ready ? (
+                <>
+                  {' '}
+                  <strong>ROADMAP data metric met.</strong>
+                </>
+              ) : null}
+            </p>
+            <p className="muted">
+              Kalshi paper journal:{' '}
+              <strong>{mlStatus.kalshi_resolved_predictions ?? 0}</strong> resolved ·{' '}
+              <strong>{mlStatus.kalshi_pending_predictions ?? 0}</strong> pending (ticker in
+              decision JSON; totals above include all products in <code>predictions.db</code>).
             </p>
             {mlStatus.next_sidecar_category != null &&
             mlStatus.next_sidecar_samples_needed != null ? (

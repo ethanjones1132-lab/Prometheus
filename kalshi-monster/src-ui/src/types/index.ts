@@ -292,6 +292,9 @@ export interface MLModelStatus {
   next_sidecar_samples_needed?: number;
   auto_retrain_eligible?: boolean;
   resolved_until_auto_retrain?: number;
+  phase_3_data_metric_ready?: boolean;
+  kalshi_resolved_predictions?: number;
+  kalshi_pending_predictions?: number;
   message: string;
 }
 

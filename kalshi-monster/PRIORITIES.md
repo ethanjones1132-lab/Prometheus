@@ -1,12 +1,18 @@
 # Kalshi Monster — Priority Roadmap
 
-Last updated: 2026-06-29 (maintenance — ML prompt header + legacy index drop + CV ± in Settings; health green, 92 tests)
+Last updated: 2026-06-29 (maintenance — Phase 3 data metric + Kalshi journal counts in ML status; health green, 94 tests)
 
 Working copy: `C:\\Users\\ethan\\kalshi-build\\kalshi-monster`
 
 Quick status: **P0 done · P1 done · P2 done · P3 1 pending**
 
 ---
+
+## Maintenance notes (2026-06-29, maintenance pass) — Phase 3 ROADMAP visibility
+
+- **`ml_predictor.rs`:** `phase_3_data_metric_ready`, `kalshi_resolved_predictions` / `kalshi_pending_predictions` on `MLModelStatus`; LLM header shows Phase 3 progress when incomplete; +2 unit tests.
+- **Settings UI:** ROADMAP data metric badge; Kalshi-only resolved/pending line vs mixed `predictions.db` totals.
+- Health: cargo check, tsc, **94** lib tests pass.
 
 ## Maintenance notes (2026-06-29, maintenance pass) — Phase 3 ML prompt + DB hygiene
 
