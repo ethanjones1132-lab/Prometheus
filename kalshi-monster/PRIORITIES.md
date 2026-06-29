@@ -1,12 +1,19 @@
 # Kalshi Monster — Priority Roadmap
 
-Last updated: 2026-06-29 (maintenance — ML auto-retrain eligibility in Settings + fix ml_predictions index; health green, 91 tests)
+Last updated: 2026-06-29 (maintenance — ML prompt header + legacy index drop + CV ± in Settings; health green, 92 tests)
 
 Working copy: `C:\\Users\\ethan\\kalshi-build\\kalshi-monster`
 
 Quick status: **P0 done · P1 done · P2 done · P3 1 pending**
 
 ---
+
+## Maintenance notes (2026-06-29, maintenance pass) — Phase 3 ML prompt + DB hygiene
+
+- **`ml_predictor.rs`:** `format_ml_training_header` (CV ± std, active sidecars) for chat prompts; `DROP INDEX IF EXISTS idx_ml_pred_ticker` on ML table init; +1 unit test.
+- **`enhanced_prompt.rs` / `openrouter.rs`:** Shared ML header helper (DRY).
+- **Settings UI:** Unified model CV shows ± std when `_meta.json` provides it; TS types extended.
+- Health: cargo check, tsc, **92** lib tests pass.
 
 ## Maintenance notes (2026-06-29, maintenance pass) — Phase 3 auto-retrain UX
 

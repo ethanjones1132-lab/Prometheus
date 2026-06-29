@@ -422,7 +422,12 @@ export function SettingsView() {
               {mlStatus.samples != null && mlStatus.cv_accuracy_mean != null ? (
                 <div className="metricCard">
                   <span>CV accuracy</span>
-                  <strong>{(mlStatus.cv_accuracy_mean * 100).toFixed(1)}%</strong>
+                  <strong>
+                    {(mlStatus.cv_accuracy_mean * 100).toFixed(1)}%
+                    {mlStatus.cv_accuracy_std != null
+                      ? ` ± ${(mlStatus.cv_accuracy_std * 100).toFixed(1)}%`
+                      : ''}
+                  </strong>
                   <small>{mlStatus.samples} training samples</small>
                 </div>
               ) : null}

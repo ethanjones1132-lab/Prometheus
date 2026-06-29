@@ -82,13 +82,14 @@ pub async fn build_ultimate_prompt(
     // ML Model Predictions
     if let Some(preds) = ml_predictions {
         if !preds.is_empty() {
-            let acc_str = ml_model_status
-                .and_then(|s| s.cv_accuracy_mean)
-                .map_or("N/A".to_string(), |a| format!("{:.1}%", a * 100.0));
-            let samples_str = ml_model_status
-                .and_then(|s| s.samples)
-                .map_or("N/A".to_string(), |s| s.to_string());
-            let _ = write!(prompt, "## ML MODEL PREDICTIONS (trained on {} samples, CV accuracy: {})\n\n", samples_str, acc_str);
+            let header_detail = ml_model_status
+                .map(crate::ml_predictor::format_ml_training_header)
+                .unwrap_or_else(|| "N/A samples, CV accuracy: N/A".to_string());
+            let _ = write!(
+                prompt,
+                "## ML MODEL PREDICTIONS ({})\n\n",
+                header_detail
+            );
             let _ = write!(prompt, "The following are machine-learning generated predictions from your trained model.\n");
             let _ = write!(prompt, "Consider these alongside your own analysis — they may confirm or challenge your lean.\n\n");
             for pred in preds.iter().take(15) {

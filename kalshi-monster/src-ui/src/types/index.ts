@@ -279,6 +279,8 @@ export interface MLModelStatus {
   trained_at?: string;
   samples?: number;
   cv_accuracy_mean?: number;
+  cv_accuracy_std?: number;
+  win_rate?: number;
   pending_predictions: number;
   resolved_predictions: number;
   category_stats: MLCategoryStat[];

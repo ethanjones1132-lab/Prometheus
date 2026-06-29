@@ -17,6 +17,7 @@
 
 use serde::{Deserialize, Serialize};
 use sqlx::{Pool, Row, Sqlite};
+use std::fmt::Write;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -453,6 +454,36 @@ pub(crate) fn resolved_until_auto_retrain(resolved_predictions: i64) -> i64 {
     (MIN_CATEGORY_TRAIN_SAMPLES - resolved_predictions).max(0)
 }
 
+/// Compact training summary for LLM system prompts (CV ± std, active sidecars).
+pub(crate) fn format_ml_training_header(status: &MLModelStatus) -> String {
+    let acc = status
+        .cv_accuracy_mean
+        .map(|a| {
+            if let Some(std) = status.cv_accuracy_std {
+                format!("{:.1}% ± {:.1}%", a * 100.0, std * 100.0)
+            } else {
+                format!("{:.1}%", a * 100.0)
+            }
+        })
+        .unwrap_or_else(|| "N/A".to_string());
+    let samples = status
+        .samples
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| "N/A".to_string());
+    let mut line = format!("trained on {} samples, CV accuracy: {}", samples, acc);
+    if let Some(ref per) = status.per_category_models {
+        let names: Vec<&str> = per
+            .iter()
+            .filter(|(_, v)| v.model_exists)
+            .map(|(k, _)| k.as_str())
+            .collect();
+        if !names.is_empty() {
+            let _ = write!(line, "; active sidecars: {}", names.join(", "));
+        }
+    }
+    line
+}
+
 /// Aggregate resolved/pending counts by market category for multi-category ML readiness
 async fn fetch_category_stats(pool: &Pool<Sqlite>) -> Vec<MLCategoryStats> {
     let rows = sqlx::query(
@@ -706,6 +737,12 @@ pub async fn init_ml_tables(pool: &Pool<Sqlite>) -> Result<(), String> {
     .execute(pool)
     .await
     .ok();
+
+    // Legacy index referenced a non-existent ticker column; safe no-op on fresh DBs.
+    sqlx::query("DROP INDEX IF EXISTS idx_ml_pred_ticker")
+        .execute(pool)
+        .await
+        .ok();
 
     Ok(())
 }
@@ -1026,5 +1063,44 @@ mod tests {
         assert!(auto_retrain_eligible(10));
         assert_eq!(resolved_until_auto_retrain(9), 1);
         assert_eq!(resolved_until_auto_retrain(10), 0);
+    }
+
+    #[test]
+    fn format_ml_training_header_includes_sidecars_and_cv_std() {
+        let mut sidecars = std::collections::HashMap::new();
+        sidecars.insert(
+            "Politics".to_string(),
+            MLPerCategoryModel {
+                model_exists: true,
+                samples: 12,
+                cv_accuracy_mean: Some(0.62),
+            },
+        );
+        let status = MLModelStatus {
+            model_exists: true,
+            model_path: "/tmp/model.joblib".into(),
+            trained_at: None,
+            samples: Some(40),
+            cv_accuracy_mean: Some(0.55),
+            cv_accuracy_std: Some(0.04),
+            win_rate: None,
+            feature_importance: None,
+            pending_predictions: 0,
+            resolved_predictions: 40,
+            category_stats: vec![],
+            training_category_breakdown: None,
+            per_category_models: Some(sidecars),
+            trainable_non_sports_categories: 1,
+            non_sports_sidecar_target: 3,
+            next_sidecar_category: None,
+            next_sidecar_samples_needed: None,
+            auto_retrain_eligible: true,
+            resolved_until_auto_retrain: 0,
+            message: String::new(),
+        };
+        let header = format_ml_training_header(&status);
+        assert!(header.contains("40 samples"));
+        assert!(header.contains("55.0% ± 4.0%"));
+        assert!(header.contains("active sidecars: Politics"));
     }
 }

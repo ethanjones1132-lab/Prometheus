@@ -242,15 +242,11 @@ pub async fn send_message(
         let ml_preds = ml_predictor::get_stored_ml_predictions(pool, 15).await.unwrap_or_default();
         if !ml_preds.is_empty() {
             let ml_status = ml_predictor::get_model_status(pool, None).await.ok();
-            let acc_str = ml_status
+            let header_detail = ml_status
                 .as_ref()
-                .and_then(|s| s.cv_accuracy_mean)
-                .map_or("N/A".to_string(), |a| format!("{:.1}%", a * 100.0));
-            let samples_str = ml_status
-                .as_ref()
-                .and_then(|s| s.samples)
-                .map_or("N/A".to_string(), |s| s.to_string());
-            let mut ml_ctx = format!("## ML MODEL PREDICTIONS (trained on {} samples, CV accuracy: {})\n\n", samples_str, acc_str);
+                .map(ml_predictor::format_ml_training_header)
+                .unwrap_or_else(|| "N/A samples, CV accuracy: N/A".to_string());
+            let mut ml_ctx = format!("## ML MODEL PREDICTIONS ({})\n\n", header_detail);
             ml_ctx.push_str("The following are machine-learning generated predictions from your trained model.\n");
             ml_ctx.push_str("Consider these alongside your own analysis — they may confirm or challenge your lean.\n\n");
             for pred in &ml_preds {
@@ -576,15 +572,11 @@ pub async fn stream_message(
         let ml_preds = ml_predictor::get_stored_ml_predictions(pool, 15).await.unwrap_or_default();
         if !ml_preds.is_empty() {
             let ml_status = ml_predictor::get_model_status(pool, None).await.ok();
-            let acc_str = ml_status
+            let header_detail = ml_status
                 .as_ref()
-                .and_then(|s| s.cv_accuracy_mean)
-                .map_or("N/A".to_string(), |a| format!("{:.1}%", a * 100.0));
-            let samples_str = ml_status
-                .as_ref()
-                .and_then(|s| s.samples)
-                .map_or("N/A".to_string(), |s| s.to_string());
-            let mut ml_ctx = format!("## ML MODEL PREDICTIONS (trained on {} samples, CV accuracy: {})\n\n", samples_str, acc_str);
+                .map(ml_predictor::format_ml_training_header)
+                .unwrap_or_else(|| "N/A samples, CV accuracy: N/A".to_string());
+            let mut ml_ctx = format!("## ML MODEL PREDICTIONS ({})\n\n", header_detail);
             ml_ctx.push_str("The following are machine-learning generated predictions from your trained model.\n");
             ml_ctx.push_str("Consider these alongside your own analysis — they may confirm or challenge your lean.\n\n");
             for pred in &ml_preds {
