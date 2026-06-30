@@ -1,12 +1,18 @@
 # Kalshi Monster — Priority Roadmap
 
-Last updated: 2026-06-29 (maintenance — Phase 3 data metric + Kalshi journal counts in ML status; health green, 94 tests)
+Last updated: 2026-06-30 (maintenance — Kalshi-only category stats for Phase 3 sidecar readiness; health green, 94 tests)
 
 Working copy: `C:\\Users\\ethan\\kalshi-build\\kalshi-monster`
 
 Quick status: **P0 done · P1 done · P2 done · P3 1 pending**
 
 ---
+
+## Maintenance notes (2026-06-30, maintenance pass) — Phase 3 category scope
+
+- **`ml_predictor.rs`:** `fetch_category_stats` counts only Kalshi paper rows (`$.ticker` in `full_decision_json`); `KALSHI_TICKER_PREDICATE` constant; LLM header adds Kalshi journal line when Phase 3 incomplete; header test extended.
+- **Settings UI:** Clarifies per-category list is Kalshi ticker rows only (mixed `predictions.db` totals unchanged on unified card).
+- Health: cargo check, tsc, **94** lib tests pass.
 
 ## Maintenance notes (2026-06-29, maintenance pass) — Phase 3 ROADMAP visibility
 

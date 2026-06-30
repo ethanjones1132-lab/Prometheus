@@ -453,6 +453,10 @@ pub async fn predict_batch(
 /// Minimum resolved samples before a per-category dedicated model is considered viable
 const MIN_CATEGORY_TRAIN_SAMPLES: i64 = 10;
 
+/// Kalshi paper rows store a market ticker in `full_decision_json` (shared DB may hold other products).
+pub(crate) const KALSHI_TICKER_PREDICATE: &str =
+    "full_decision_json IS NOT NULL AND trim(json_extract(full_decision_json, '$.ticker')) != ''";
+
 /// Full gate: new grades landed and enough resolved rows for unified training (≥10).
 pub(crate) fn should_retrain_given_resolved(graded_count: u32, resolved_predictions: i64) -> bool {
     graded_count > 0 && auto_retrain_eligible(resolved_predictions)
@@ -501,11 +505,18 @@ pub(crate) fn format_ml_training_header(status: &MLModelStatus) -> String {
             "; Phase 3 sidecar data: {}/{} categories ready",
             status.trainable_non_sports_categories, status.non_sports_sidecar_target
         );
+        if status.kalshi_resolved_predictions > 0 {
+            let _ = write!(
+                line,
+                "; Kalshi journal: {} resolved paper rows",
+                status.kalshi_resolved_predictions
+            );
+        }
     }
     line
 }
 
-/// Aggregate resolved/pending counts by market category for multi-category ML readiness
+/// Aggregate resolved/pending counts by market category for Phase 3 sidecar readiness (Kalshi paper rows only).
 async fn fetch_category_stats(pool: &Pool<Sqlite>) -> Vec<MLCategoryStats> {
     let rows = sqlx::query(
         r#"
@@ -513,12 +524,13 @@ async fn fetch_category_stats(pool: &Pool<Sqlite>) -> Vec<MLCategoryStats> {
             COALESCE(
                 NULLIF(json_extract(full_decision_json, '$.category'), ''),
                 NULLIF(stat_category, ''),
-                'Sports'
+                'Other'
             ) AS category,
             SUM(CASE WHEN outcome IN ('Win', 'Loss', 'Push') THEN 1 ELSE 0 END) AS resolved_count,
             SUM(CASE WHEN outcome = 'Pending' THEN 1 ELSE 0 END) AS pending_count
         FROM predictions
-        WHERE line IS NOT NULL OR full_decision_json IS NOT NULL
+        WHERE full_decision_json IS NOT NULL
+          AND trim(json_extract(full_decision_json, '$.ticker')) != ''
         GROUP BY category
         ORDER BY resolved_count DESC, category ASC
         "#,
@@ -1152,6 +1164,7 @@ mod tests {
         };
         let header = format_ml_training_header(&status);
         assert!(header.contains("Phase 3 sidecar data: 1/3 categories ready"));
+        assert!(header.contains("Kalshi journal: 5 resolved paper rows"));
     }
 
     #[test]

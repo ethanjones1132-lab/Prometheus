@@ -445,7 +445,11 @@ export function SettingsView() {
               ) : null}
             </div>
             {mlStatus.category_stats.length > 0 ? (
-              <ul className="muted" style={{ marginTop: '0.75rem' }}>
+              <>
+                <p className="muted" style={{ marginTop: '0.75rem', marginBottom: '0.25rem' }}>
+                  Per-category graded counts (Kalshi paper rows with market ticker only):
+                </p>
+                <ul className="muted">
                 {mlStatus.category_stats.map((s) => (
                   <li key={s.category}>
                     {s.category}: {s.resolved_count}/{s.min_resolved_for_sidecar} graded,{' '}
@@ -456,6 +460,7 @@ export function SettingsView() {
                   </li>
                 ))}
               </ul>
+              </>
             ) : (
               <p className="muted">No categorized predictions in DB yet.</p>
             )}
