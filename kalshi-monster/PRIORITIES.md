@@ -1,12 +1,19 @@
 # Kalshi Monster — Priority Roadmap
 
-Last updated: 2026-06-30 (maintenance — Kalshi-only category stats for Phase 3 sidecar readiness; health green, 94 tests)
+Last updated: 2026-06-30 (maintenance — Phase 3 ML hint on Kalshi dashboard bootstrap; health green, 95 tests)
 
 Working copy: `C:\\Users\\ethan\\kalshi-build\\kalshi-monster`
 
 Quick status: **P0 done · P1 done · P2 done · P3 1 pending**
 
 ---
+
+## Maintenance notes (2026-06-30, maintenance pass) — Kalshi dashboard Phase 3 hint
+
+- **`ml_predictor.rs`:** `MLPhase3DashboardSummary`, `phase3_dashboard_summary` / `build_phase3_dashboard_summary` (SQL-only, no joblib read); +1 unit test.
+- **`kalshi_get_dashboard_bootstrap`:** Injects `ml_phase3` via `db_pool` (one IPC for markets + ML readiness).
+- **`KalshiView`:** Diagnostic strip shows sidecar progress, resolved Kalshi paper rows, next category unlock; Vitest extended.
+- Health: cargo check, tsc, **95** lib tests pass; KalshiView tests pass.
 
 ## Maintenance notes (2026-06-30, maintenance pass) — Phase 3 category scope
 

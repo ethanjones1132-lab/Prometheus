@@ -30,6 +30,8 @@ pub struct KalshiDashboardBootstrap {
     pub category_count: usize,
     pub dashboard_generated_at: String,
     pub data_quality_notes: Vec<String>,
+    #[serde(default)]
+    pub ml_phase3: Option<crate::ml_predictor::MLPhase3DashboardSummary>,
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1571,6 +1573,7 @@ pub async fn kalshi_get_top_markets(
 pub async fn kalshi_get_dashboard_bootstrap(
     limit: Option<usize>,
     kalshi: State<'_, KalshiState>,
+    db_pool: State<'_, Pool<Sqlite>>,
 ) -> Result<KalshiDashboardBootstrap, String> {
     let n = limit.unwrap_or(30).min(100);
     let mut client = kalshi.lock().await;
@@ -1597,6 +1600,8 @@ pub async fn kalshi_get_dashboard_bootstrap(
         notes
     };
 
+    let ml_phase3 = crate::ml_predictor::phase3_dashboard_summary(&db_pool).await;
+
     Ok(KalshiDashboardBootstrap {
         markets,
         categories,
@@ -1608,6 +1613,7 @@ pub async fn kalshi_get_dashboard_bootstrap(
         category_count,
         dashboard_generated_at: chrono::Utc::now().to_rfc3339(),
         data_quality_notes,
+        ml_phase3: Some(ml_phase3),
     })
 }
 

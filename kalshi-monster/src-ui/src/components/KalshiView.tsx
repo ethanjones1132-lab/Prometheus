@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { kalshiApi } from '../services/kalshi';
-import type { KalshiCategoryStat, KalshiMarketSummary } from '../types/kalshi';
+import type { KalshiCategoryStat, KalshiMarketSummary, MLPhase3DashboardSummary } from '../types/kalshi';
 import { MarketDetailPanel } from './MarketDetailPanel';
 import { KalshiPredictionsPanel } from './KalshiPredictionsPanel';
 
@@ -46,6 +46,22 @@ function cacheLabel(status: string, partial: boolean): string {
   return 'Cold cache';
 }
 
+function mlPhase3DashboardLabel(summary: MLPhase3DashboardSummary): string {
+  const base = `ML Phase 3: ${summary.trainable_non_sports_categories}/${summary.non_sports_sidecar_target} sidecar categories`;
+  const journal = ` · ${summary.kalshi_resolved_predictions} resolved Kalshi paper rows`;
+  if (summary.phase_3_data_metric_ready) {
+    return `${base} ready${journal}`;
+  }
+  if (
+    summary.next_sidecar_category != null &&
+    summary.next_sidecar_samples_needed != null &&
+    summary.next_sidecar_samples_needed > 0
+  ) {
+    return `${base}${journal} · next: ${summary.next_sidecar_category} (+${summary.next_sidecar_samples_needed} graded)`;
+  }
+  return `${base}${journal}`;
+}
+
 function opportunityScore(market: KalshiMarketSummary): number {
   const liquidityScore = Math.min(market.liquidity / 1000, 75);
   const volumeScore = Math.min(market.volume_24h / 5000, 45);
@@ -81,6 +97,7 @@ export function KalshiView({ onAnalyzeMarket }: KalshiViewProps = {}) {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [marketsReady, setMarketsReady] = useState(false);
+  const [mlPhase3, setMlPhase3] = useState<MLPhase3DashboardSummary | null>(null);
   const requestId = useRef(0);
 
   const loadMarkets = useCallback(async (opts?: { query?: string; category?: string }) => {
@@ -103,6 +120,7 @@ export function KalshiView({ onAnalyzeMarket }: KalshiViewProps = {}) {
         setMarketCount(bootstrap.market_count);
         setCategoryCount(bootstrap.category_count);
         setDataQualityNotes(bootstrap.data_quality_notes);
+        setMlPhase3(bootstrap.ml_phase3 ?? null);
         setMarketsReady(true);
         return;
       }
@@ -251,6 +269,11 @@ export function KalshiView({ onAnalyzeMarket }: KalshiViewProps = {}) {
         {dataQualityNotes.map((note) => (
           <span key={note} className="diagnosticNote">{note}</span>
         ))}
+        {mlPhase3 ? (
+          <span className="diagnosticNote" title="Multi-category ML readiness (Settings for full detail)">
+            {mlPhase3DashboardLabel(mlPhase3)}
+          </span>
+        ) : null}
       </div>
 
       <section className="dashboardGrid">

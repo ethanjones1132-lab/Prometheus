@@ -104,6 +104,15 @@ describe('KalshiView', () => {
       category_count: 1,
       dashboard_generated_at: '2026-06-22T17:00:01Z',
       data_quality_notes: ['Partial catalog loaded for fast first paint'],
+      ml_phase3: {
+        trainable_non_sports_categories: 1,
+        non_sports_sidecar_target: 3,
+        phase_3_data_metric_ready: false,
+        kalshi_resolved_predictions: 4,
+        kalshi_pending_predictions: 2,
+        next_sidecar_category: 'Politics',
+        next_sidecar_samples_needed: 6,
+      },
     });
     vi.mocked(kalshiApi.getPredictions).mockResolvedValue([]);
     vi.mocked(kalshiApi.getPaperPositions).mockResolvedValue([]);
@@ -157,6 +166,9 @@ describe('KalshiView', () => {
     expect(screen.getByText('Markets 1')).toBeInTheDocument();
     expect(screen.getByText('Categories 1')).toBeInTheDocument();
     expect(screen.getByText('Partial catalog loaded for fast first paint')).toBeInTheDocument();
+    expect(
+      screen.getByText(/ML Phase 3: 1\/3 sidecar categories · 4 resolved Kalshi paper rows · next: Politics/),
+    ).toBeInTheDocument();
     expect(screen.getByText('Status open')).toBeInTheDocument();
     expect(screen.getByText('Close Dec 12, 2026')).toBeInTheDocument();
     expect(screen.getByText('Liq $25,000')).toBeInTheDocument();

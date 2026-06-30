@@ -27,6 +27,16 @@ export interface KalshiCategoryStat {
   volume_24h: number;
 }
 
+export interface MLPhase3DashboardSummary {
+  trainable_non_sports_categories: number;
+  non_sports_sidecar_target: number;
+  phase_3_data_metric_ready: boolean;
+  kalshi_resolved_predictions: number;
+  kalshi_pending_predictions: number;
+  next_sidecar_category?: string | null;
+  next_sidecar_samples_needed?: number | null;
+}
+
 export interface KalshiDashboardBootstrap {
   markets: KalshiMarketSummary[];
   categories: KalshiCategoryStat[];
@@ -38,6 +48,7 @@ export interface KalshiDashboardBootstrap {
   category_count: number;
   dashboard_generated_at: string;
   data_quality_notes: string[];
+  ml_phase3?: MLPhase3DashboardSummary | null;
 }
 
 export interface KalshiPrediction {

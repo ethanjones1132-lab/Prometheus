@@ -578,6 +578,60 @@ fn format_category_readiness(stats: &[MLCategoryStats]) -> String {
     format!(" Category mix: {}.", parts.join("; "))
 }
 
+/// Lightweight Phase 3 hint for Kalshi dashboard bootstrap (SQL only; no joblib metadata read).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MLPhase3DashboardSummary {
+    pub trainable_non_sports_categories: i64,
+    pub non_sports_sidecar_target: i64,
+    pub phase_3_data_metric_ready: bool,
+    pub kalshi_resolved_predictions: i64,
+    pub kalshi_pending_predictions: i64,
+    pub next_sidecar_category: Option<String>,
+    pub next_sidecar_samples_needed: Option<i64>,
+}
+
+pub(crate) fn build_phase3_dashboard_summary(
+    category_stats: Vec<MLCategoryStats>,
+    kalshi_resolved: i64,
+    kalshi_pending: i64,
+) -> MLPhase3DashboardSummary {
+    let stats = ensure_non_sports_sidecar_stats(category_stats);
+    let trainable_non_sports = count_trainable_non_sports_categories(&stats);
+    let target = default_non_sports_sidecar_target();
+    let next_unlock = nearest_non_sports_sidecar_unlock(&stats);
+    MLPhase3DashboardSummary {
+        trainable_non_sports_categories: trainable_non_sports,
+        non_sports_sidecar_target: target,
+        phase_3_data_metric_ready: phase_3_data_metric_ready(trainable_non_sports, target),
+        kalshi_resolved_predictions: kalshi_resolved,
+        kalshi_pending_predictions: kalshi_pending,
+        next_sidecar_category: next_unlock.as_ref().map(|(c, _)| c.clone()),
+        next_sidecar_samples_needed: next_unlock.map(|(_, n)| n),
+    }
+}
+
+/// Aggregate Phase 3 readiness for the Kalshi dashboard (one round-trip with market bootstrap).
+pub async fn phase3_dashboard_summary(pool: &Pool<Sqlite>) -> MLPhase3DashboardSummary {
+    let category_stats = fetch_category_stats(pool).await;
+    let kalshi_pending: i64 = sqlx::query_scalar(&format!(
+        "SELECT COUNT(*) FROM predictions WHERE outcome = 'Pending' AND {}",
+        KALSHI_TICKER_PREDICATE
+    ))
+    .fetch_one(pool)
+    .await
+    .unwrap_or(0);
+
+    let kalshi_resolved: i64 = sqlx::query_scalar(&format!(
+        "SELECT COUNT(*) FROM predictions WHERE outcome IN ('Win', 'Loss', 'Push') AND {}",
+        KALSHI_TICKER_PREDICATE
+    ))
+    .fetch_one(pool)
+    .await
+    .unwrap_or(0);
+
+    build_phase3_dashboard_summary(category_stats, kalshi_resolved, kalshi_pending)
+}
+
 /// Get ML model status including training metadata
 pub async fn get_model_status(
     pool: &Pool<Sqlite>,
@@ -1133,6 +1187,29 @@ mod tests {
         assert!(!phase_3_data_metric_ready(2, 3));
         assert!(phase_3_data_metric_ready(3, 3));
         assert!(phase_3_data_metric_ready(4, 3));
+    }
+
+    #[test]
+    fn build_phase3_dashboard_summary_merges_sidecar_placeholders() {
+        let summary = build_phase3_dashboard_summary(
+            vec![MLCategoryStats {
+                category: "Politics".into(),
+                resolved_count: 8,
+                pending_count: 1,
+                trainable: false,
+                samples_until_trainable: 2,
+                min_resolved_for_sidecar: 10,
+            }],
+            12,
+            3,
+        );
+        assert_eq!(summary.trainable_non_sports_categories, 0);
+        assert_eq!(summary.non_sports_sidecar_target, 3);
+        assert!(!summary.phase_3_data_metric_ready);
+        assert_eq!(summary.kalshi_resolved_predictions, 12);
+        assert_eq!(summary.kalshi_pending_predictions, 3);
+        assert_eq!(summary.next_sidecar_category.as_deref(), Some("Politics"));
+        assert_eq!(summary.next_sidecar_samples_needed, Some(2));
     }
 
     #[test]
