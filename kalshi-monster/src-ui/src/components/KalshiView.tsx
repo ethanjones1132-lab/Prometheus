@@ -49,17 +49,27 @@ function cacheLabel(status: string, partial: boolean): string {
 function mlPhase3DashboardLabel(summary: MLPhase3DashboardSummary): string {
   const base = `ML Phase 3: ${summary.trainable_non_sports_categories}/${summary.non_sports_sidecar_target} sidecar categories`;
   const journal = ` · ${summary.kalshi_resolved_predictions} resolved Kalshi paper rows`;
+  const pending =
+    summary.kalshi_pending_predictions > 0
+      ? ` · ${summary.kalshi_pending_predictions} pending grades`
+      : '';
+  let retrain = '';
+  if (summary.auto_retrain_eligible) {
+    retrain = ' · auto-retrain on grade active';
+  } else if ((summary.resolved_until_auto_retrain ?? 0) > 0) {
+    retrain = ` · auto-retrain in ${summary.resolved_until_auto_retrain} more resolved rows`;
+  }
   if (summary.phase_3_data_metric_ready) {
-    return `${base} ready${journal}`;
+    return `${base} ready${journal}${pending}${retrain}`;
   }
   if (
     summary.next_sidecar_category != null &&
     summary.next_sidecar_samples_needed != null &&
     summary.next_sidecar_samples_needed > 0
   ) {
-    return `${base}${journal} · next: ${summary.next_sidecar_category} (+${summary.next_sidecar_samples_needed} graded)`;
+    return `${base}${journal}${pending}${retrain} · next: ${summary.next_sidecar_category} (+${summary.next_sidecar_samples_needed} graded)`;
   }
-  return `${base}${journal}`;
+  return `${base}${journal}${pending}${retrain}`;
 }
 
 function opportunityScore(market: KalshiMarketSummary): number {

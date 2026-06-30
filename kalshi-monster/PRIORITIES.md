@@ -1,12 +1,18 @@
 # Kalshi Monster — Priority Roadmap
 
-Last updated: 2026-06-30 (maintenance — Phase 3 ML hint on Kalshi dashboard bootstrap; health green, 95 tests)
+Last updated: 2026-06-30 (maintenance — dashboard Phase 3 pending + auto-retrain strip; health green, 95 tests)
 
 Working copy: `C:\\Users\\ethan\\kalshi-build\\kalshi-monster`
 
 Quick status: **P0 done · P1 done · P2 done · P3 1 pending**
 
 ---
+
+## Maintenance notes (2026-06-30, maintenance pass) — Dashboard Phase 3 auto-retrain hint
+
+- **`ml_predictor.rs`:** `MLPhase3DashboardSummary` adds `auto_retrain_eligible` / `resolved_until_auto_retrain` (total resolved SQL in bootstrap); `build_phase3_dashboard_summary` extended; test assertions updated.
+- **`KalshiView`:** Diagnostic strip shows pending Kalshi grades and auto-retrain readiness (parity with Settings ML card).
+- Health: cargo check, tsc, **95** lib tests pass; KalshiView vitest green.
 
 ## Maintenance notes (2026-06-30, maintenance pass) — Kalshi dashboard Phase 3 hint
 

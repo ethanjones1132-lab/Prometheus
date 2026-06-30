@@ -588,12 +588,18 @@ pub struct MLPhase3DashboardSummary {
     pub kalshi_pending_predictions: i64,
     pub next_sidecar_category: Option<String>,
     pub next_sidecar_samples_needed: Option<i64>,
+    /// Total resolved rows in predictions.db (all products); gates auto-retrain after grading.
+    #[serde(default)]
+    pub auto_retrain_eligible: bool,
+    #[serde(default)]
+    pub resolved_until_auto_retrain: i64,
 }
 
 pub(crate) fn build_phase3_dashboard_summary(
     category_stats: Vec<MLCategoryStats>,
     kalshi_resolved: i64,
     kalshi_pending: i64,
+    total_resolved_predictions: i64,
 ) -> MLPhase3DashboardSummary {
     let stats = ensure_non_sports_sidecar_stats(category_stats);
     let trainable_non_sports = count_trainable_non_sports_categories(&stats);
@@ -607,12 +613,20 @@ pub(crate) fn build_phase3_dashboard_summary(
         kalshi_pending_predictions: kalshi_pending,
         next_sidecar_category: next_unlock.as_ref().map(|(c, _)| c.clone()),
         next_sidecar_samples_needed: next_unlock.map(|(_, n)| n),
+        auto_retrain_eligible: auto_retrain_eligible(total_resolved_predictions),
+        resolved_until_auto_retrain: resolved_until_auto_retrain(total_resolved_predictions),
     }
 }
 
 /// Aggregate Phase 3 readiness for the Kalshi dashboard (one round-trip with market bootstrap).
 pub async fn phase3_dashboard_summary(pool: &Pool<Sqlite>) -> MLPhase3DashboardSummary {
     let category_stats = fetch_category_stats(pool).await;
+    let total_resolved: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM predictions WHERE outcome IN ('Win', 'Loss', 'Push')",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap_or(0);
     let kalshi_pending: i64 = sqlx::query_scalar(&format!(
         "SELECT COUNT(*) FROM predictions WHERE outcome = 'Pending' AND {}",
         KALSHI_TICKER_PREDICATE
@@ -629,7 +643,12 @@ pub async fn phase3_dashboard_summary(pool: &Pool<Sqlite>) -> MLPhase3DashboardS
     .await
     .unwrap_or(0);
 
-    build_phase3_dashboard_summary(category_stats, kalshi_resolved, kalshi_pending)
+    build_phase3_dashboard_summary(
+        category_stats,
+        kalshi_resolved,
+        kalshi_pending,
+        total_resolved,
+    )
 }
 
 /// Get ML model status including training metadata
@@ -1202,6 +1221,7 @@ mod tests {
             }],
             12,
             3,
+            12,
         );
         assert_eq!(summary.trainable_non_sports_categories, 0);
         assert_eq!(summary.non_sports_sidecar_target, 3);
@@ -1210,6 +1230,8 @@ mod tests {
         assert_eq!(summary.kalshi_pending_predictions, 3);
         assert_eq!(summary.next_sidecar_category.as_deref(), Some("Politics"));
         assert_eq!(summary.next_sidecar_samples_needed, Some(2));
+        assert!(summary.auto_retrain_eligible);
+        assert_eq!(summary.resolved_until_auto_retrain, 0);
     }
 
     #[test]

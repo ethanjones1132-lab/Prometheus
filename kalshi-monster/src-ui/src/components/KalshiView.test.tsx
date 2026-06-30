@@ -112,6 +112,8 @@ describe('KalshiView', () => {
         kalshi_pending_predictions: 2,
         next_sidecar_category: 'Politics',
         next_sidecar_samples_needed: 6,
+        auto_retrain_eligible: true,
+        resolved_until_auto_retrain: 0,
       },
     });
     vi.mocked(kalshiApi.getPredictions).mockResolvedValue([]);
@@ -167,7 +169,9 @@ describe('KalshiView', () => {
     expect(screen.getByText('Categories 1')).toBeInTheDocument();
     expect(screen.getByText('Partial catalog loaded for fast first paint')).toBeInTheDocument();
     expect(
-      screen.getByText(/ML Phase 3: 1\/3 sidecar categories · 4 resolved Kalshi paper rows · next: Politics/),
+      screen.getByText(
+        /ML Phase 3: 1\/3 sidecar categories · 4 resolved Kalshi paper rows · 2 pending grades · auto-retrain on grade active · next: Politics/,
+      ),
     ).toBeInTheDocument();
     expect(screen.getByText('Status open')).toBeInTheDocument();
     expect(screen.getByText('Close Dec 12, 2026')).toBeInTheDocument();

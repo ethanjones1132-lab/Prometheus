@@ -26,6 +26,7 @@ Desktop research app for Kalshi prediction markets: calibrated LLM + paper journ
 
 - Python `ml_predictor.py` unified + sidecar training; Rust IPC (`ml_train_model`, `ml_get_model_status`, `predict_batch`)
 - Settings readiness card (per-category counts, manual train, auto-retrain after Kalshi auto-grade)
+- Dashboard bootstrap strip: sidecar progress, Kalshi journal counts, pending grades, auto-retrain gate, next category unlock
 - LLM system prompts list active sidecars + CV ± when model metadata is available (`format_ml_training_header`); incomplete Phase 3 data progress appended when &lt;3 categories ready
 - Settings: `phase_3_data_metric_ready`, Kalshi-only graded counts vs mixed DB totals; per-category breakdown scoped to Kalshi ticker rows
 - `category_code` on ML predictions; enhanced prompts show `[cat:N]` for non-sports

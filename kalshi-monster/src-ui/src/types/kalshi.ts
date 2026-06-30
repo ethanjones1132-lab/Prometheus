@@ -35,6 +35,8 @@ export interface MLPhase3DashboardSummary {
   kalshi_pending_predictions: number;
   next_sidecar_category?: string | null;
   next_sidecar_samples_needed?: number | null;
+  auto_retrain_eligible?: boolean;
+  resolved_until_auto_retrain?: number;
 }
 
 export interface KalshiDashboardBootstrap {
