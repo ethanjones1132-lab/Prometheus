@@ -118,6 +118,8 @@ describe('KalshiView', () => {
         next_sidecar_samples_needed: 6,
         auto_retrain_eligible: true,
         resolved_until_auto_retrain: 0,
+        unified_model_on_disk: true,
+        active_sidecar_count: 1,
       },
     });
     vi.mocked(kalshiApi.getPredictions).mockResolvedValue([]);
@@ -177,6 +179,7 @@ describe('KalshiView', () => {
         /ML Phase 3: 1\/3 sidecar categories · 4 resolved Kalshi paper rows · 2 pending grades · auto-retrain on grade active · next: Politics/,
       ),
     ).toBeInTheDocument();
+    expect(screen.getByText(/ML artifacts: unified on disk, 1 sidecar/)).toBeInTheDocument();
     expect(screen.getByText('Status open')).toBeInTheDocument();
     expect(screen.getByText('Close Dec 12, 2026')).toBeInTheDocument();
     expect(screen.getByText('Liq $25,000')).toBeInTheDocument();

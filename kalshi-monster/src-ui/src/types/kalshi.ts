@@ -37,6 +37,8 @@ export interface MLPhase3DashboardSummary {
   next_sidecar_samples_needed?: number | null;
   auto_retrain_eligible?: boolean;
   resolved_until_auto_retrain?: number;
+  unified_model_on_disk?: boolean;
+  active_sidecar_count?: number;
 }
 
 export interface KalshiDashboardBootstrap {

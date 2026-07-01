@@ -258,6 +258,25 @@ fn model_meta_path(model_path: &PathBuf) -> PathBuf {
     ))
 }
 
+/// Fast on-disk artifact checks for dashboard bootstrap (no `_meta.json` parse).
+pub(crate) fn ml_artifacts_on_disk_summary() -> (bool, i64) {
+    let model = default_model_path();
+    let unified = model.exists();
+    let stem = model
+        .file_stem()
+        .unwrap_or_default()
+        .to_string_lossy();
+    let sidecars = NON_SPORTS_SIDECAR_CATEGORIES
+        .iter()
+        .filter(|name| {
+            model
+                .with_file_name(format!("{}_{}.joblib", stem, name.to_lowercase()))
+                .exists()
+        })
+        .count() as i64;
+    (unified, sidecars)
+}
+
 // ═══════════════════════════════════════════════════════════════
 // Core Operations
 // ═══════════════════════════════════════════════════════════════
@@ -578,7 +597,7 @@ fn format_category_readiness(stats: &[MLCategoryStats]) -> String {
     format!(" Category mix: {}.", parts.join("; "))
 }
 
-/// Lightweight Phase 3 hint for Kalshi dashboard bootstrap (SQL only; no joblib metadata read).
+/// Lightweight Phase 3 hint for Kalshi dashboard bootstrap (SQL + fast on-disk artifact checks).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MLPhase3DashboardSummary {
     pub trainable_non_sports_categories: i64,
@@ -593,6 +612,12 @@ pub struct MLPhase3DashboardSummary {
     pub auto_retrain_eligible: bool,
     #[serde(default)]
     pub resolved_until_auto_retrain: i64,
+    /// Unified `ml_model.joblib` present (existence only).
+    #[serde(default)]
+    pub unified_model_on_disk: bool,
+    /// Count of Politics/Economics/Weather sidecar joblib files on disk.
+    #[serde(default)]
+    pub active_sidecar_count: i64,
 }
 
 pub(crate) fn build_phase3_dashboard_summary(
@@ -615,6 +640,8 @@ pub(crate) fn build_phase3_dashboard_summary(
         next_sidecar_samples_needed: next_unlock.map(|(_, n)| n),
         auto_retrain_eligible: auto_retrain_eligible(total_resolved_predictions),
         resolved_until_auto_retrain: resolved_until_auto_retrain(total_resolved_predictions),
+        unified_model_on_disk: false,
+        active_sidecar_count: 0,
     }
 }
 
@@ -643,12 +670,16 @@ pub async fn phase3_dashboard_summary(pool: &Pool<Sqlite>) -> MLPhase3DashboardS
     .await
     .unwrap_or(0);
 
-    build_phase3_dashboard_summary(
+    let mut summary = build_phase3_dashboard_summary(
         category_stats,
         kalshi_resolved,
         kalshi_pending,
         total_resolved,
-    )
+    );
+    let (unified, sidecars) = ml_artifacts_on_disk_summary();
+    summary.unified_model_on_disk = unified;
+    summary.active_sidecar_count = sidecars;
+    summary
 }
 
 /// Get ML model status including training metadata
@@ -1232,6 +1263,8 @@ mod tests {
         assert_eq!(summary.next_sidecar_samples_needed, Some(2));
         assert!(summary.auto_retrain_eligible);
         assert_eq!(summary.resolved_until_auto_retrain, 0);
+        assert!(!summary.unified_model_on_disk);
+        assert_eq!(summary.active_sidecar_count, 0);
     }
 
     #[test]

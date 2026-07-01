@@ -61,16 +61,22 @@ function mlPhase3DashboardLabel(summary: MLPhase3DashboardSummary): string {
     retrain = ` · auto-retrain in ${summary.resolved_until_auto_retrain} more resolved rows`;
   }
   if (summary.phase_3_data_metric_ready) {
-    return `${base} ready${journal}${pending}${retrain}`;
+    return `${base} ready${journal}${pending}${retrain}${mlArtifactsLabel(summary)}`;
   }
   if (
     summary.next_sidecar_category != null &&
     summary.next_sidecar_samples_needed != null &&
     summary.next_sidecar_samples_needed > 0
   ) {
-    return `${base}${journal}${pending}${retrain} · next: ${summary.next_sidecar_category} (+${summary.next_sidecar_samples_needed} graded)`;
+    return `${base}${journal}${pending}${retrain} · next: ${summary.next_sidecar_category} (+${summary.next_sidecar_samples_needed} graded)${mlArtifactsLabel(summary)}`;
   }
-  return `${base}${journal}${pending}${retrain}`;
+  return `${base}${journal}${pending}${retrain}${mlArtifactsLabel(summary)}`;
+}
+
+function mlArtifactsLabel(summary: MLPhase3DashboardSummary): string {
+  const unified = summary.unified_model_on_disk ? 'unified on disk' : 'no unified model';
+  const sidecars = summary.active_sidecar_count ?? 0;
+  return ` · ML artifacts: ${unified}, ${sidecars} sidecar${sidecars === 1 ? '' : 's'}`;
 }
 
 function opportunityScore(market: KalshiMarketSummary): number {
@@ -269,8 +275,24 @@ export function KalshiView({ onAnalyzeMarket }: KalshiViewProps = {}) {
       tips.unshift('Spreads are wide on the visible board. Demand a larger edge or watch for a better entry.');
     }
 
+    if (mlPhase3 != null && mlPhase3.kalshi_pending_predictions > 0) {
+      tips.unshift(
+        `You have ${mlPhase3.kalshi_pending_predictions} pending Kalshi grades — use Grade pending in the status strip to unlock ML auto-retrain.`,
+      );
+    }
+
+    if (
+      mlPhase3 != null &&
+      mlPhase3.next_sidecar_category != null &&
+      (mlPhase3.next_sidecar_samples_needed ?? 0) > 0
+    ) {
+      tips.unshift(
+        `Phase 3 ML: grade more ${mlPhase3.next_sidecar_category} paper rows (${mlPhase3.next_sidecar_samples_needed} more) to unlock the next sidecar.`,
+      );
+    }
+
     return tips.slice(0, 4);
-  }, [averageSpread, partialCatalog]);
+  }, [averageSpread, partialCatalog, mlPhase3]);
 
   const heroStats = [
     { label: 'Open market tape', value: marketCount || markets.length, detail: `${categoryCount || categories.length} categories` },
