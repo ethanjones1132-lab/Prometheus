@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { KalshiView } from './KalshiView';
 import { kalshiApi } from '../services/kalshi';
+import { mlApi } from '../services/tauri';
 import type { KalshiMarketSummary } from '../types/kalshi';
 
 vi.mock('../services/kalshi', () => ({
@@ -65,6 +66,9 @@ vi.mock('../services/tauri', () => ({
       kelly_fraction: 0.25,
       min_edge_pct: 2,
     }),
+  },
+  mlApi: {
+    trainModel: vi.fn(),
   },
 }));
 
@@ -207,6 +211,25 @@ describe('KalshiView', () => {
     await waitFor(() => {
       expect(kalshiApi.gradePending).toHaveBeenCalledTimes(1);
       expect(screen.getByText(/Graded 2 \(1W\/1L, \$4\.50\)/)).toBeInTheDocument();
+    });
+  });
+
+  test('trains ML from dashboard when auto-retrain gate is satisfied', async () => {
+    vi.mocked(mlApi.trainModel).mockResolvedValue({
+      status: 'trained',
+      samples: 42,
+      cv_accuracy_mean: 0.61,
+      message: 'ok',
+    });
+
+    render(<KalshiView />);
+
+    const trainBtn = await screen.findByRole('button', { name: /Train ML models/i });
+    fireEvent.click(trainBtn);
+
+    await waitFor(() => {
+      expect(mlApi.trainModel).toHaveBeenCalledTimes(1);
+      expect(screen.getByText(/ML trained \(42 samples — CV 61\.0%\)/)).toBeInTheDocument();
     });
   });
 });

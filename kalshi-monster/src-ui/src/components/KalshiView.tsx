@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { kalshiApi } from '../services/kalshi';
+import { mlApi } from '../services/tauri';
 import type { KalshiCategoryStat, KalshiMarketSummary, MLPhase3DashboardSummary } from '../types/kalshi';
 import { MarketDetailPanel } from './MarketDetailPanel';
 import { KalshiPredictionsPanel } from './KalshiPredictionsPanel';
@@ -110,6 +111,8 @@ export function KalshiView({ onAnalyzeMarket }: KalshiViewProps = {}) {
   const [mlPhase3, setMlPhase3] = useState<MLPhase3DashboardSummary | null>(null);
   const [gradingPending, setGradingPending] = useState(false);
   const [gradeFlash, setGradeFlash] = useState<string | null>(null);
+  const [mlTraining, setMlTraining] = useState(false);
+  const [mlTrainFlash, setMlTrainFlash] = useState<string | null>(null);
   const requestId = useRef(0);
 
   const loadMarkets = useCallback(async (opts?: { query?: string; category?: string }) => {
@@ -194,6 +197,28 @@ export function KalshiView({ onAnalyzeMarket }: KalshiViewProps = {}) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setGradingPending(false);
+    }
+  };
+
+  const trainMlFromDashboard = async () => {
+    setMlTraining(true);
+    setMlTrainFlash(null);
+    try {
+      const result = await mlApi.trainModel();
+      if (result.status === 'trained') {
+        const acc =
+          result.cv_accuracy_mean != null
+            ? ` — CV ${(result.cv_accuracy_mean * 100).toFixed(1)}%`
+            : '';
+        setMlTrainFlash(`ML trained (${result.samples ?? 0} samples${acc})`);
+      } else {
+        setMlTrainFlash(result.message ?? 'ML training finished');
+      }
+      await loadMarkets({ category: selectedCategory });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setMlTraining(false);
     }
   };
 
@@ -313,7 +338,19 @@ export function KalshiView({ onAnalyzeMarket }: KalshiViewProps = {}) {
             {gradingPending ? 'Grading…' : `Grade ${mlPhase3.kalshi_pending_predictions} pending`}
           </button>
         ) : null}
+        {mlPhase3 != null && mlPhase3.auto_retrain_eligible ? (
+          <button
+            type="button"
+            className="ghostBtn smallGradeBtn"
+            disabled={mlTraining || loading}
+            onClick={() => void trainMlFromDashboard()}
+            title="Train unified + sidecar models (same as Settings ML card)"
+          >
+            {mlTraining ? 'Training ML…' : 'Train ML models'}
+          </button>
+        ) : null}
         {gradeFlash ? <span className="diagnosticNote">{gradeFlash}</span> : null}
+        {mlTrainFlash ? <span className="diagnosticNote">{mlTrainFlash}</span> : null}
       </div>
 
       <section className="dashboardGrid">

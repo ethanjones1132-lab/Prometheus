@@ -1,12 +1,18 @@
 # Kalshi Monster — Priority Roadmap
 
-Last updated: 2026-07-01 (maintenance — dashboard quick-grade for pending Kalshi rows; health green, 95 tests)
+Last updated: 2026-07-01 (maintenance — dashboard Train ML quick action; health green, 95 tests)
 
 Working copy: `C:\\Users\\ethan\\kalshi-build\\kalshi-monster`
 
 Quick status: **P0 done · P1 done · P2 done · P3 1 pending**
 
 ---
+
+## Maintenance notes (2026-07-01, maintenance pass) — Dashboard Train ML CTA
+
+- **`KalshiView`:** When `ml_phase3.auto_retrain_eligible`, status strip shows **Train ML models** (`ml_train_model` IPC, refreshes bootstrap, flashes sample/CV summary).
+- **`KalshiView.test.tsx`:** Vitest for dashboard ML train action (4 tests).
+- Health: cargo check, tsc, **95** lib tests pass; KalshiView vitest green.
 
 ## Maintenance notes (2026-07-01, maintenance pass) — Dashboard grade pending CTA
 
