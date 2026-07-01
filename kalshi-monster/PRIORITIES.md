@@ -1,12 +1,19 @@
 # Kalshi Monster — Priority Roadmap
 
-Last updated: 2026-07-01 (maintenance — dashboard Train ML quick action; health green, 95 tests)
+Last updated: 2026-07-01 (maintenance — dashboard ML on-disk artifact hints + Phase 3 tips; health green, 95 tests)
 
 Working copy: `C:\\Users\\ethan\\kalshi-build\\kalshi-monster`
 
 Quick status: **P0 done · P1 done · P2 done · P3 1 pending**
 
 ---
+
+## Maintenance notes (2026-07-01, maintenance pass) — Dashboard ML artifact hints
+
+- **`ml_predictor.rs`:** `MLPhase3DashboardSummary` adds `unified_model_on_disk` / `active_sidecar_count` via `ml_artifacts_on_disk_summary` in `phase3_dashboard_summary`.
+- **`KalshiView`:** Status strip shows ML artifacts; insight rail tips for pending grades and next sidecar unlock.
+- **Vitest:** Artifact label assertion on bootstrap mock.
+- Health: cargo check, tsc, **95** lib tests pass; KalshiView vitest green.
 
 ## Maintenance notes (2026-07-01, maintenance pass) — Dashboard Train ML CTA
 
