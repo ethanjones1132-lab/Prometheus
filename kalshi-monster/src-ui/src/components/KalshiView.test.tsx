@@ -187,4 +187,26 @@ describe('KalshiView', () => {
       expect(screen.getByText('Market mechanics')).toBeInTheDocument();
     });
   });
+
+  test('grades pending Kalshi rows from dashboard status strip', async () => {
+    vi.mocked(kalshiApi.gradePending).mockResolvedValue({
+      total_predictions: 10,
+      pending_gradable: 2,
+      graded: 2,
+      wins: 1,
+      losses: 1,
+      total_pnl: 4.5,
+      fetched_at: '2026-07-01T12:00:00Z',
+    });
+
+    render(<KalshiView />);
+
+    const gradeBtn = await screen.findByRole('button', { name: /Grade 2 pending/i });
+    fireEvent.click(gradeBtn);
+
+    await waitFor(() => {
+      expect(kalshiApi.gradePending).toHaveBeenCalledTimes(1);
+      expect(screen.getByText(/Graded 2 \(1W\/1L, \$4\.50\)/)).toBeInTheDocument();
+    });
+  });
 });

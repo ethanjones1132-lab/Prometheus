@@ -1,12 +1,19 @@
 # Kalshi Monster — Priority Roadmap
 
-Last updated: 2026-06-30 (maintenance — dashboard Phase 3 pending + auto-retrain strip; health green, 95 tests)
+Last updated: 2026-07-01 (maintenance — dashboard quick-grade for pending Kalshi rows; health green, 95 tests)
 
 Working copy: `C:\\Users\\ethan\\kalshi-build\\kalshi-monster`
 
 Quick status: **P0 done · P1 done · P2 done · P3 1 pending**
 
 ---
+
+## Maintenance notes (2026-07-01, maintenance pass) — Dashboard grade pending CTA
+
+- **`KalshiView`:** When `ml_phase3.kalshi_pending_predictions > 0`, status strip shows **Grade N pending** (calls `kalshi_grade_pending_predictions`, refreshes bootstrap, flashes W/L/PnL summary).
+- **`index.css`:** Compact `.smallGradeBtn` styling in `.dashboardStatus`.
+- **Vitest:** New test for dashboard grade action.
+- Health: cargo check, tsc, **95** lib tests pass; KalshiView vitest green.
 
 ## Maintenance notes (2026-06-30, maintenance pass) — Dashboard Phase 3 auto-retrain hint
 

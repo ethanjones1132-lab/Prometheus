@@ -680,6 +680,13 @@ button {
   background: rgba(88, 166, 255, 0.14);
 }
 
+.dashboardStatus .smallGradeBtn {
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 700;
+  border-radius: 8px;
+}
+
 .dashboardGrid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 360px;

@@ -108,6 +108,8 @@ export function KalshiView({ onAnalyzeMarket }: KalshiViewProps = {}) {
   const [error, setError] = useState<string | null>(null);
   const [marketsReady, setMarketsReady] = useState(false);
   const [mlPhase3, setMlPhase3] = useState<MLPhase3DashboardSummary | null>(null);
+  const [gradingPending, setGradingPending] = useState(false);
+  const [gradeFlash, setGradeFlash] = useState<string | null>(null);
   const requestId = useRef(0);
 
   const loadMarkets = useCallback(async (opts?: { query?: string; category?: string }) => {
@@ -176,6 +178,22 @@ export function KalshiView({ onAnalyzeMarket }: KalshiViewProps = {}) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setRefreshing(false);
+    }
+  };
+
+  const gradePendingKalshi = async () => {
+    setGradingPending(true);
+    setGradeFlash(null);
+    try {
+      const summary = await kalshiApi.gradePending();
+      setGradeFlash(
+        `Graded ${summary.graded} (${summary.wins}W/${summary.losses}L, $${summary.total_pnl.toFixed(2)})`,
+      );
+      await loadMarkets({ category: selectedCategory });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setGradingPending(false);
     }
   };
 
@@ -284,6 +302,18 @@ export function KalshiView({ onAnalyzeMarket }: KalshiViewProps = {}) {
             {mlPhase3DashboardLabel(mlPhase3)}
           </span>
         ) : null}
+        {mlPhase3 != null && mlPhase3.kalshi_pending_predictions > 0 ? (
+          <button
+            type="button"
+            className="ghostBtn smallGradeBtn"
+            disabled={gradingPending || loading}
+            onClick={() => void gradePendingKalshi()}
+            title="Resolve pending Kalshi paper rows against settled markets (may trigger ML auto-retrain)"
+          >
+            {gradingPending ? 'Grading…' : `Grade ${mlPhase3.kalshi_pending_predictions} pending`}
+          </button>
+        ) : null}
+        {gradeFlash ? <span className="diagnosticNote">{gradeFlash}</span> : null}
       </div>
 
       <section className="dashboardGrid">
