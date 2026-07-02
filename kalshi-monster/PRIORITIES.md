@@ -1,12 +1,19 @@
 # Kalshi Monster — Priority Roadmap
 
-Last updated: 2026-07-02 (maintenance — dashboard sidecar per-category insight rail; health green, 95 tests)
+Last updated: 2026-07-02 (maintenance — dashboard unified ML CV from _meta.json; health green, 96 tests)
 
 Working copy: `C:\\Users\\ethan\\kalshi-build\\kalshi-monster`
 
 Quick status: **P0 done · P1 done · P2 done · P3 1 pending**
 
 ---
+
+## Maintenance notes (2026-07-02, maintenance pass) — Dashboard unified ML CV
+
+- **`ml_predictor.rs`:** `MLPhase3DashboardSummary` adds `unified_cv_accuracy_mean/std` and `unified_trained_at` via lightweight `_meta.json` read in `phase3_dashboard_summary`; +1 unit test.
+- **`KalshiView`:** Status strip ML artifacts label shows unified CV ± std; insight rail shows trained date and ROADMAP data-metric line when ready.
+- **Vitest:** CV and trained-date assertions on bootstrap mock.
+- Health: cargo check, tsc, **96** lib tests pass; KalshiView vitest green.
 
 ## Maintenance notes (2026-07-02, maintenance pass) — Dashboard sidecar category progress
 
