@@ -1,12 +1,19 @@
 # Kalshi Monster — Priority Roadmap
 
-Last updated: 2026-07-02 (maintenance — dashboard unified ML CV from _meta.json; health green, 96 tests)
+Last updated: 2026-07-02 (maintenance — dashboard active sidecar CV from _meta.json; health green, 97 tests)
 
 Working copy: `C:\\Users\\ethan\\kalshi-build\\kalshi-monster`
 
 Quick status: **P0 done · P1 done · P2 done · P3 1 pending**
 
 ---
+
+## Maintenance notes (2026-07-02, maintenance pass) — Dashboard active sidecar CV
+
+- **`ml_predictor.rs`:** `MLPhase3DashboardSummary` adds `active_sidecar_models` via lightweight `per_category_models` parse from unified `_meta.json`; +1 unit test.
+- **`KalshiView`:** Insight rail **Sidecar data** card lists active sidecars with samples and CV (Settings parity).
+- **Vitest:** Asserts active sidecar line on bootstrap mock.
+- Health: cargo check, tsc, **97** lib tests pass; KalshiView vitest green.
 
 ## Maintenance notes (2026-07-02, maintenance pass) — Dashboard unified ML CV
 

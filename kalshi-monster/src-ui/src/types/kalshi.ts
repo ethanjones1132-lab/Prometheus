@@ -1,4 +1,5 @@
 import type { MLCategoryStat } from './index';
+import type { MLPerCategoryModel } from './index';
 
 export interface KalshiMarketSummary {
   ticker: string;
@@ -45,6 +46,7 @@ export interface MLPhase3DashboardSummary {
   unified_cv_accuracy_mean?: number | null;
   unified_cv_accuracy_std?: number | null;
   unified_trained_at?: string | null;
+  active_sidecar_models?: Record<string, MLPerCategoryModel> | null;
 }
 
 export interface KalshiDashboardBootstrap {

@@ -315,6 +315,69 @@ pub(crate) fn read_unified_model_meta_light() -> UnifiedModelMetaLight {
     parse_unified_model_meta_json(&content)
 }
 
+/// Parse `per_category_models` from unified `_meta.json` for dashboard insight rail.
+pub(crate) fn parse_active_sidecar_models_from_meta(
+    content: &str,
+    unified_model: &std::path::Path,
+) -> Option<std::collections::HashMap<String, MLPerCategoryModel>> {
+    #[derive(Deserialize)]
+    struct CatMetaRaw {
+        samples: i64,
+        #[serde(default)]
+        cv_accuracy_mean: Option<f64>,
+        #[serde(default)]
+        model_path: Option<String>,
+    }
+    #[derive(Deserialize)]
+    struct MetaSidecars {
+        #[serde(default)]
+        per_category_models: Option<std::collections::HashMap<String, CatMetaRaw>>,
+    }
+    let m = serde_json::from_str::<MetaSidecars>(content).ok()?;
+    let raw = m.per_category_models?;
+    if raw.is_empty() {
+        return None;
+    }
+    let stem = unified_model
+        .file_stem()
+        .unwrap_or_default()
+        .to_string_lossy();
+    Some(
+        raw.into_iter()
+            .map(|(name, info)| {
+                let path = info.model_path.as_ref().map(PathBuf::from);
+                let exists = path
+                    .as_ref()
+                    .map(|p| p.exists())
+                    .unwrap_or_else(|| {
+                        unified_model
+                            .with_file_name(format!("{}_{}.joblib", stem, name.to_lowercase()))
+                            .exists()
+                    });
+                (
+                    name,
+                    MLPerCategoryModel {
+                        samples: info.samples,
+                        cv_accuracy_mean: info.cv_accuracy_mean,
+                        model_exists: exists,
+                    },
+                )
+            })
+            .collect(),
+    )
+}
+
+pub(crate) fn read_active_sidecar_models_light(
+) -> Option<std::collections::HashMap<String, MLPerCategoryModel>> {
+    let model = default_model_path();
+    let meta_path = model_meta_path(&model);
+    if !meta_path.exists() {
+        return None;
+    }
+    let content = std::fs::read_to_string(&meta_path).ok()?;
+    parse_active_sidecar_models_from_meta(&content, &model)
+}
+
 // ═══════════════════════════════════════════════════════════════
 // Core Operations
 // ═══════════════════════════════════════════════════════════════
@@ -666,6 +729,9 @@ pub struct MLPhase3DashboardSummary {
     pub unified_cv_accuracy_std: Option<f64>,
     #[serde(default)]
     pub unified_trained_at: Option<String>,
+    /// Trained sidecars from `_meta.json` (names, samples, CV) for dashboard insight rail.
+    #[serde(default)]
+    pub active_sidecar_models: Option<std::collections::HashMap<String, MLPerCategoryModel>>,
 }
 
 pub(crate) fn build_phase3_dashboard_summary(
@@ -698,6 +764,7 @@ pub(crate) fn build_phase3_dashboard_summary(
         unified_cv_accuracy_mean: None,
         unified_cv_accuracy_std: None,
         unified_trained_at: None,
+        active_sidecar_models: None,
     }
 }
 
@@ -739,6 +806,7 @@ pub async fn phase3_dashboard_summary(pool: &Pool<Sqlite>) -> MLPhase3DashboardS
     summary.unified_cv_accuracy_mean = meta_light.cv_accuracy_mean;
     summary.unified_cv_accuracy_std = meta_light.cv_accuracy_std;
     summary.unified_trained_at = meta_light.trained_at;
+    summary.active_sidecar_models = read_active_sidecar_models_light();
     summary
 }
 
@@ -1306,6 +1374,17 @@ mod tests {
         assert_eq!(meta.cv_accuracy_mean, Some(0.612));
         assert_eq!(meta.cv_accuracy_std, Some(0.04));
         assert_eq!(meta.trained_at.as_deref(), Some("2026-07-01T12:00:00Z"));
+    }
+
+    #[test]
+    fn parse_active_sidecar_models_from_meta_reads_per_category() {
+        let json = r#"{"per_category_models":{"Economics":{"samples":14,"cv_accuracy_mean":0.58}}}"#;
+        let unified = PathBuf::from("/tmp/ml_model.joblib");
+        let parsed = parse_active_sidecar_models_from_meta(json, &unified).expect("sidecars");
+        let econ = parsed.get("Economics").expect("economics");
+        assert_eq!(econ.samples, 14);
+        assert_eq!(econ.cv_accuracy_mean, Some(0.58));
+        assert!(!econ.model_exists);
     }
 
     #[test]

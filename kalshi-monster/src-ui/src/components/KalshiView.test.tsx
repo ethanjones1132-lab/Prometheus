@@ -123,6 +123,9 @@ describe('KalshiView', () => {
         unified_cv_accuracy_mean: 0.612,
         unified_cv_accuracy_std: 0.04,
         unified_trained_at: '2026-07-01T12:00:00Z',
+        active_sidecar_models: {
+          Economics: { samples: 14, cv_accuracy_mean: 0.58, model_exists: true },
+        },
         non_sports_category_stats: [
           {
             category: 'Politics',
@@ -211,6 +214,7 @@ describe('KalshiView', () => {
     expect(screen.getByText(/ML artifacts: unified on disk, 1 sidecar · unified CV 61.2% ±4.0%/)).toBeInTheDocument();
     expect(screen.getByText('Sidecar data (Kalshi paper)')).toBeInTheDocument();
     expect(screen.getByText(/Unified model trained Jul 1, 2026/)).toBeInTheDocument();
+    expect(screen.getByText(/Active sidecars: Economics \(14 samples, CV 58.0%\)/)).toBeInTheDocument();
     expect(screen.getByText(/10\/10 graded · sidecar ready/)).toBeInTheDocument();
     expect(screen.getByText('Status open')).toBeInTheDocument();
     expect(screen.getByText('Close Dec 12, 2026')).toBeInTheDocument();

@@ -454,6 +454,23 @@ export function KalshiView({ onAnalyzeMarket }: KalshiViewProps = {}) {
               {mlPhase3.unified_trained_at ? (
                 <p className="muted small">Unified model trained {formatDateLabel(mlPhase3.unified_trained_at)}</p>
               ) : null}
+              {mlPhase3.active_sidecar_models != null &&
+              Object.keys(mlPhase3.active_sidecar_models).length > 0 ? (
+                <p className="muted small">
+                  Active sidecars:{' '}
+                  {Object.entries(mlPhase3.active_sidecar_models)
+                    .map(([name, m]) => {
+                      const cv =
+                        m.cv_accuracy_mean != null
+                          ? `, CV ${(m.cv_accuracy_mean * 100).toFixed(1)}%`
+                          : '';
+                      return m.model_exists
+                        ? `${name} (${m.samples} samples${cv})`
+                        : `${name} (missing file)`;
+                    })
+                    .join(' · ')}
+                </p>
+              ) : null}
               <div className="categoryPulse">
                 {mlPhase3.non_sports_category_stats!.map((row) => (
                   <div key={row.category}>
