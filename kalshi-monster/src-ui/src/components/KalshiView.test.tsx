@@ -120,6 +120,32 @@ describe('KalshiView', () => {
         resolved_until_auto_retrain: 0,
         unified_model_on_disk: true,
         active_sidecar_count: 1,
+        non_sports_category_stats: [
+          {
+            category: 'Politics',
+            resolved_count: 4,
+            pending_count: 1,
+            trainable: false,
+            samples_until_trainable: 6,
+            min_resolved_for_sidecar: 10,
+          },
+          {
+            category: 'Economics',
+            resolved_count: 10,
+            pending_count: 0,
+            trainable: true,
+            samples_until_trainable: 0,
+            min_resolved_for_sidecar: 10,
+          },
+          {
+            category: 'Weather',
+            resolved_count: 0,
+            pending_count: 0,
+            trainable: false,
+            samples_until_trainable: 10,
+            min_resolved_for_sidecar: 10,
+          },
+        ],
       },
     });
     vi.mocked(kalshiApi.getPredictions).mockResolvedValue([]);
@@ -180,6 +206,8 @@ describe('KalshiView', () => {
       ),
     ).toBeInTheDocument();
     expect(screen.getByText(/ML artifacts: unified on disk, 1 sidecar/)).toBeInTheDocument();
+    expect(screen.getByText('Sidecar data (Kalshi paper)')).toBeInTheDocument();
+    expect(screen.getByText(/10\/10 graded · sidecar ready/)).toBeInTheDocument();
     expect(screen.getByText('Status open')).toBeInTheDocument();
     expect(screen.getByText('Close Dec 12, 2026')).toBeInTheDocument();
     expect(screen.getByText('Liq $25,000')).toBeInTheDocument();

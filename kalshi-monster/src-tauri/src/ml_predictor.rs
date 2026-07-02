@@ -618,6 +618,9 @@ pub struct MLPhase3DashboardSummary {
     /// Count of Politics/Economics/Weather sidecar joblib files on disk.
     #[serde(default)]
     pub active_sidecar_count: i64,
+    /// Per-category graded counts for Politics/Economics/Weather (dashboard insight rail).
+    #[serde(default)]
+    pub non_sports_category_stats: Vec<MLCategoryStats>,
 }
 
 pub(crate) fn build_phase3_dashboard_summary(
@@ -630,6 +633,10 @@ pub(crate) fn build_phase3_dashboard_summary(
     let trainable_non_sports = count_trainable_non_sports_categories(&stats);
     let target = default_non_sports_sidecar_target();
     let next_unlock = nearest_non_sports_sidecar_unlock(&stats);
+    let non_sports_category_stats: Vec<MLCategoryStats> = NON_SPORTS_SIDECAR_CATEGORIES
+        .iter()
+        .filter_map(|cat| stats.iter().find(|s| s.category == *cat).cloned())
+        .collect();
     MLPhase3DashboardSummary {
         trainable_non_sports_categories: trainable_non_sports,
         non_sports_sidecar_target: target,
@@ -642,6 +649,7 @@ pub(crate) fn build_phase3_dashboard_summary(
         resolved_until_auto_retrain: resolved_until_auto_retrain(total_resolved_predictions),
         unified_model_on_disk: false,
         active_sidecar_count: 0,
+        non_sports_category_stats,
     }
 }
 
@@ -1265,6 +1273,15 @@ mod tests {
         assert_eq!(summary.resolved_until_auto_retrain, 0);
         assert!(!summary.unified_model_on_disk);
         assert_eq!(summary.active_sidecar_count, 0);
+        assert_eq!(summary.non_sports_category_stats.len(), 3);
+        assert_eq!(
+            summary
+                .non_sports_category_stats
+                .iter()
+                .find(|s| s.category == "Politics")
+                .map(|s| s.resolved_count),
+            Some(8)
+        );
     }
 
     #[test]

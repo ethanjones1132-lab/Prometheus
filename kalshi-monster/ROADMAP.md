@@ -1,6 +1,6 @@
 # Kalshi Monster — Roadmap
 
-Last updated: 2026-07-01
+Last updated: 2026-07-02
 
 Canonical backlog detail lives in `PRIORITIES.md`. This document is the phased plan and success metrics.
 
@@ -27,6 +27,7 @@ Desktop research app for Kalshi prediction markets: calibrated LLM + paper journ
 - Python `ml_predictor.py` unified + sidecar training; Rust IPC (`ml_train_model`, `ml_get_model_status`, `predict_batch`)
 - Settings readiness card (per-category counts, manual train, auto-retrain after Kalshi auto-grade)
 - Dashboard bootstrap strip: sidecar progress, Kalshi journal counts, pending grades, auto-retrain gate, next category unlock
+- Dashboard insight rail: per-category Politics/Economics/Weather graded progress (same data as Settings ML card)
 - Dashboard strip shows on-disk unified/sidecar ML artifact counts (path existence, no metadata parse)
 - Dashboard **Train ML models** button when ≥10 resolved rows (manual retrain without opening Settings)
 - LLM system prompts list active sidecars + CV ± when model metadata is available (`format_ml_training_header`); incomplete Phase 3 data progress appended when &lt;3 categories ready

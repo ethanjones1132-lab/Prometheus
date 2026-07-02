@@ -435,6 +435,22 @@ export function KalshiView({ onAnalyzeMarket }: KalshiViewProps = {}) {
               <p className="muted small">Category stats will appear after the first market load.</p>
             )}
           </article>
+          {mlPhase3 != null && (mlPhase3.non_sports_category_stats?.length ?? 0) > 0 ? (
+            <article className="insightCard">
+              <span>Sidecar data (Kalshi paper)</span>
+              <div className="categoryPulse">
+                {mlPhase3.non_sports_category_stats!.map((row) => (
+                  <div key={row.category}>
+                    <strong>{row.category}</strong>
+                    <small>
+                      {row.resolved_count}/{row.min_resolved_for_sidecar} graded
+                      {row.trainable ? ' · sidecar ready' : row.samples_until_trainable > 0 ? ` · +${row.samples_until_trainable} to unlock` : ''}
+                    </small>
+                  </div>
+                ))}
+              </div>
+            </article>
+          ) : null}
           <article className="insightCard">
             <span>Decision tips</span>
             <ul className="tipList">

@@ -1,3 +1,5 @@
+import type { MLCategoryStat } from './index';
+
 export interface KalshiMarketSummary {
   ticker: string;
   event_ticker: string;
@@ -39,6 +41,7 @@ export interface MLPhase3DashboardSummary {
   resolved_until_auto_retrain?: number;
   unified_model_on_disk?: boolean;
   active_sidecar_count?: number;
+  non_sports_category_stats?: MLCategoryStat[];
 }
 
 export interface KalshiDashboardBootstrap {
