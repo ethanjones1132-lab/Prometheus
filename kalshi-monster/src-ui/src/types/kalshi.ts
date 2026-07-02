@@ -42,6 +42,9 @@ export interface MLPhase3DashboardSummary {
   unified_model_on_disk?: boolean;
   active_sidecar_count?: number;
   non_sports_category_stats?: MLCategoryStat[];
+  unified_cv_accuracy_mean?: number | null;
+  unified_cv_accuracy_std?: number | null;
+  unified_trained_at?: string | null;
 }
 
 export interface KalshiDashboardBootstrap {

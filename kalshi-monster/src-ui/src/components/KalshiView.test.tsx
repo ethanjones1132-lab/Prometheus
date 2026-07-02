@@ -120,6 +120,9 @@ describe('KalshiView', () => {
         resolved_until_auto_retrain: 0,
         unified_model_on_disk: true,
         active_sidecar_count: 1,
+        unified_cv_accuracy_mean: 0.612,
+        unified_cv_accuracy_std: 0.04,
+        unified_trained_at: '2026-07-01T12:00:00Z',
         non_sports_category_stats: [
           {
             category: 'Politics',
@@ -205,8 +208,9 @@ describe('KalshiView', () => {
         /ML Phase 3: 1\/3 sidecar categories · 4 resolved Kalshi paper rows · 2 pending grades · auto-retrain on grade active · next: Politics/,
       ),
     ).toBeInTheDocument();
-    expect(screen.getByText(/ML artifacts: unified on disk, 1 sidecar/)).toBeInTheDocument();
+    expect(screen.getByText(/ML artifacts: unified on disk, 1 sidecar · unified CV 61.2% ±4.0%/)).toBeInTheDocument();
     expect(screen.getByText('Sidecar data (Kalshi paper)')).toBeInTheDocument();
+    expect(screen.getByText(/Unified model trained Jul 1, 2026/)).toBeInTheDocument();
     expect(screen.getByText(/10\/10 graded · sidecar ready/)).toBeInTheDocument();
     expect(screen.getByText('Status open')).toBeInTheDocument();
     expect(screen.getByText('Close Dec 12, 2026')).toBeInTheDocument();

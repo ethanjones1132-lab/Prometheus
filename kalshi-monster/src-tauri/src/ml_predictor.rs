@@ -277,6 +277,44 @@ pub(crate) fn ml_artifacts_on_disk_summary() -> (bool, i64) {
     (unified, sidecars)
 }
 
+#[derive(Debug, Clone, Default, PartialEq)]
+pub(crate) struct UnifiedModelMetaLight {
+    pub cv_accuracy_mean: Option<f64>,
+    pub cv_accuracy_std: Option<f64>,
+    pub trained_at: Option<String>,
+}
+
+/// Parse unified model `_meta.json` for dashboard hints (best-effort).
+pub(crate) fn parse_unified_model_meta_json(content: &str) -> UnifiedModelMetaLight {
+    #[derive(Deserialize)]
+    struct MetaLight {
+        trained_at: String,
+        cv_accuracy_mean: f64,
+        cv_accuracy_std: f64,
+    }
+    match serde_json::from_str::<MetaLight>(content) {
+        Ok(m) => UnifiedModelMetaLight {
+            cv_accuracy_mean: Some(m.cv_accuracy_mean),
+            cv_accuracy_std: Some(m.cv_accuracy_std),
+            trained_at: Some(m.trained_at),
+        },
+        Err(_) => UnifiedModelMetaLight::default(),
+    }
+}
+
+pub(crate) fn read_unified_model_meta_light() -> UnifiedModelMetaLight {
+    let model = default_model_path();
+    let meta_path = model_meta_path(&model);
+    if !meta_path.exists() {
+        return UnifiedModelMetaLight::default();
+    }
+    let content = match std::fs::read_to_string(&meta_path) {
+        Ok(c) => c,
+        Err(_) => return UnifiedModelMetaLight::default(),
+    };
+    parse_unified_model_meta_json(&content)
+}
+
 // ═══════════════════════════════════════════════════════════════
 // Core Operations
 // ═══════════════════════════════════════════════════════════════
@@ -621,6 +659,13 @@ pub struct MLPhase3DashboardSummary {
     /// Per-category graded counts for Politics/Economics/Weather (dashboard insight rail).
     #[serde(default)]
     pub non_sports_category_stats: Vec<MLCategoryStats>,
+    /// Unified model CV from `_meta.json` when present (lightweight read for dashboard).
+    #[serde(default)]
+    pub unified_cv_accuracy_mean: Option<f64>,
+    #[serde(default)]
+    pub unified_cv_accuracy_std: Option<f64>,
+    #[serde(default)]
+    pub unified_trained_at: Option<String>,
 }
 
 pub(crate) fn build_phase3_dashboard_summary(
@@ -650,6 +695,9 @@ pub(crate) fn build_phase3_dashboard_summary(
         unified_model_on_disk: false,
         active_sidecar_count: 0,
         non_sports_category_stats,
+        unified_cv_accuracy_mean: None,
+        unified_cv_accuracy_std: None,
+        unified_trained_at: None,
     }
 }
 
@@ -687,6 +735,10 @@ pub async fn phase3_dashboard_summary(pool: &Pool<Sqlite>) -> MLPhase3DashboardS
     let (unified, sidecars) = ml_artifacts_on_disk_summary();
     summary.unified_model_on_disk = unified;
     summary.active_sidecar_count = sidecars;
+    let meta_light = read_unified_model_meta_light();
+    summary.unified_cv_accuracy_mean = meta_light.cv_accuracy_mean;
+    summary.unified_cv_accuracy_std = meta_light.cv_accuracy_std;
+    summary.unified_trained_at = meta_light.trained_at;
     summary
 }
 
@@ -1245,6 +1297,15 @@ mod tests {
         assert!(!phase_3_data_metric_ready(2, 3));
         assert!(phase_3_data_metric_ready(3, 3));
         assert!(phase_3_data_metric_ready(4, 3));
+    }
+
+    #[test]
+    fn parse_unified_model_meta_json_reads_cv_and_trained_at() {
+        let json = r#"{"trained_at":"2026-07-01T12:00:00Z","samples":42,"cv_accuracy_mean":0.612,"cv_accuracy_std":0.04,"win_rate":0.5,"feature_importance":[]}"#;
+        let meta = parse_unified_model_meta_json(json);
+        assert_eq!(meta.cv_accuracy_mean, Some(0.612));
+        assert_eq!(meta.cv_accuracy_std, Some(0.04));
+        assert_eq!(meta.trained_at.as_deref(), Some("2026-07-01T12:00:00Z"));
     }
 
     #[test]

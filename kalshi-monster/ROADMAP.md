@@ -29,6 +29,7 @@ Desktop research app for Kalshi prediction markets: calibrated LLM + paper journ
 - Dashboard bootstrap strip: sidecar progress, Kalshi journal counts, pending grades, auto-retrain gate, next category unlock
 - Dashboard insight rail: per-category Politics/Economics/Weather graded progress (same data as Settings ML card)
 - Dashboard strip shows on-disk unified/sidecar ML artifact counts (path existence, no metadata parse)
+- Dashboard strip includes unified model CV ± and trained date from `_meta.json` when available
 - Dashboard **Train ML models** button when ≥10 resolved rows (manual retrain without opening Settings)
 - LLM system prompts list active sidecars + CV ± when model metadata is available (`format_ml_training_header`); incomplete Phase 3 data progress appended when &lt;3 categories ready
 - Settings: `phase_3_data_metric_ready`, Kalshi-only graded counts vs mixed DB totals; per-category breakdown scoped to Kalshi ticker rows

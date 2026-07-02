@@ -76,7 +76,17 @@ function mlPhase3DashboardLabel(summary: MLPhase3DashboardSummary): string {
 function mlArtifactsLabel(summary: MLPhase3DashboardSummary): string {
   const unified = summary.unified_model_on_disk ? 'unified on disk' : 'no unified model';
   const sidecars = summary.active_sidecar_count ?? 0;
-  return ` · ML artifacts: ${unified}, ${sidecars} sidecar${sidecars === 1 ? '' : 's'}`;
+  let cv = '';
+  if (summary.unified_model_on_disk && summary.unified_cv_accuracy_mean != null) {
+    const pct = (summary.unified_cv_accuracy_mean * 100).toFixed(1);
+    if (summary.unified_cv_accuracy_std != null) {
+      const stdPct = (summary.unified_cv_accuracy_std * 100).toFixed(1);
+      cv = ` · unified CV ${pct}% ±${stdPct}%`;
+    } else {
+      cv = ` · unified CV ${pct}%`;
+    }
+  }
+  return ` · ML artifacts: ${unified}, ${sidecars} sidecar${sidecars === 1 ? '' : 's'}${cv}`;
 }
 
 function opportunityScore(market: KalshiMarketSummary): number {
@@ -438,6 +448,12 @@ export function KalshiView({ onAnalyzeMarket }: KalshiViewProps = {}) {
           {mlPhase3 != null && (mlPhase3.non_sports_category_stats?.length ?? 0) > 0 ? (
             <article className="insightCard">
               <span>Sidecar data (Kalshi paper)</span>
+              {mlPhase3.phase_3_data_metric_ready ? (
+                <p className="muted small">ROADMAP data metric met — all three categories have enough graded rows for sidecars.</p>
+              ) : null}
+              {mlPhase3.unified_trained_at ? (
+                <p className="muted small">Unified model trained {formatDateLabel(mlPhase3.unified_trained_at)}</p>
+              ) : null}
               <div className="categoryPulse">
                 {mlPhase3.non_sports_category_stats!.map((row) => (
                   <div key={row.category}>
