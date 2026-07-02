@@ -1,12 +1,19 @@
 # Kalshi Monster — Priority Roadmap
 
-Last updated: 2026-07-01 (maintenance — dashboard ML on-disk artifact hints + Phase 3 tips; health green, 95 tests)
+Last updated: 2026-07-02 (maintenance — dashboard sidecar per-category insight rail; health green, 95 tests)
 
 Working copy: `C:\\Users\\ethan\\kalshi-build\\kalshi-monster`
 
 Quick status: **P0 done · P1 done · P2 done · P3 1 pending**
 
 ---
+
+## Maintenance notes (2026-07-02, maintenance pass) — Dashboard sidecar category progress
+
+- **`MLPhase3DashboardSummary`:** Adds `non_sports_category_stats` (Politics/Economics/Weather graded counts) in bootstrap SQL path.
+- **`KalshiView`:** Insight rail **Sidecar data (Kalshi paper)** card mirrors Settings per-category progress without opening Settings.
+- **Vitest:** Asserts sidecar insight card when bootstrap includes category stats.
+- Health: cargo check, tsc, **95** lib tests pass; KalshiView vitest green.
 
 ## Maintenance notes (2026-07-01, maintenance pass) — Dashboard ML artifact hints
 
