@@ -1,12 +1,18 @@
 # Kalshi Monster — Priority Roadmap
 
-Last updated: 2026-07-03 (maintenance — dashboard in-progress refresh decision tip; health green, 99 tests)
+Last updated: 2026-07-03 (maintenance — trading posture from tape quality notes; health green, 99 tests)
 
 Working copy: `C:\\Users\\ethan\\kalshi-build\\kalshi-monster`
 
 Quick status: **P0 done · P1 done · P2 done · P3 1 pending**
 
 ---
+
+## Maintenance notes (2026-07-03, maintenance pass) — Trading posture tape hints
+
+- **`KalshiView`:** `tradingPostureFromTape` drives the accent **Trading posture** card from `data_quality_notes` (in-progress refresh, stale tape, snapshot paint, partial/full) — same priority as decision tips.
+- **Vitest:** Snapshot/stale/in-progress test asserts **Catalog updating** headline + body.
+- Health: cargo check, tsc, **99** lib tests pass; KalshiView vitest **5** green.
 
 ## Maintenance notes (2026-07-03, maintenance pass) — In-progress refresh decision tip
 

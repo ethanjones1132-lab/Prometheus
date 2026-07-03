@@ -103,6 +103,48 @@ function marketBias(market: KalshiMarketSummary): string {
   return 'Live disagreement';
 }
 
+/** Insight-rail headline from bootstrap tape quality (mirrors decision-tip priority). */
+export function tradingPostureFromTape(
+  partialCatalog: boolean,
+  cacheStatus: string,
+  dataQualityNotes: string[],
+): { title: string; body: string } {
+  if (dataQualityNotes.some((note) => note.includes('refresh in progress'))) {
+    return {
+      title: 'Catalog updating',
+      body: 'Live refresh is running — wait for the tape to settle before sizing a paper trade.',
+    };
+  }
+  if (dataQualityNotes.some((note) => note.includes('older than 60s'))) {
+    return {
+      title: 'Stale tape',
+      body: 'Prices are older than 60s — hit Refresh and snapshot before recording paper trades.',
+    };
+  }
+  if (dataQualityNotes.some((note) => note.includes('saved market snapshot'))) {
+    return {
+      title: 'Snapshot paint',
+      body: 'You are seeing a saved snapshot for fast load — refresh once live data lands before committing size.',
+    };
+  }
+  if (partialCatalog) {
+    return {
+      title: 'Refresh before size',
+      body: 'Use this view for discovery, then refresh before committing a paper position.',
+    };
+  }
+  if (cacheStatus === 'full') {
+    return {
+      title: 'Full tape online',
+      body: 'The catalog is ready for deeper analyst review and paper trade recording.',
+    };
+  }
+  return {
+    title: 'Cache warming',
+    body: 'Market tape is still loading — refresh if the board looks thin.',
+  };
+}
+
 interface KalshiViewProps {
   onAnalyzeMarket?: (prompt: string) => void;
 }
@@ -318,6 +360,11 @@ export function KalshiView({ onAnalyzeMarket }: KalshiViewProps = {}) {
     return tips.slice(0, 4);
   }, [averageSpread, partialCatalog, mlPhase3, dataQualityNotes]);
 
+  const tradingPosture = useMemo(
+    () => tradingPostureFromTape(partialCatalog, cacheStatus, dataQualityNotes),
+    [partialCatalog, cacheStatus, dataQualityNotes],
+  );
+
   const heroStats = [
     { label: 'Open market tape', value: marketCount || markets.length, detail: `${categoryCount || categories.length} categories` },
     { label: 'Visible liquidity', value: formatCompactMoney(visibleLiquidity), detail: `${formatCompactMoney(visibleVolume)} 24h volume` },
@@ -437,12 +484,8 @@ export function KalshiView({ onAnalyzeMarket }: KalshiViewProps = {}) {
         <aside className="insightRail" aria-label="Dashboard guidance">
           <article className="insightCard accent">
             <span>Trading posture</span>
-            <strong>{partialCatalog ? 'Refresh before size' : 'Full tape online'}</strong>
-            <p>
-              {partialCatalog
-                ? 'Use this view for discovery, then refresh before committing a paper position.'
-                : 'The catalog is ready for deeper analyst review and paper trade recording.'}
-            </p>
+            <strong>{tradingPosture.title}</strong>
+            <p>{tradingPosture.body}</p>
           </article>
           <article className="insightCard">
             <span>Category pulse</span>

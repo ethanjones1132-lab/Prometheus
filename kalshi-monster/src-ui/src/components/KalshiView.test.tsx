@@ -287,6 +287,10 @@ describe('KalshiView', () => {
     expect(
       screen.getByText(/Live catalog refresh is running — wait for the tape to settle/),
     ).toBeInTheDocument();
+    expect(screen.getByText('Catalog updating')).toBeInTheDocument();
+    expect(
+      screen.getByText(/Live refresh is running — wait for the tape to settle before sizing/),
+    ).toBeInTheDocument();
   });
 
   test('trains ML from dashboard when auto-retrain gate is satisfied', async () => {
