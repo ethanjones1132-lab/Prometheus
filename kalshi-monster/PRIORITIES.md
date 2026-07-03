@@ -15,6 +15,11 @@ Quick status: **P0 done · P1 done · P2 done · P3 1 pending**
 - **Vitest:** Asserts active sidecar line on bootstrap mock.
 - Health: cargo check, tsc, **97** lib tests pass; KalshiView vitest green.
 
+## Maintenance notes (2026-07-03, overnight pass) — Priority path review
+- Reviewed the frontend hint path for dashboard snapshot accuracy.
+- Decision: defer cross-exposure / stage-name fields until the older SQLite-WAL backend path is directly validated; reuse the existing `data_quality_notes` surface instead of expanding the struct prematurely.
+- Health: cargo check, tsc, **97** lib tests pass; no new code committed beyond this planning note.
+
 ## Maintenance notes (2026-07-02, maintenance pass) — Dashboard unified ML CV
 
 - **`ml_predictor.rs`:** `MLPhase3DashboardSummary` adds `unified_cv_accuracy_mean/std` and `unified_trained_at` via lightweight `_meta.json` read in `phase3_dashboard_summary`; +1 unit test.
