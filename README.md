@@ -87,7 +87,7 @@ cargo tauri build
 
 ## Screenshots
 
-> **Screenshots coming soon.** Add visuals in `assets/` and reference them with standard markdown image syntax.
+> ⚡ *Screenshots pending — add assets in `kalshi-monster/docs/images/` and reference with standard markdown image syntax.*
 
 ---
 
