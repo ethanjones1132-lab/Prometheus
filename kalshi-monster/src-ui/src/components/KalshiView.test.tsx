@@ -268,6 +268,7 @@ describe('KalshiView', () => {
         'Full catalog cache ready',
         'Instant paint from saved market snapshot; live refresh runs in background',
         'Market tape is older than 60s — use Refresh and snapshot for live prices',
+        'Live catalog refresh in progress — tape may update shortly',
       ],
       ml_phase3: null,
     });
@@ -282,6 +283,9 @@ describe('KalshiView', () => {
     ).toBeInTheDocument();
     expect(
       screen.getByText('Instant paint from saved market snapshot; live refresh runs in background'),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/Live catalog refresh is running — wait for the tape to settle/),
     ).toBeInTheDocument();
   });
 

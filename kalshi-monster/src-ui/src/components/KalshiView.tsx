@@ -291,6 +291,10 @@ export function KalshiView({ onAnalyzeMarket }: KalshiViewProps = {}) {
       tips.unshift('Prices may be stale — hit Refresh and snapshot before recording paper trades.');
     }
 
+    if (dataQualityNotes.some((note) => note.includes('refresh in progress'))) {
+      tips.unshift('Live catalog refresh is running — wait for the tape to settle before sizing.');
+    }
+
     if (averageSpread != null && averageSpread > 0.08) {
       tips.unshift('Spreads are wide on the visible board. Demand a larger edge or watch for a better entry.');
     }
