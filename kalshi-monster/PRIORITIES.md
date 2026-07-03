@@ -1,12 +1,19 @@
 # Kalshi Monster — Priority Roadmap
 
-Last updated: 2026-07-02 (maintenance — dashboard active sidecar CV from _meta.json; health green, 97 tests)
+Last updated: 2026-07-03 (maintenance — dashboard tape quality notes via data_quality_notes; health green, 99 tests)
 
 Working copy: `C:\\Users\\ethan\\kalshi-build\\kalshi-monster`
 
 Quick status: **P0 done · P1 done · P2 done · P3 1 pending**
 
 ---
+
+## Maintenance notes (2026-07-03, maintenance pass) — Dashboard tape quality hints
+
+- **`commands/mod.rs`:** `build_kalshi_dashboard_data_quality_notes` adds stale-cache (>60s) and in-progress refresh hints on bootstrap; +2 unit tests.
+- **`KalshiView`:** Decision tips mirror persisted-snapshot and stale-tape `data_quality_notes` (no new bootstrap struct fields).
+- **Vitest:** Asserts snapshot/stale hints in status strip + insight tips.
+- Health: cargo check, tsc, **99** lib tests pass; KalshiView vitest **5** green.
 
 ## Maintenance notes (2026-07-02, maintenance pass) — Dashboard active sidecar CV
 

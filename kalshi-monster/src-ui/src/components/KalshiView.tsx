@@ -281,6 +281,16 @@ export function KalshiView({ onAnalyzeMarket }: KalshiViewProps = {}) {
       tips.unshift('Refresh the catalog before sizing. Partial mode is fast, but it is not the final board.');
     }
 
+    if (dataQualityNotes.some((note) => note.includes('saved market snapshot'))) {
+      tips.unshift(
+        'Tape is from a saved snapshot — refresh once live data lands before staking.',
+      );
+    }
+
+    if (dataQualityNotes.some((note) => note.includes('older than 60s'))) {
+      tips.unshift('Prices may be stale — hit Refresh and snapshot before recording paper trades.');
+    }
+
     if (averageSpread != null && averageSpread > 0.08) {
       tips.unshift('Spreads are wide on the visible board. Demand a larger edge or watch for a better entry.');
     }
@@ -302,7 +312,7 @@ export function KalshiView({ onAnalyzeMarket }: KalshiViewProps = {}) {
     }
 
     return tips.slice(0, 4);
-  }, [averageSpread, partialCatalog, mlPhase3]);
+  }, [averageSpread, partialCatalog, mlPhase3, dataQualityNotes]);
 
   const heroStats = [
     { label: 'Open market tape', value: marketCount || markets.length, detail: `${categoryCount || categories.length} categories` },

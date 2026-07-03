@@ -1568,6 +1568,38 @@ pub async fn kalshi_get_top_markets(
     client.get_top_markets(n).await
 }
 
+/// Build human-readable tape quality hints for the Kalshi dashboard (no extra struct fields).
+pub(crate) fn build_kalshi_dashboard_data_quality_notes(
+    partial_catalog: bool,
+    showing_persisted_snapshot: bool,
+    cache_stale: bool,
+    fetch_in_progress: bool,
+) -> Vec<String> {
+    let mut notes = if partial_catalog {
+        vec!["Partial catalog loaded for fast first paint".to_string()]
+    } else {
+        vec!["Full catalog cache ready".to_string()]
+    };
+    if showing_persisted_snapshot {
+        notes.push(
+            "Instant paint from saved market snapshot; live refresh runs in background"
+                .to_string(),
+        );
+    }
+    if cache_stale {
+        notes.push(
+            "Market tape is older than 60s — use Refresh and snapshot for live prices"
+                .to_string(),
+        );
+    }
+    if fetch_in_progress {
+        notes.push(
+            "Live catalog refresh in progress — tape may update shortly".to_string(),
+        );
+    }
+    notes
+}
+
 /// Initial dashboard payload: top markets, category stats, and cache freshness in one IPC call.
 #[tauri::command]
 pub async fn kalshi_get_dashboard_bootstrap(
@@ -1585,20 +1617,12 @@ pub async fn kalshi_get_dashboard_bootstrap(
         .map(|dt| dt.to_rfc3339());
     let market_count = markets.len();
     let category_count = categories.len();
-    let data_quality_notes = {
-        let mut notes = if partial_catalog {
-            vec!["Partial catalog loaded for fast first paint".to_string()]
-        } else {
-            vec!["Full catalog cache ready".to_string()]
-        };
-        if client.showing_persisted_snapshot() {
-            notes.push(
-                "Instant paint from saved market snapshot; live refresh runs in background"
-                    .to_string(),
-            );
-        }
-        notes
-    };
+    let data_quality_notes = build_kalshi_dashboard_data_quality_notes(
+        partial_catalog,
+        client.showing_persisted_snapshot(),
+        client.is_cache_stale(),
+        client.is_fetch_in_progress(),
+    );
 
     let ml_phase3 = crate::ml_predictor::phase3_dashboard_summary(&db_pool).await;
 
@@ -2734,4 +2758,25 @@ pub async fn kalshi_get_cache_state(
         cache_age_secs,
         fetch_in_progress,
     })
+}
+
+#[cfg(test)]
+mod kalshi_dashboard_bootstrap_tests {
+    use super::build_kalshi_dashboard_data_quality_notes;
+
+    #[test]
+    fn data_quality_notes_include_stale_and_fetch_hints() {
+        let notes = build_kalshi_dashboard_data_quality_notes(true, true, true, true);
+        assert!(notes.iter().any(|n| n.contains("Partial catalog")));
+        assert!(notes.iter().any(|n| n.contains("saved market snapshot")));
+        assert!(notes.iter().any(|n| n.contains("older than 60s")));
+        assert!(notes.iter().any(|n| n.contains("refresh in progress")));
+    }
+
+    #[test]
+    fn data_quality_notes_full_catalog_without_extras() {
+        let notes = build_kalshi_dashboard_data_quality_notes(false, false, false, false);
+        assert_eq!(notes.len(), 1);
+        assert!(notes[0].contains("Full catalog"));
+    }
 }
