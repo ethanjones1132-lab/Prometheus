@@ -3,8 +3,12 @@
 use super::models::KalshiPrediction;
 use crate::kalshi::client::KalshiClient;
 use crate::kalshi::models::{KalshiGradingResult, KalshiGradingSummary};
+use crate::notification::{self, AppNotification, NotificationType};
 use crate::predictions::tracker::PredictionTracker;
+use sqlx::Pool;
+use sqlx::Sqlite;
 use std::collections::HashMap;
+use tauri::Emitter;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KalshiBetSide {
@@ -188,6 +192,14 @@ pub async fn grade_pending_predictions(
             tracker
                 .update_kalshi_outcome(&pred.id, &actual, eval.pnl)
                 .await?;
+
+            // CLV tracking: record the close price (last market price before resolution)
+            // For binary markets: Yes win = close at 1.0, No win = close at 0.0
+            let close_price = if actual == "Yes" { 1.0 } else { 0.0 };
+            if let Err(e) = tracker.update_prediction_clv(&pred.id, close_price).await {
+                tracing::warn!("kalshi CLV update failed for {}: {}", pred.id, e);
+            }
+
             results.push(KalshiGradingResult {
                 prediction_id: pred.id.clone(),
                 ticker: pred.ticker.clone(),
@@ -238,6 +250,8 @@ fn empty_summary() -> KalshiGradingSummary {
 pub fn spawn_auto_grade_task(
     kalshi: std::sync::Arc<tokio::sync::Mutex<KalshiClient>>,
     tracker: std::sync::Arc<tokio::sync::Mutex<PredictionTracker>>,
+    pool: Pool<Sqlite>,
+    app_handle: tauri::AppHandle,
     poll_interval_secs: u64,
 ) {
     let interval_secs = poll_interval_secs.max(60);
@@ -269,6 +283,76 @@ pub fn spawn_auto_grade_task(
                 }
             };
             if summary.graded > 0 {
+                let settings = notification::load_settings();
+                let emit_kalshi =
+                    notification::kalshi_market_notifications_enabled(&settings);
+                let emit_summary =
+                    notification::grading_summary_notifications_enabled(&settings);
+
+                if emit_kalshi {
+                    for result in &summary.results {
+                        let notif_type = if result.outcome == "Win" {
+                            NotificationType::KalshiMarketWin
+                        } else {
+                            NotificationType::KalshiMarketLoss
+                        };
+                        let emoji = if result.outcome == "Win" { "✅" } else { "❌" };
+                        let notif = AppNotification {
+                            id: uuid::Uuid::new_v4().to_string(),
+                            notification_type: notif_type,
+                            title: format!(
+                                "{} Kalshi Market Resolved: {}",
+                                emoji, result.ticker
+                            ),
+                            body: format!(
+                                "{} — {} (Stake: ${:.2}, PnL: ${:.2})",
+                                result.title,
+                                result.outcome,
+                                result.stake_amount,
+                                result.pnl
+                            ),
+                            player_name: None,
+                            game_id: None,
+                            prediction_id: Some(result.prediction_id.clone()),
+                            created_at: chrono::Utc::now().to_rfc3339(),
+                            read: false,
+                            dismissed: false,
+                        };
+                        if let Err(e) = notification::insert_notification(&pool, &notif).await
+                        {
+                            tracing::warn!("kalshi grade notif persist: {}", e);
+                        }
+                        let _ = app_handle.emit("notification-new", &notif);
+                    }
+                }
+
+                if emit_summary {
+                    let summary_notif = AppNotification {
+                        id: uuid::Uuid::new_v4().to_string(),
+                        notification_type: NotificationType::GradingComplete,
+                        title: format!(
+                            "📊 Kalshi Grading Complete: {} graded",
+                            summary.graded
+                        ),
+                        body: format!(
+                            "W: {} | L: {} | PnL: ${:.2}",
+                            summary.wins, summary.losses, summary.total_pnl
+                        ),
+                        player_name: None,
+                        game_id: None,
+                        prediction_id: None,
+                        created_at: chrono::Utc::now().to_rfc3339(),
+                        read: false,
+                        dismissed: false,
+                    };
+                    if let Err(e) =
+                        notification::insert_notification(&pool, &summary_notif).await
+                    {
+                        tracing::warn!("kalshi grade summary notif persist: {}", e);
+                    }
+                    let _ = app_handle.emit("notification-new", &summary_notif);
+                }
+
                 tracing::info!(
                     "kalshi auto-grade: {} graded ({}W/{}L, ${:.2})",
                     summary.graded,
@@ -276,6 +360,12 @@ pub fn spawn_auto_grade_task(
                     summary.losses,
                     summary.total_pnl
                 );
+
+                let graded = summary.graded;
+                let pool_for_ml = pool.clone();
+                tauri::async_runtime::spawn(async move {
+                    crate::ml_predictor::retrain_after_grading(graded, Some(&pool_for_ml)).await;
+                });
             }
         }
     });

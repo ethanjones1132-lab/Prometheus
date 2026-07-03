@@ -8,6 +8,11 @@ use serde::{Deserialize, Serialize};
 pub enum CorrelationStrength {
     None,
     Category,
+    /// Different series that share a common macro/political driver
+    /// (e.g. CPI and the Fed rate decision, or the presidential and
+    /// senate races). Stronger than a generic same-category match
+    /// because the outcomes are driven by the same underlying event.
+    Cluster,
     Series,
     Event,
 }
@@ -18,6 +23,7 @@ impl CorrelationStrength {
         match self {
             CorrelationStrength::None => 1.0,
             CorrelationStrength::Category => 0.90,
+            CorrelationStrength::Cluster => 0.82,
             CorrelationStrength::Series => 0.75,
             CorrelationStrength::Event => 0.50,
         }
@@ -27,10 +33,68 @@ impl CorrelationStrength {
         match self {
             CorrelationStrength::None => "independent",
             CorrelationStrength::Category => "same category",
+            CorrelationStrength::Cluster => "linked driver",
             CorrelationStrength::Series => "same series",
             CorrelationStrength::Event => "same event",
         }
     }
+}
+
+/// Macro/political correlation clusters: groups of distinct Kalshi series whose
+/// outcomes are driven by a shared underlying force, so positions across them
+/// are correlated even though they share neither a series nor an event key.
+///
+/// This is the Kalshi-native correlation graph that lifts risk detection above
+/// pure ticker-prefix heuristics. The map is keyed by normalized series prefix
+/// (uppercased, leading `KX` stripped); add entries as new linked series appear.
+struct CorrelationCluster {
+    /// Stable cluster id used to compare two series.
+    id: &'static str,
+    /// Human-readable driver name surfaced in conflict explanations.
+    driver: &'static str,
+    /// Normalized series prefixes that belong to this cluster.
+    series_prefixes: &'static [&'static str],
+}
+
+const CORRELATION_CLUSTERS: &[CorrelationCluster] = &[
+    CorrelationCluster {
+        id: "us-rates-inflation",
+        driver: "U.S. rates & inflation regime",
+        series_prefixes: &[
+            "CPI", "CORECPI", "PCE", "COREPCE", "INFLATION", "FED", "FOMC", "FEDFUNDS",
+            "RATEHIKE", "RATECUT", "RATEDECISION", "RATES", "PAYROLLS", "NFP", "JOBS",
+            "UNRATE", "JOBLESS", "GDP", "RECESSION",
+        ],
+    },
+    CorrelationCluster {
+        id: "us-federal-politics",
+        driver: "U.S. federal election / control of government",
+        series_prefixes: &[
+            "PRES", "PRESIDENT", "POTUS", "SENATE", "HOUSE", "CONGRESS", "PARTYCONTROL",
+            "GOVCONTROL", "ELECTION", "ELECTORAL",
+        ],
+    },
+];
+
+/// Normalize a series key for cluster lookup: uppercase, strip a leading `KX`.
+fn normalize_series(series: &str) -> String {
+    let upper = series.to_ascii_uppercase();
+    upper.strip_prefix("KX").unwrap_or(&upper).to_string()
+}
+
+/// Return the (cluster id, driver name) a series belongs to, if any.
+fn series_cluster(series: &str) -> Option<(&'static str, &'static str)> {
+    let norm = normalize_series(series);
+    for cluster in CORRELATION_CLUSTERS {
+        if cluster
+            .series_prefixes
+            .iter()
+            .any(|p| norm.starts_with(p))
+        {
+            return Some((cluster.id, cluster.driver));
+        }
+    }
+    None
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -59,6 +123,9 @@ pub struct StakeAdjustment {
     pub adjusted_recommended_stake: f64,
     pub conflicts: Vec<CorrelationConflict>,
     pub warnings: Vec<String>,
+    pub remaining_daily: f64,
+    pub remaining_weekly: f64,
+    pub bankroll_cap: f64,
 }
 
 /// Parse series (KXHIGHNY) and event (KXHIGHNY-25JUN17) keys from a ticker.
@@ -89,6 +156,13 @@ pub fn correlation_strength(
     }
     if t_series == e_series {
         return CorrelationStrength::Series;
+    }
+    if let (Some((t_cluster, _)), Some((e_cluster, _))) =
+        (series_cluster(&t_series), series_cluster(&e_series))
+    {
+        if t_cluster == e_cluster {
+            return CorrelationStrength::Cluster;
+        }
     }
     if !target_category.is_empty()
         && !exposure_category.is_empty()
@@ -187,14 +261,24 @@ pub fn compute_stake_adjustment(
             "opposite direction (partial hedge)"
         };
 
+        // For a cluster link, name the shared macro/political driver.
+        let driver_note = if strength == CorrelationStrength::Cluster {
+            let (t_series, _) = ticker_keys(target_ticker);
+            series_cluster(&t_series)
+                .map(|(_, driver)| format!(" via {}", driver))
+                .unwrap_or_default()
+        } else {
+            String::new()
+        };
+
         conflicts.push(CorrelationConflict {
             exposure_ticker: exp.ticker.clone(),
             exposure_title: exp.title.clone(),
             strength: strength.label().to_string(),
             kelly_multiplier: mult,
             explanation: format!(
-                "Correlated with active {} position (${:.2} {}) — {}",
-                exp.source, exp.stake_amount, exp.contract_side, direction_note
+                "Correlated with active {} position (${:.2} {}){} — {}",
+                exp.source, exp.stake_amount, exp.contract_side, driver_note, direction_note
             ),
         });
     }
@@ -214,6 +298,9 @@ pub fn compute_stake_adjustment(
         adjusted_recommended_stake: recommended_stake * min_scale,
         conflicts,
         warnings,
+        remaining_daily: 0.0,
+        remaining_weekly: 0.0,
+        bankroll_cap: 0.0,
     }
 }
 
@@ -239,5 +326,45 @@ mod tests {
         );
         assert!((adj.kelly_scale - 0.5).abs() < 0.01);
         assert!((adj.adjusted_recommended_stake - 50.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn macro_cluster_links_cpi_and_fed() {
+        // CPI and the Fed rate decision are different series in different events
+        // but share the same macro driver — should scale to the Cluster multiplier.
+        let strength = correlation_strength("KXCPIYOY-25JUL", "Economics", "KXFED-25JUL", "Economics");
+        assert_eq!(strength, CorrelationStrength::Cluster);
+
+        let adj = compute_stake_adjustment(
+            "KXCPIYOY-25JUL",
+            "Economics",
+            Some("YES"),
+            100.0,
+            &[PortfolioExposure {
+                ticker: "KXFED-25JUL-T25".into(),
+                title: "Fed hikes 25bp".into(),
+                category: "Economics".into(),
+                contract_side: "Yes".into(),
+                stake_amount: 40.0,
+                source: "prediction".into(),
+            }],
+        );
+        assert!((adj.kelly_scale - 0.82).abs() < 0.01);
+        assert_eq!(adj.conflicts.len(), 1);
+        assert!(adj.conflicts[0].explanation.contains("rates & inflation"));
+    }
+
+    #[test]
+    fn politics_cluster_links_presidential_and_senate() {
+        let strength = correlation_strength("KXPRES-28", "Politics", "KXSENATE-28-TX", "Politics");
+        assert_eq!(strength, CorrelationStrength::Cluster);
+    }
+
+    #[test]
+    fn unrelated_series_in_different_clusters_are_independent() {
+        // CPI (macro) vs presidential (politics): no series, event, or cluster overlap,
+        // and different categories — should be independent.
+        let strength = correlation_strength("KXCPIYOY-25JUL", "Economics", "KXPRES-28", "Politics");
+        assert_eq!(strength, CorrelationStrength::None);
     }
 }

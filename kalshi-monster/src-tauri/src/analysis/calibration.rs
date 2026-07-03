@@ -67,6 +67,19 @@ pub struct CalibratedProbability {
     pub applied: bool,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct CalibrationStatus {
+    pub raw_pct: f64,
+    pub calibrated_pct: f64,
+    pub adjustment_pct: f64,
+    pub applied: bool,
+    pub artifact_kind: String,
+    pub n_fit: usize,
+    pub source: String,
+    pub volatility_haircut_pct: f64,
+    pub category_sample_status: String,
+}
+
 /// Apply the shared edge-eval calibrator to a model YES probability (0–100).
 pub fn calibrate_yes_probability_pct(raw_pct: f64) -> CalibratedProbability {
     let raw = raw_pct.clamp(0.1, 99.9);
@@ -110,6 +123,53 @@ pub fn calibrate_yes_probability_pct(raw_pct: f64) -> CalibratedProbability {
     }
 }
 
+pub fn calibration_status_for_probability(raw_pct: f64) -> CalibrationStatus {
+    let calibrated = calibrate_yes_probability_pct(raw_pct);
+    let runtime_override = load_from_file(&override_path());
+    let artifact_source = if runtime_override.is_some() {
+        "runtime override"
+    } else {
+        "embedded"
+    };
+    let artifact = runtime_override.or_else(monster_edge_core::embedded_calibrator);
+
+    let (artifact_kind, n_fit, source) = if let Some(cal) = artifact.as_ref() {
+        (
+            cal.kind_name().to_string(),
+            cal.n_fit as usize,
+            artifact_source.to_string(),
+        )
+    } else {
+        ("none".to_string(), 0, "none".to_string())
+    };
+
+    let sample_status = if n_fit >= 1_000 {
+        "category-ready"
+    } else if n_fit > 0 {
+        "shared calibrator"
+    } else {
+        "raw model probability"
+    };
+
+    let volatility_haircut_pct = if calibrated.applied {
+        (calibrated.adjustment_pct.abs() * 0.5).clamp(1.0, 12.5)
+    } else {
+        0.0
+    };
+
+    CalibrationStatus {
+        raw_pct: calibrated.raw_pct,
+        calibrated_pct: calibrated.calibrated_pct,
+        adjustment_pct: calibrated.adjustment_pct,
+        applied: calibrated.applied,
+        artifact_kind,
+        n_fit,
+        source,
+        volatility_haircut_pct,
+        category_sample_status: sample_status.to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -132,5 +192,14 @@ mod tests {
         let loaded = load_from_file(&path).expect("parse");
         assert_eq!(loaded.n_fit, cal.n_fit);
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn status_reports_artifact_and_volatility_haircut() {
+        let status = calibration_status_for_probability(60.0);
+        assert_eq!(status.raw_pct, 60.0);
+        assert!(status.volatility_haircut_pct >= 0.0);
+        assert!(!status.source.is_empty());
+        assert!(!status.category_sample_status.is_empty());
     }
 }

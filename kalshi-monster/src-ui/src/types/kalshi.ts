@@ -1,3 +1,6 @@
+import type { MLCategoryStat } from './index';
+import type { MLPerCategoryModel } from './index';
+
 export interface KalshiMarketSummary {
   ticker: string;
   event_ticker: string;
@@ -25,6 +28,39 @@ export interface KalshiCategoryStat {
   category: string;
   count: number;
   volume_24h: number;
+}
+
+export interface MLPhase3DashboardSummary {
+  trainable_non_sports_categories: number;
+  non_sports_sidecar_target: number;
+  phase_3_data_metric_ready: boolean;
+  kalshi_resolved_predictions: number;
+  kalshi_pending_predictions: number;
+  next_sidecar_category?: string | null;
+  next_sidecar_samples_needed?: number | null;
+  auto_retrain_eligible?: boolean;
+  resolved_until_auto_retrain?: number;
+  unified_model_on_disk?: boolean;
+  active_sidecar_count?: number;
+  non_sports_category_stats?: MLCategoryStat[];
+  unified_cv_accuracy_mean?: number | null;
+  unified_cv_accuracy_std?: number | null;
+  unified_trained_at?: string | null;
+  active_sidecar_models?: Record<string, MLPerCategoryModel> | null;
+}
+
+export interface KalshiDashboardBootstrap {
+  markets: KalshiMarketSummary[];
+  categories: KalshiCategoryStat[];
+  cache_status: 'cold' | 'partial' | 'full' | string;
+  cache_age_secs?: number | null;
+  partial_catalog: boolean;
+  last_refresh_at?: string | null;
+  market_count: number;
+  category_count: number;
+  dashboard_generated_at: string;
+  data_quality_notes: string[];
+  ml_phase3?: MLPhase3DashboardSummary | null;
 }
 
 export interface KalshiPrediction {
@@ -67,6 +103,21 @@ export interface StakeAdjustment {
   adjusted_recommended_stake: number;
   conflicts: CorrelationConflict[];
   warnings: string[];
+  remaining_daily?: number;
+  remaining_weekly?: number;
+  bankroll_cap?: number;
+}
+
+export interface CalibrationStatus {
+  raw_pct: number;
+  calibrated_pct: number;
+  adjustment_pct: number;
+  applied: boolean;
+  artifact_kind: string;
+  n_fit: number;
+  source: string;
+  volatility_haircut_pct: number;
+  category_sample_status: string;
 }
 
 export interface KalshiPriceSnapshot {
@@ -131,6 +182,62 @@ export function parseKalshiBetSide(
   if (pick === 'over') return 'YES';
   if (pick === 'under') return 'NO';
   return 'UNKNOWN';
+}
+
+export interface PaperAnalytics {
+  starting_balance: number;
+  cash_balance: number;
+  open_market_value: number;
+  equity: number;
+  realized_pnl: number;
+  unrealized_pnl: number;
+  total_return_pct: number;
+  total_trades: number;
+  open_positions: number;
+  win_rate: number;
+  wins: number;
+  losses: number;
+  profit_factor: number;
+  max_drawdown_pct: number;
+  fetched_at: string;
+}
+
+export interface PaperPosition {
+  ticker: string;
+  title: string;
+  category: string;
+  side: string;
+  total_qty: number;
+  avg_entry_price_cents: number;
+  cost_basis_dollars: number;
+  mark_price_cents?: number | null;
+  market_value_dollars?: number | null;
+  unrealized_pnl_dollars?: number | null;
+  lots_count: number;
+}
+
+export interface PaperSettlementSummary {
+  settled: number;
+  wins: number;
+  losses: number;
+  total_pnl: number;
+  details?: Array<{
+    lot_id: string;
+    ticker: string;
+    side: string;
+    result: string;
+    realized_pnl: number;
+  }>;
+  fetched_at?: string;
+}
+
+export interface PaperAccount {
+  id: number;
+  balance_dollars: number;
+  total_deposits: number;
+  total_withdrawals: number;
+  created_at: string;
+  updated_at: string;
 }
 
 export function kalshiBetWon(pred: KalshiPrediction): boolean | null {

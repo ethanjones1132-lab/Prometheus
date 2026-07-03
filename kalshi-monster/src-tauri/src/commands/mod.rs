@@ -16,6 +16,23 @@ use tauri::{Emitter, State};
 use tokio::sync::{Mutex, mpsc};
 
 type KalshiState = Arc<Mutex<crate::kalshi::KalshiClient>>;
+type SharedCacheState = Arc<tokio::sync::RwLock<Option<crate::kalshi::KalshiCache>>>;
+
+#[derive(Debug, serde::Serialize)]
+pub struct KalshiDashboardBootstrap {
+    pub markets: Vec<crate::kalshi::KalshiMarketSummary>,
+    pub categories: Vec<crate::kalshi::KalshiCategoryStat>,
+    pub cache_status: String,
+    pub cache_age_secs: Option<u64>,
+    pub partial_catalog: bool,
+    pub last_refresh_at: Option<String>,
+    pub market_count: usize,
+    pub category_count: usize,
+    pub dashboard_generated_at: String,
+    pub data_quality_notes: Vec<String>,
+    #[serde(default)]
+    pub ml_phase3: Option<crate::ml_predictor::MLPhase3DashboardSummary>,
+}
 
 // ═══════════════════════════════════════════════════════════════
 // Tauri Commands — Bridge between frontend and Rust backend
@@ -45,6 +62,14 @@ pub async fn check_api_status(
 ) -> Result<config::ApiStatus, String> {
     let config = state.lock().await.clone();
     Ok(config::check_api_status(&config).await)
+}
+
+#[tauri::command]
+pub async fn get_security_posture(
+    state: State<'_, Arc<Mutex<AppConfig>>>,
+) -> Result<config::SecurityPosture, String> {
+    let config = state.lock().await.clone();
+    Ok(config::security_posture(&config))
 }
 
 #[tauri::command]
@@ -966,8 +991,9 @@ pub async fn save_bankroll_config(
 #[tauri::command]
 pub async fn get_bankroll_summary(
     config: crate::bankroll::BankrollConfig,
+    db_pool: State<'_, Pool<Sqlite>>,
 ) -> Result<crate::bankroll::BankrollSummary, String> {
-    Ok(crate::bankroll::get_bankroll_summary(&config))
+    crate::bankroll::get_bankroll_summary_synced(&config, &db_pool).await
 }
 
 /// Generate bet recommendations for a list of picks
@@ -1022,6 +1048,20 @@ pub async fn record_bankroll_result(
     crate::bankroll::record_result(&mut config, stake, won, odds);
     crate::bankroll::save_bankroll_config(&config).map_err(|e| AppError::Io(e.to_string()))?;
     Ok(config)
+}
+
+/// Refresh the historical Brier score in the bankroll config from graded predictions in the DB.
+/// This populates `historical_brier` (P3) so VolatilityAdjustedKelly can use real calibration data
+/// to shrink stakes when past LLM forecasts were miscalibrated. Returns the computed brier (0.0 if none).
+#[tauri::command]
+pub async fn refresh_historical_brier(
+    db_pool: State<'_, Pool<Sqlite>>,
+) -> Result<f64, String> {
+    let mut config = crate::bankroll::load_bankroll_config();
+    let brier = crate::bankroll::compute_historical_brier(&db_pool).await?;
+    config.historical_brier = brier;
+    crate::bankroll::save_bankroll_config(&config).map_err(|e| AppError::Io(e.to_string()))?;
+    Ok(brier)
 }
 
 // ── Multi-Sport Scoreboard Commands ──
@@ -1278,7 +1318,7 @@ pub async fn dismiss_notification_cmd(
 /// Get notification settings
 #[tauri::command]
 pub async fn get_notification_settings() -> Result<NotificationSettings, String> {
-    Ok(NotificationSettings::default())
+    Ok(crate::notification::load_settings())
 }
 
 /// Save notification settings
@@ -1286,8 +1326,8 @@ pub async fn get_notification_settings() -> Result<NotificationSettings, String>
 pub async fn save_notification_settings(
     settings: NotificationSettings,
 ) -> Result<(), String> {
-    // TODO: persist to config file
-    tracing::info!("Notification settings updated: {:?}", settings);
+    crate::notification::save_settings(&settings)?;
+    tracing::info!("Notification settings persisted: {:?}", settings);
     Ok(())
 }
 
@@ -1528,6 +1568,55 @@ pub async fn kalshi_get_top_markets(
     client.get_top_markets(n).await
 }
 
+/// Initial dashboard payload: top markets, category stats, and cache freshness in one IPC call.
+#[tauri::command]
+pub async fn kalshi_get_dashboard_bootstrap(
+    limit: Option<usize>,
+    kalshi: State<'_, KalshiState>,
+    db_pool: State<'_, Pool<Sqlite>>,
+) -> Result<KalshiDashboardBootstrap, String> {
+    let n = limit.unwrap_or(30).min(100);
+    let mut client = kalshi.lock().await;
+    let markets = client.get_top_markets(n).await?;
+    let categories = client.category_stats();
+    let (cache_status, cache_age_secs, partial_catalog, fetched_at) = client.cache_metadata();
+    let last_refresh_at = fetched_at
+        .and_then(|ts| chrono::DateTime::from_timestamp(ts as i64, 0))
+        .map(|dt| dt.to_rfc3339());
+    let market_count = markets.len();
+    let category_count = categories.len();
+    let data_quality_notes = {
+        let mut notes = if partial_catalog {
+            vec!["Partial catalog loaded for fast first paint".to_string()]
+        } else {
+            vec!["Full catalog cache ready".to_string()]
+        };
+        if client.showing_persisted_snapshot() {
+            notes.push(
+                "Instant paint from saved market snapshot; live refresh runs in background"
+                    .to_string(),
+            );
+        }
+        notes
+    };
+
+    let ml_phase3 = crate::ml_predictor::phase3_dashboard_summary(&db_pool).await;
+
+    Ok(KalshiDashboardBootstrap {
+        markets,
+        categories,
+        cache_status,
+        cache_age_secs,
+        partial_catalog,
+        last_refresh_at,
+        market_count,
+        category_count,
+        dashboard_generated_at: chrono::Utc::now().to_rfc3339(),
+        data_quality_notes,
+        ml_phase3: Some(ml_phase3),
+    })
+}
+
 /// Get per-category market counts and 24h volumes.
 #[tauri::command]
 pub async fn kalshi_get_category_stats(
@@ -1638,6 +1727,7 @@ pub async fn kalshi_compute_stake_adjustment(
     recommended_stake: f64,
     tracker: State<'_, Arc<Mutex<crate::predictions::tracker::PredictionTracker>>>,
     kalshi: State<'_, KalshiState>,
+    db_pool: State<'_, Pool<Sqlite>>,
 ) -> Result<crate::kalshi::StakeAdjustment, String> {
     let pending = {
         let t = tracker.lock().await;
@@ -1655,12 +1745,51 @@ pub async fn kalshi_compute_stake_adjustment(
         exposures.extend(crate::kalshi::exposures_from_positions(&positions));
     }
 
-    Ok(crate::kalshi::compute_stake_adjustment(
+    let mut adjustment = crate::kalshi::compute_stake_adjustment(
         &ticker,
         &category,
         Some(&contract_side),
         recommended_stake,
         &exposures,
+    );
+
+    let bankroll = crate::bankroll::load_bankroll_config();
+    match crate::bankroll::get_bankroll_summary_synced(&bankroll, &db_pool).await {
+        Ok(summary) => {
+            adjustment.remaining_daily = summary.remaining_daily;
+            adjustment.remaining_weekly = summary.remaining_weekly;
+            adjustment.bankroll_cap = summary.remaining_daily.min(summary.remaining_weekly);
+            let (capped_stake, warning) = crate::bankroll::apply_bankroll_cap(
+                adjustment.adjusted_recommended_stake,
+                &summary,
+            );
+            if capped_stake < adjustment.adjusted_recommended_stake {
+                let old = adjustment.adjusted_recommended_stake;
+                adjustment.adjusted_recommended_stake = capped_stake;
+                adjustment.kelly_scale = if old > 0.0 {
+                    (capped_stake / old).clamp(0.0, 1.0)
+                } else {
+                    0.0
+                };
+            }
+            if let Some(warning) = warning {
+                adjustment.warnings.push(warning);
+            }
+        }
+        Err(e) => {
+            tracing::warn!("bankroll cap sync skipped for stake adjustment: {}", e);
+        }
+    }
+
+    Ok(adjustment)
+}
+
+#[tauri::command]
+pub async fn kalshi_get_calibration_status(
+    raw_probability_pct: f64,
+) -> Result<crate::analysis::calibration::CalibrationStatus, String> {
+    Ok(crate::analysis::calibration::calibration_status_for_probability(
+        raw_probability_pct,
     ))
 }
 
@@ -1694,8 +1823,16 @@ pub async fn kalshi_record_paper_decision(
     mut decision: crate::chat::decision_schema::KalshiTradeDecision,
     tracker: State<'_, Arc<Mutex<crate::predictions::tracker::PredictionTracker>>>,
     kalshi: State<'_, KalshiState>,
+    db_pool: State<'_, Pool<Sqlite>>,
 ) -> Result<String, String> {
-    let bankroll = crate::bankroll::BankrollConfig::default();
+    let bankroll = crate::bankroll::load_bankroll_config();
+    let bankroll_summary = match crate::bankroll::get_bankroll_summary_synced(&bankroll, &db_pool).await {
+        Ok(summary) => Some(summary),
+        Err(e) => {
+            tracing::warn!("bankroll cap sync skipped for paper decision: {}", e);
+            None
+        }
+    };
     let pending = {
         let t = tracker.lock().await;
         t.get_kalshi_predictions().await
@@ -1717,7 +1854,7 @@ pub async fn kalshi_record_paper_decision(
     } else {
         bankroll.total_bankroll * (decision.fractional_kelly_pct / 100.0)
     };
-    let adj = crate::kalshi::compute_stake_adjustment(
+    let mut adj = crate::kalshi::compute_stake_adjustment(
         &decision.ticker,
         &decision.category,
         Some(&side),
@@ -1730,6 +1867,32 @@ pub async fn kalshi_record_paper_decision(
         adj.kelly_scale,
         true,
     );
+
+    if let Some(summary) = &bankroll_summary {
+        let (capped_stake, warning) =
+            crate::bankroll::apply_bankroll_cap(decision.recommended_stake_dollars, summary);
+        if capped_stake < decision.recommended_stake_dollars {
+            let old_stake = decision.recommended_stake_dollars;
+            decision.recommended_stake_dollars = capped_stake;
+            decision.max_position_dollars = decision.max_position_dollars.min(capped_stake);
+            if !decision.risk_flags.contains(&crate::chat::decision_schema::RiskFlag::BankrollLimitExceeded) {
+                decision.risk_flags.push(crate::chat::decision_schema::RiskFlag::BankrollLimitExceeded);
+            }
+            if let Some(warning) = warning {
+                adj.warnings.push(warning.clone());
+                if !decision.thesis.is_empty() {
+                    decision.thesis.push(' ');
+                }
+                decision.thesis.push_str(&warning);
+            }
+            tracing::info!(
+                "paper decision capped by bankroll: {} ${:.2} -> ${:.2}",
+                decision.ticker,
+                old_stake,
+                capped_stake
+            );
+        }
+    }
 
     let prediction_id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().to_rfc3339();
@@ -1763,7 +1926,9 @@ pub async fn kalshi_record_paper_decision(
             Some(adj.warnings.join("; "))
         },
         created_at: now,
-        full_decision_json: Some(decision_json),
+        full_decision_json: Some(decision_json.clone()),
+        entry_price: Some(decision.market_price_pct),
+        model_disagreement: decision.model_disagreement,
     };
 
     let record = PredictionRecord {
@@ -1782,7 +1947,89 @@ pub async fn kalshi_record_paper_decision(
 
     let t = tracker.lock().await;
     t.save_prediction(record).await?;
+
+    if decision.contract_side != crate::chat::decision_schema::ContractSide::PASS {
+        let entry_cents = crate::paper::normalize_entry_cents(decision.price_to_enter);
+        let stake = decision.recommended_stake_dollars.max(0.0);
+        if stake > 0.0 && entry_cents > 0.0 && entry_cents < 100.0 {
+            let qty = stake / (entry_cents / 100.0);
+            let side = format!("{:?}", decision.contract_side);
+            let trade_input = crate::paper::PaperTradeInput {
+                ticker: decision.ticker.clone(),
+                title: decision.market_title.clone(),
+                category: decision.category.clone(),
+                side,
+                qty,
+                entry_price_cents: entry_cents,
+                source: crate::paper::PaperTradeSource::Manual,
+                decision_json: Some(decision_json),
+            };
+            match crate::paper::place_trade(&db_pool, trade_input).await {
+                Ok(lot) => {
+                    tracing::info!(
+                        "paper lot opened: {} {:?} qty {:.2} @ {:.1}c",
+                        lot.ticker,
+                        decision.contract_side,
+                        lot.qty,
+                        lot.entry_price_cents
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "paper lot not opened for {} (prediction {} saved): {}",
+                        decision.ticker,
+                        prediction_id,
+                        e
+                    );
+                }
+            }
+        }
+    }
+
     Ok(prediction_id)
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Paper trading journal
+// ═══════════════════════════════════════════════════════════════
+
+/// Paper account analytics (cash, equity, win rate, drawdown).
+#[tauri::command]
+pub async fn paper_get_analytics(
+    db_pool: State<'_, Pool<Sqlite>>,
+    kalshi: State<'_, KalshiState>,
+) -> Result<crate::paper::PaperAnalytics, String> {
+    let client = kalshi.lock().await;
+    crate::paper::get_analytics(&db_pool, Some(&*client)).await
+}
+
+/// Open paper positions aggregated by ticker/side.
+#[tauri::command]
+pub async fn paper_get_positions(
+    db_pool: State<'_, Pool<Sqlite>>,
+    kalshi: State<'_, KalshiState>,
+) -> Result<Vec<crate::paper::PaperPosition>, String> {
+    let client = kalshi.lock().await;
+    crate::paper::aggregate_positions(&db_pool, Some(&*client)).await
+}
+
+/// Settle open paper lots against resolved Kalshi markets.
+#[tauri::command]
+pub async fn paper_settle_pending(
+    db_pool: State<'_, Pool<Sqlite>>,
+    kalshi: State<'_, KalshiState>,
+) -> Result<crate::paper::PaperSettlementSummary, String> {
+    let client = kalshi.lock().await;
+    crate::paper::settle_pending(&db_pool, &client).await
+}
+
+/// Reset paper account and clear lot history.
+#[tauri::command]
+pub async fn paper_reset_account(
+    db_pool: State<'_, Pool<Sqlite>>,
+    starting_balance: Option<f64>,
+) -> Result<crate::paper::PaperAccount, String> {
+    crate::paper::reset_account(&db_pool, starting_balance).await
 }
 
 /// Get the latest grading summary
@@ -2268,6 +2515,8 @@ pub async fn create_prediction_from_ocr(
         risk: None,
         created_at: now,
         full_decision_json: None,
+        entry_price: None,
+        model_disagreement: false,
     };
 
     let record = PredictionRecord {
@@ -2432,4 +2681,57 @@ pub async fn ml_export_features(
     // Use the db_pool to get the actual database path
     let _db_path = format!("sqlite://{}", crate::ml_predictor::default_db_path().display());
     crate::ml_predictor::export_features_csv(output_path.as_deref()).await
+}
+
+/// Read-only cache state snapshot (does not lock the KalshiClient mutex).
+#[derive(Debug, serde::Serialize)]
+pub struct KalshiCacheStateResponse {
+    pub has_cache: bool,
+    pub is_stale: bool,
+    pub full_catalog: bool,
+    pub market_count: usize,
+    pub cache_age_secs: Option<u64>,
+    pub fetch_in_progress: bool,
+}
+
+#[tauri::command]
+pub async fn kalshi_get_cache_state(
+    kalshi: State<'_, KalshiState>,
+    shared_cache: State<'_, SharedCacheState>,
+) -> Result<KalshiCacheStateResponse, String> {
+    // Read from shared cache — no client mutex required
+    let cached = shared_cache.read().await;
+    let (has_cache, is_stale, full_catalog, market_count, cache_age_secs) = match &*cached {
+        Some(cache) => {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            let age = (now as i64 - cache.fetched_at as i64).max(0) as u64;
+            (
+                true,
+                age > 60, // CACHE_TTL_SECS
+                cache.full_catalog,
+                cache.markets.len(),
+                Some(age),
+            )
+        }
+        None => (false, false, false, 0, None),
+    };
+    drop(cached);
+
+    // Check fetch_in_progress through the client (brief lock)
+    let fetch_in_progress = {
+        let client = kalshi.lock().await;
+        client.is_fetch_in_progress()
+    };
+
+    Ok(KalshiCacheStateResponse {
+        has_cache,
+        is_stale,
+        full_catalog,
+        market_count,
+        cache_age_secs,
+        fetch_in_progress,
+    })
 }

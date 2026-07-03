@@ -1,5 +1,9 @@
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE, USER_AGENT};
+use sqlx::{Pool, Sqlite};
+use tokio::sync::RwLock;
 use crate::kalshi::models::{
     KalshiCache, KalshiConfig, KalshiEvent, KalshiEventsResponse, KalshiMarket,
     KalshiMarketsQuery, KalshiMarketsResponse, KalshiMarketSummary, KalshiOrderbook,
@@ -42,10 +46,22 @@ pub struct KalshiClient {
     token_expiry: Option<u64>,
     /// Cached market list
     cache: Option<KalshiCache>,
+    /// Shared cache that UI read commands access without locking the client mutex
+    shared_cache: Arc<RwLock<Option<KalshiCache>>>,
+    /// Prevents concurrent full-catalog fetches; set before pagination, cleared after
+    fetch_in_progress: Arc<AtomicBool>,
+    /// When set, market cache snapshots are written to SQLite after each update
+    persist_pool: Option<Arc<Pool<Sqlite>>>,
+    /// True when in-memory cache was restored from SQLite (not yet refreshed from API)
+    cache_from_persisted: bool,
 }
 
 impl KalshiClient {
-    pub fn new(config: KalshiConfig) -> Self {
+    pub fn new(
+        config: KalshiConfig,
+        shared_cache: Arc<RwLock<Option<KalshiCache>>>,
+        persist_pool: Option<Arc<Pool<Sqlite>>>,
+    ) -> Self {
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(15))
             .build()
@@ -56,6 +72,10 @@ impl KalshiClient {
             token: None,
             token_expiry: None,
             cache: None,
+            shared_cache,
+            fetch_in_progress: Arc::new(AtomicBool::new(false)),
+            persist_pool,
+            cache_from_persisted: false,
         }
     }
 
@@ -74,6 +94,22 @@ impl KalshiClient {
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs()
+    }
+
+    pub fn cache_metadata(&self) -> (String, Option<u64>, bool, Option<u64>) {
+        match &self.cache {
+            None => ("cold".to_string(), None, true, None),
+            Some(cache) => {
+                let age = Self::now_secs().saturating_sub(cache.fetched_at);
+                let status = if cache.full_catalog { "full" } else { "partial" };
+                (status.to_string(), Some(age), !cache.full_catalog, Some(cache.fetched_at))
+            }
+        }
+    }
+
+    /// Whether the visible cache was rehydrated from SQLite and not yet replaced by a live fetch.
+    pub fn showing_persisted_snapshot(&self) -> bool {
+        self.cache_from_persisted && self.cache.is_some()
     }
 
     pub fn is_cache_stale(&self) -> bool {
@@ -463,12 +499,48 @@ impl KalshiClient {
         }
     }
 
+    fn apply_cache(&mut self, cache: KalshiCache) {
+        {
+            let mut shared = self.shared_cache.blocking_write();
+            *shared = Some(cache.clone());
+        }
+        self.cache = Some(cache);
+    }
+
+    fn schedule_persist(&self) {
+        if let (Some(pool), Some(cache)) = (&self.persist_pool, &self.cache) {
+            let pool = pool.clone();
+            let cache = cache.clone();
+            tokio::spawn(async move {
+                if let Err(e) =
+                    crate::kalshi::market_cache_store::save_persisted_cache(&pool, &cache).await
+                {
+                    tracing::warn!("kalshi market cache persist failed: {}", e);
+                }
+            });
+        }
+    }
+
+    /// Restore cache from SQLite at startup (no disk write).
+    pub fn hydrate_cache(&mut self, cache: KalshiCache) {
+        tracing::info!(
+            "Kalshi cache rehydrated from SQLite: {} markets (full_catalog={})",
+            cache.markets.len(),
+            cache.full_catalog
+        );
+        self.cache_from_persisted = true;
+        self.apply_cache(cache);
+    }
+
     fn store_cache(&mut self, markets: Vec<KalshiMarket>, full_catalog: bool) {
-        self.cache = Some(KalshiCache {
+        let cache = KalshiCache {
             markets,
             fetched_at: Self::now_secs(),
             full_catalog,
-        });
+        };
+        self.apply_cache(cache);
+        self.cache_from_persisted = false;
+        self.schedule_persist();
     }
 
     pub fn needs_full_catalog(&self) -> bool {
@@ -480,6 +552,7 @@ impl KalshiClient {
     }
 
     /// Quick cache for dashboard first paint — at most `QUICK_LOAD_PAGES` API pages.
+    /// Skips HTTP fetch if a full warm is already in progress (returns stale cache).
     pub async fn ensure_quick_cache(&mut self) -> Result<(), String> {
         if let Some(cache) = &self.cache {
             if !self.is_cache_stale() {
@@ -490,6 +563,14 @@ impl KalshiClient {
                 tracing::info!("Kalshi full cache stale; quick-reloading for dashboard");
             }
         }
+
+        // If a full warm is already in progress, don't start a second fetch — the
+        // caller will work with the stale/partial cache until the warm completes.
+        if self.fetch_in_progress.load(Ordering::Relaxed) {
+            tracing::info!("Kalshi full catalog warm in progress; skipping quick reload");
+            return Ok(());
+        }
+
         let started = std::time::Instant::now();
         tracing::info!(
             "Kalshi quick cache load via flat /markets ({} pages x {} markets)",
@@ -508,6 +589,7 @@ impl KalshiClient {
 
     /// Fetch all open non-multivariate markets, paginating through all pages.
     /// Caches the result for `CACHE_TTL_SECS` seconds.
+    /// Uses `fetch_in_progress` guard to prevent concurrent full-catalog fetches.
     pub async fn fetch_all_markets(&mut self) -> Result<Vec<KalshiMarket>, String> {
         if !self.is_cache_stale() {
             if let Some(cached) = &self.cache {
@@ -516,6 +598,19 @@ impl KalshiClient {
                 }
             }
         }
+
+        // Prevent concurrent full-catalog warm (safety net for background + UI refresh)
+        if self.fetch_in_progress.swap(true, Ordering::AcqRel) {
+            tracing::warn!("Kalshi full catalog fetch already in progress; skipping duplicate");
+            // Return stale cache if available, otherwise error
+            return self.cache.as_ref()
+                .map(|c| c.markets.clone())
+                .ok_or_else(|| "Full catalog fetch already in progress and no cache available".to_string());
+        }
+
+        let _guard = FetchInProgressGuard {
+            flag: self.fetch_in_progress.clone(),
+        };
 
         let started = std::time::Instant::now();
         tracing::info!(
@@ -751,6 +846,16 @@ impl KalshiClient {
         result.sort_by(|a, b| b.count.cmp(&a.count));
         result
     }
+
+    /// Return a snapshot of the shared cache (for read-only commands that don't hold the client lock).
+    pub fn shared_cache_snapshot(&self) -> Option<KalshiCache> {
+        self.shared_cache.blocking_read().clone()
+    }
+
+    /// Check whether a full-catalog fetch is currently in progress.
+    pub fn is_fetch_in_progress(&self) -> bool {
+        self.fetch_in_progress.load(Ordering::Relaxed)
+    }
 }
 
 /// Statistics about a market category
@@ -759,6 +864,17 @@ pub struct KalshiCategoryStat {
     pub category: String,
     pub count: usize,
     pub volume_24h: f64,
+}
+
+/// RAII guard that clears `fetch_in_progress` on drop (even during panic/unwind).
+struct FetchInProgressGuard {
+    flag: Arc<AtomicBool>,
+}
+
+impl Drop for FetchInProgressGuard {
+    fn drop(&mut self) {
+        self.flag.store(false, Ordering::Release);
+    }
 }
 
 #[cfg(test)]

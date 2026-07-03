@@ -17,6 +17,7 @@
 
 use serde::{Deserialize, Serialize};
 use sqlx::{Pool, Row, Sqlite};
+use std::fmt::Write;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -35,6 +36,8 @@ pub struct MLTrainingResult {
     pub model_path: Option<String>,
     pub feature_importance: Option<Vec<MLFeatureImportance>>,
     pub message: String,
+    #[serde(default)]
+    pub category_breakdown: Option<std::collections::HashMap<String, i64>>,
 }
 
 /// Feature importance from the trained model
@@ -56,6 +59,8 @@ pub struct MLPrediction {
     pub original_confidence: i64,
     pub original_probability: Option<f64>,
     pub line_change: f64,
+    #[serde(default)]
+    pub category_code: Option<i64>,
 }
 
 /// Batch prediction result
@@ -66,6 +71,28 @@ pub struct MLPredictionBatch {
     pub predictions_count: i64,
     pub predictions: Vec<MLPrediction>,
     pub message: String,
+}
+
+/// Resolved prediction counts per market category (for multi-category ML readiness)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MLCategoryStats {
+    pub category: String,
+    pub resolved_count: i64,
+    pub pending_count: i64,
+    /// True when resolved_count >= min for a dedicated per-category model
+    pub trainable: bool,
+    /// Graded samples still needed before a per-category sidecar can train
+    pub samples_until_trainable: i64,
+    /// Threshold used for `trainable` (exported for Settings UI)
+    pub min_resolved_for_sidecar: i64,
+}
+
+/// Per-category sidecar model summary (politics/econ/weather)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MLPerCategoryModel {
+    pub samples: i64,
+    pub cv_accuracy_mean: Option<f64>,
+    pub model_exists: bool,
 }
 
 /// ML model status for the frontend
@@ -81,7 +108,105 @@ pub struct MLModelStatus {
     pub feature_importance: Option<Vec<MLFeatureImportance>>,
     pub pending_predictions: i64,
     pub resolved_predictions: i64,
+    /// Live DB counts by category (Kalshi politics/econ/weather + sports)
+    #[serde(default)]
+    pub category_stats: Vec<MLCategoryStats>,
+    /// Last training set mix (from model _meta.json when available)
+    #[serde(default)]
+    pub training_category_breakdown: Option<std::collections::HashMap<String, i64>>,
+    /// Trained sidecar classifiers per non-sports category (when 10+ graded samples)
+    #[serde(default)]
+    pub per_category_models: Option<std::collections::HashMap<String, MLPerCategoryModel>>,
+    /// Politics/Economics/Weather categories with ≥10 graded rows (Phase 3 ROADMAP)
+    #[serde(default)]
+    pub trainable_non_sports_categories: i64,
+    /// Target count for Phase 3 multi-category ML success metric
+    #[serde(default = "default_non_sports_sidecar_target")]
+    pub non_sports_sidecar_target: i64,
+    /// Non-sports category closest to the 10-sample sidecar threshold (UX hint)
+    #[serde(default)]
+    pub next_sidecar_category: Option<String>,
+    #[serde(default)]
+    pub next_sidecar_samples_needed: Option<i64>,
+    /// True when total resolved rows meet the auto-retrain-after-grade threshold (≥10).
+    #[serde(default)]
+    pub auto_retrain_eligible: bool,
+    /// Additional resolved predictions needed before auto-retrain can run after grading.
+    #[serde(default)]
+    pub resolved_until_auto_retrain: i64,
+    /// ROADMAP Phase 3 data metric: Politics/Economics/Weather each have ≥10 graded rows.
+    #[serde(default)]
+    pub phase_3_data_metric_ready: bool,
+    /// Resolved Kalshi paper rows (`full_decision_json` contains a market ticker).
+    #[serde(default)]
+    pub kalshi_resolved_predictions: i64,
+    /// Pending Kalshi paper rows.
+    #[serde(default)]
+    pub kalshi_pending_predictions: i64,
     pub message: String,
+}
+
+fn default_non_sports_sidecar_target() -> i64 {
+    3
+}
+
+const NON_SPORTS_SIDECAR_CATEGORIES: &[&str] = &["Politics", "Economics", "Weather"];
+
+/// Count non-sports categories that meet the sidecar training threshold (ROADMAP Phase 3).
+pub(crate) fn count_trainable_non_sports_categories(stats: &[MLCategoryStats]) -> i64 {
+    stats
+        .iter()
+        .filter(|s| {
+            s.trainable && NON_SPORTS_SIDECAR_CATEGORIES.contains(&s.category.as_str())
+        })
+        .count() as i64
+}
+
+/// ROADMAP Phase 3 success metric: all three non-sports sidecar categories trainable.
+pub(crate) fn phase_3_data_metric_ready(trainable_non_sports: i64, target: i64) -> bool {
+    trainable_non_sports >= target
+}
+
+fn zero_sidecar_stat(category: &str) -> MLCategoryStats {
+    MLCategoryStats {
+        category: category.to_string(),
+        resolved_count: 0,
+        pending_count: 0,
+        trainable: false,
+        samples_until_trainable: MIN_CATEGORY_TRAIN_SAMPLES,
+        min_resolved_for_sidecar: MIN_CATEGORY_TRAIN_SAMPLES,
+    }
+}
+
+/// Ensure Politics/Economics/Weather rows exist so Settings always shows Phase 3 targets.
+pub(crate) fn ensure_non_sports_sidecar_stats(mut stats: Vec<MLCategoryStats>) -> Vec<MLCategoryStats> {
+    for cat in NON_SPORTS_SIDECAR_CATEGORIES {
+        if !stats.iter().any(|s| s.category == *cat) {
+            stats.push(zero_sidecar_stat(cat));
+        }
+    }
+    stats.sort_by(|a, b| {
+        let a_target = NON_SPORTS_SIDECAR_CATEGORIES.contains(&a.category.as_str());
+        let b_target = NON_SPORTS_SIDECAR_CATEGORIES.contains(&b.category.as_str());
+        b_target
+            .cmp(&a_target)
+            .then_with(|| b.resolved_count.cmp(&a.resolved_count))
+            .then_with(|| a.category.cmp(&b.category))
+    });
+    stats
+}
+
+/// Pick the non-sports category that needs the fewest additional graded rows for a sidecar.
+pub(crate) fn nearest_non_sports_sidecar_unlock(
+    stats: &[MLCategoryStats],
+) -> Option<(String, i64)> {
+    stats
+        .iter()
+        .filter(|s| {
+            NON_SPORTS_SIDECAR_CATEGORIES.contains(&s.category.as_str()) && !s.trainable
+        })
+        .min_by_key(|s| s.samples_until_trainable)
+        .map(|s| (s.category.clone(), s.samples_until_trainable))
 }
 
 /// ML-enhanced analysis context — extends the existing AnalysisContext
@@ -131,6 +256,126 @@ fn model_meta_path(model_path: &PathBuf) -> PathBuf {
         "{}_meta.json",
         model_path.file_stem().unwrap_or_default().to_string_lossy()
     ))
+}
+
+/// Fast on-disk artifact checks for dashboard bootstrap (no `_meta.json` parse).
+pub(crate) fn ml_artifacts_on_disk_summary() -> (bool, i64) {
+    let model = default_model_path();
+    let unified = model.exists();
+    let stem = model
+        .file_stem()
+        .unwrap_or_default()
+        .to_string_lossy();
+    let sidecars = NON_SPORTS_SIDECAR_CATEGORIES
+        .iter()
+        .filter(|name| {
+            model
+                .with_file_name(format!("{}_{}.joblib", stem, name.to_lowercase()))
+                .exists()
+        })
+        .count() as i64;
+    (unified, sidecars)
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub(crate) struct UnifiedModelMetaLight {
+    pub cv_accuracy_mean: Option<f64>,
+    pub cv_accuracy_std: Option<f64>,
+    pub trained_at: Option<String>,
+}
+
+/// Parse unified model `_meta.json` for dashboard hints (best-effort).
+pub(crate) fn parse_unified_model_meta_json(content: &str) -> UnifiedModelMetaLight {
+    #[derive(Deserialize)]
+    struct MetaLight {
+        trained_at: String,
+        cv_accuracy_mean: f64,
+        cv_accuracy_std: f64,
+    }
+    match serde_json::from_str::<MetaLight>(content) {
+        Ok(m) => UnifiedModelMetaLight {
+            cv_accuracy_mean: Some(m.cv_accuracy_mean),
+            cv_accuracy_std: Some(m.cv_accuracy_std),
+            trained_at: Some(m.trained_at),
+        },
+        Err(_) => UnifiedModelMetaLight::default(),
+    }
+}
+
+pub(crate) fn read_unified_model_meta_light() -> UnifiedModelMetaLight {
+    let model = default_model_path();
+    let meta_path = model_meta_path(&model);
+    if !meta_path.exists() {
+        return UnifiedModelMetaLight::default();
+    }
+    let content = match std::fs::read_to_string(&meta_path) {
+        Ok(c) => c,
+        Err(_) => return UnifiedModelMetaLight::default(),
+    };
+    parse_unified_model_meta_json(&content)
+}
+
+/// Parse `per_category_models` from unified `_meta.json` for dashboard insight rail.
+pub(crate) fn parse_active_sidecar_models_from_meta(
+    content: &str,
+    unified_model: &std::path::Path,
+) -> Option<std::collections::HashMap<String, MLPerCategoryModel>> {
+    #[derive(Deserialize)]
+    struct CatMetaRaw {
+        samples: i64,
+        #[serde(default)]
+        cv_accuracy_mean: Option<f64>,
+        #[serde(default)]
+        model_path: Option<String>,
+    }
+    #[derive(Deserialize)]
+    struct MetaSidecars {
+        #[serde(default)]
+        per_category_models: Option<std::collections::HashMap<String, CatMetaRaw>>,
+    }
+    let m = serde_json::from_str::<MetaSidecars>(content).ok()?;
+    let raw = m.per_category_models?;
+    if raw.is_empty() {
+        return None;
+    }
+    let stem = unified_model
+        .file_stem()
+        .unwrap_or_default()
+        .to_string_lossy();
+    Some(
+        raw.into_iter()
+            .map(|(name, info)| {
+                let path = info.model_path.as_ref().map(PathBuf::from);
+                let exists = path
+                    .as_ref()
+                    .map(|p| p.exists())
+                    .unwrap_or_else(|| {
+                        unified_model
+                            .with_file_name(format!("{}_{}.joblib", stem, name.to_lowercase()))
+                            .exists()
+                    });
+                (
+                    name,
+                    MLPerCategoryModel {
+                        samples: info.samples,
+                        cv_accuracy_mean: info.cv_accuracy_mean,
+                        model_exists: exists,
+                    },
+                )
+            })
+            .collect(),
+    )
+}
+
+pub(crate) fn read_active_sidecar_models_light(
+) -> Option<std::collections::HashMap<String, MLPerCategoryModel>> {
+    let model = default_model_path();
+    let meta_path = model_meta_path(&model);
+    if !meta_path.exists() {
+        return None;
+    }
+    let content = std::fs::read_to_string(&meta_path).ok()?;
+    parse_active_sidecar_models_from_meta(&content, &model)
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -194,6 +439,49 @@ pub async fn train_model(
     .map_err(|e| format!("Task join error: {}", e))??;
 
     Ok(result)
+}
+
+/// Retrain unified + per-category sidecars after Kalshi auto-grader resolves markets.
+pub async fn retrain_after_grading(graded_count: u32, pool: Option<&Pool<Sqlite>>) {
+    let resolved = if let Some(p) = pool {
+        sqlx::query_scalar(
+            "SELECT COUNT(*) FROM predictions WHERE outcome IN ('Win', 'Loss', 'Push')",
+        )
+        .fetch_one(p)
+        .await
+        .unwrap_or(0)
+    } else {
+        MIN_CATEGORY_TRAIN_SAMPLES
+    };
+    if !should_retrain_given_resolved(graded_count, resolved) {
+        tracing::debug!(
+            "ml: skip retrain after grading (graded={}, resolved={}, need >=10 resolved)",
+            graded_count,
+            resolved
+        );
+        return;
+    }
+    match train_model(None, None).await {
+        Ok(r) if r.status == "trained" => {
+            tracing::info!(
+                "ml: retrained after {} new grades — {} samples, CV {:.1}%",
+                graded_count,
+                r.samples.unwrap_or(0),
+                r.cv_accuracy_mean.unwrap_or(0.0) * 100.0
+            );
+        }
+        Ok(r) => {
+            tracing::info!("ml: retrain after grading: {}", r.message);
+        }
+        Err(e) => {
+            tracing::debug!("ml: retrain after grading skipped: {}", e);
+        }
+    }
+}
+
+/// Gate for background ML retrain after auto-grade (testable, no Python spawn).
+pub(crate) fn should_retrain_after_grading(graded_count: u32) -> bool {
+    graded_count > 0
 }
 
 /// Generate ML predictions for all pending props
@@ -282,6 +570,246 @@ pub async fn predict_batch(
     Ok(result)
 }
 
+/// Minimum resolved samples before a per-category dedicated model is considered viable
+const MIN_CATEGORY_TRAIN_SAMPLES: i64 = 10;
+
+/// Kalshi paper rows store a market ticker in `full_decision_json` (shared DB may hold other products).
+pub(crate) const KALSHI_TICKER_PREDICATE: &str =
+    "full_decision_json IS NOT NULL AND trim(json_extract(full_decision_json, '$.ticker')) != ''";
+
+/// Full gate: new grades landed and enough resolved rows for unified training (≥10).
+pub(crate) fn should_retrain_given_resolved(graded_count: u32, resolved_predictions: i64) -> bool {
+    graded_count > 0 && auto_retrain_eligible(resolved_predictions)
+}
+
+/// Whether total resolved predictions satisfy the unified auto-retrain threshold.
+pub(crate) fn auto_retrain_eligible(resolved_predictions: i64) -> bool {
+    resolved_predictions >= MIN_CATEGORY_TRAIN_SAMPLES
+}
+
+/// Resolved rows still needed before auto-retrain can run (0 when eligible).
+pub(crate) fn resolved_until_auto_retrain(resolved_predictions: i64) -> i64 {
+    (MIN_CATEGORY_TRAIN_SAMPLES - resolved_predictions).max(0)
+}
+
+/// Compact training summary for LLM system prompts (CV ± std, active sidecars).
+pub(crate) fn format_ml_training_header(status: &MLModelStatus) -> String {
+    let acc = status
+        .cv_accuracy_mean
+        .map(|a| {
+            if let Some(std) = status.cv_accuracy_std {
+                format!("{:.1}% ± {:.1}%", a * 100.0, std * 100.0)
+            } else {
+                format!("{:.1}%", a * 100.0)
+            }
+        })
+        .unwrap_or_else(|| "N/A".to_string());
+    let samples = status
+        .samples
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| "N/A".to_string());
+    let mut line = format!("trained on {} samples, CV accuracy: {}", samples, acc);
+    if let Some(ref per) = status.per_category_models {
+        let names: Vec<&str> = per
+            .iter()
+            .filter(|(_, v)| v.model_exists)
+            .map(|(k, _)| k.as_str())
+            .collect();
+        if !names.is_empty() {
+            let _ = write!(line, "; active sidecars: {}", names.join(", "));
+        }
+    }
+    if !status.phase_3_data_metric_ready {
+        let _ = write!(
+            line,
+            "; Phase 3 sidecar data: {}/{} categories ready",
+            status.trainable_non_sports_categories, status.non_sports_sidecar_target
+        );
+        if status.kalshi_resolved_predictions > 0 {
+            let _ = write!(
+                line,
+                "; Kalshi journal: {} resolved paper rows",
+                status.kalshi_resolved_predictions
+            );
+        }
+    }
+    line
+}
+
+/// Aggregate resolved/pending counts by market category for Phase 3 sidecar readiness (Kalshi paper rows only).
+async fn fetch_category_stats(pool: &Pool<Sqlite>) -> Vec<MLCategoryStats> {
+    let rows = sqlx::query(
+        r#"
+        SELECT
+            COALESCE(
+                NULLIF(json_extract(full_decision_json, '$.category'), ''),
+                NULLIF(stat_category, ''),
+                'Other'
+            ) AS category,
+            SUM(CASE WHEN outcome IN ('Win', 'Loss', 'Push') THEN 1 ELSE 0 END) AS resolved_count,
+            SUM(CASE WHEN outcome = 'Pending' THEN 1 ELSE 0 END) AS pending_count
+        FROM predictions
+        WHERE full_decision_json IS NOT NULL
+          AND trim(json_extract(full_decision_json, '$.ticker')) != ''
+        GROUP BY category
+        ORDER BY resolved_count DESC, category ASC
+        "#,
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+
+    rows.iter()
+        .map(|r| {
+            let resolved: i64 = r.try_get("resolved_count").unwrap_or(0);
+            let until = (MIN_CATEGORY_TRAIN_SAMPLES - resolved).max(0);
+            MLCategoryStats {
+                category: r.try_get("category").unwrap_or_else(|_| "Other".to_string()),
+                resolved_count: resolved,
+                pending_count: r.try_get("pending_count").unwrap_or(0),
+                trainable: resolved >= MIN_CATEGORY_TRAIN_SAMPLES,
+                samples_until_trainable: until,
+                min_resolved_for_sidecar: MIN_CATEGORY_TRAIN_SAMPLES,
+            }
+        })
+        .collect()
+}
+
+fn format_category_readiness(stats: &[MLCategoryStats]) -> String {
+    if stats.is_empty() {
+        return String::new();
+    }
+    let parts: Vec<String> = stats
+        .iter()
+        .map(|s| {
+            let flag = if s.trainable {
+                "ready".to_string()
+            } else {
+                format!(
+                    "{}/{} graded ({} more for sidecar)",
+                    s.resolved_count,
+                    s.min_resolved_for_sidecar,
+                    s.samples_until_trainable
+                )
+            };
+            format!("{}: {}", s.category, flag)
+        })
+        .collect();
+    format!(" Category mix: {}.", parts.join("; "))
+}
+
+/// Lightweight Phase 3 hint for Kalshi dashboard bootstrap (SQL + fast on-disk artifact checks).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MLPhase3DashboardSummary {
+    pub trainable_non_sports_categories: i64,
+    pub non_sports_sidecar_target: i64,
+    pub phase_3_data_metric_ready: bool,
+    pub kalshi_resolved_predictions: i64,
+    pub kalshi_pending_predictions: i64,
+    pub next_sidecar_category: Option<String>,
+    pub next_sidecar_samples_needed: Option<i64>,
+    /// Total resolved rows in predictions.db (all products); gates auto-retrain after grading.
+    #[serde(default)]
+    pub auto_retrain_eligible: bool,
+    #[serde(default)]
+    pub resolved_until_auto_retrain: i64,
+    /// Unified `ml_model.joblib` present (existence only).
+    #[serde(default)]
+    pub unified_model_on_disk: bool,
+    /// Count of Politics/Economics/Weather sidecar joblib files on disk.
+    #[serde(default)]
+    pub active_sidecar_count: i64,
+    /// Per-category graded counts for Politics/Economics/Weather (dashboard insight rail).
+    #[serde(default)]
+    pub non_sports_category_stats: Vec<MLCategoryStats>,
+    /// Unified model CV from `_meta.json` when present (lightweight read for dashboard).
+    #[serde(default)]
+    pub unified_cv_accuracy_mean: Option<f64>,
+    #[serde(default)]
+    pub unified_cv_accuracy_std: Option<f64>,
+    #[serde(default)]
+    pub unified_trained_at: Option<String>,
+    /// Trained sidecars from `_meta.json` (names, samples, CV) for dashboard insight rail.
+    #[serde(default)]
+    pub active_sidecar_models: Option<std::collections::HashMap<String, MLPerCategoryModel>>,
+}
+
+pub(crate) fn build_phase3_dashboard_summary(
+    category_stats: Vec<MLCategoryStats>,
+    kalshi_resolved: i64,
+    kalshi_pending: i64,
+    total_resolved_predictions: i64,
+) -> MLPhase3DashboardSummary {
+    let stats = ensure_non_sports_sidecar_stats(category_stats);
+    let trainable_non_sports = count_trainable_non_sports_categories(&stats);
+    let target = default_non_sports_sidecar_target();
+    let next_unlock = nearest_non_sports_sidecar_unlock(&stats);
+    let non_sports_category_stats: Vec<MLCategoryStats> = NON_SPORTS_SIDECAR_CATEGORIES
+        .iter()
+        .filter_map(|cat| stats.iter().find(|s| s.category == *cat).cloned())
+        .collect();
+    MLPhase3DashboardSummary {
+        trainable_non_sports_categories: trainable_non_sports,
+        non_sports_sidecar_target: target,
+        phase_3_data_metric_ready: phase_3_data_metric_ready(trainable_non_sports, target),
+        kalshi_resolved_predictions: kalshi_resolved,
+        kalshi_pending_predictions: kalshi_pending,
+        next_sidecar_category: next_unlock.as_ref().map(|(c, _)| c.clone()),
+        next_sidecar_samples_needed: next_unlock.map(|(_, n)| n),
+        auto_retrain_eligible: auto_retrain_eligible(total_resolved_predictions),
+        resolved_until_auto_retrain: resolved_until_auto_retrain(total_resolved_predictions),
+        unified_model_on_disk: false,
+        active_sidecar_count: 0,
+        non_sports_category_stats,
+        unified_cv_accuracy_mean: None,
+        unified_cv_accuracy_std: None,
+        unified_trained_at: None,
+        active_sidecar_models: None,
+    }
+}
+
+/// Aggregate Phase 3 readiness for the Kalshi dashboard (one round-trip with market bootstrap).
+pub async fn phase3_dashboard_summary(pool: &Pool<Sqlite>) -> MLPhase3DashboardSummary {
+    let category_stats = fetch_category_stats(pool).await;
+    let total_resolved: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM predictions WHERE outcome IN ('Win', 'Loss', 'Push')",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap_or(0);
+    let kalshi_pending: i64 = sqlx::query_scalar(&format!(
+        "SELECT COUNT(*) FROM predictions WHERE outcome = 'Pending' AND {}",
+        KALSHI_TICKER_PREDICATE
+    ))
+    .fetch_one(pool)
+    .await
+    .unwrap_or(0);
+
+    let kalshi_resolved: i64 = sqlx::query_scalar(&format!(
+        "SELECT COUNT(*) FROM predictions WHERE outcome IN ('Win', 'Loss', 'Push') AND {}",
+        KALSHI_TICKER_PREDICATE
+    ))
+    .fetch_one(pool)
+    .await
+    .unwrap_or(0);
+
+    let mut summary = build_phase3_dashboard_summary(
+        category_stats,
+        kalshi_resolved,
+        kalshi_pending,
+        total_resolved,
+    );
+    let (unified, sidecars) = ml_artifacts_on_disk_summary();
+    summary.unified_model_on_disk = unified;
+    summary.active_sidecar_count = sidecars;
+    let meta_light = read_unified_model_meta_light();
+    summary.unified_cv_accuracy_mean = meta_light.cv_accuracy_mean;
+    summary.unified_cv_accuracy_std = meta_light.cv_accuracy_std;
+    summary.unified_trained_at = meta_light.trained_at;
+    summary.active_sidecar_models = read_active_sidecar_models_light();
+    summary
+}
+
 /// Get ML model status including training metadata
 pub async fn get_model_status(
     pool: &Pool<Sqlite>,
@@ -295,9 +823,26 @@ pub async fn get_model_status(
     let model_exists = model.exists();
 
     // Load metadata if available
-    let (trained_at, samples, cv_mean, cv_std, win_rate, feature_importance) = if meta_path.exists() {
+    let (
+        trained_at,
+        samples,
+        cv_mean,
+        cv_std,
+        win_rate,
+        feature_importance,
+        training_category_breakdown,
+        per_category_models,
+    ) = if meta_path.exists() {
         let content = std::fs::read_to_string(&meta_path)
             .map_err(|e| format!("Failed to read model meta: {}", e))?;
+        #[derive(Deserialize)]
+        struct CatMetaRaw {
+            samples: i64,
+            #[serde(default)]
+            cv_accuracy_mean: Option<f64>,
+            #[serde(default)]
+            model_path: Option<String>,
+        }
         #[derive(Deserialize)]
         struct Meta {
             trained_at: String,
@@ -306,21 +851,61 @@ pub async fn get_model_status(
             cv_accuracy_std: f64,
             win_rate: f64,
             feature_importance: Vec<MLFeatureImportance>,
+            #[serde(default)]
+            category_breakdown: Option<std::collections::HashMap<String, i64>>,
+            #[serde(default)]
+            per_category_models: Option<std::collections::HashMap<String, CatMetaRaw>>,
         }
         match serde_json::from_str::<Meta>(&content) {
-            Ok(m) => (
-                Some(m.trained_at),
-                Some(m.samples),
-                Some(m.cv_accuracy_mean),
-                Some(m.cv_accuracy_std),
-                Some(m.win_rate),
-                Some(m.feature_importance),
-            ),
-            Err(_) => (None, None, None, None, None, None),
+            Ok(m) => {
+                let per_cat = m.per_category_models.map(|raw| {
+                    raw.into_iter()
+                        .map(|(name, info)| {
+                            let path = info.model_path.as_ref().map(PathBuf::from);
+                            let exists = path
+                                .as_ref()
+                                .map(|p| p.exists())
+                                .unwrap_or_else(|| {
+                                    let stem = model
+                                        .file_stem()
+                                        .unwrap_or_default()
+                                        .to_string_lossy();
+                                    let sidecar = model.with_file_name(format!(
+                                        "{}_{}.joblib",
+                                        stem,
+                                        name.to_lowercase()
+                                    ));
+                                    sidecar.exists()
+                                });
+                            (
+                                name,
+                                MLPerCategoryModel {
+                                    samples: info.samples,
+                                    cv_accuracy_mean: info.cv_accuracy_mean,
+                                    model_exists: exists,
+                                },
+                            )
+                        })
+                        .collect()
+                });
+                (
+                    Some(m.trained_at),
+                    Some(m.samples),
+                    Some(m.cv_accuracy_mean),
+                    Some(m.cv_accuracy_std),
+                    Some(m.win_rate),
+                    Some(m.feature_importance),
+                    m.category_breakdown,
+                    per_cat,
+                )
+            }
+            Err(_) => (None, None, None, None, None, None, None, None),
         }
     } else {
-        (None, None, None, None, None, None)
+        (None, None, None, None, None, None, None, None)
     };
+
+    let category_stats = ensure_non_sports_sidecar_stats(fetch_category_stats(pool).await);
 
     // Count predictions
     let pending: i64 = sqlx::query_scalar(
@@ -337,17 +922,52 @@ pub async fn get_model_status(
     .await
     .unwrap_or(0);
 
+    let kalshi_pending: i64 = sqlx::query_scalar(
+        r#"
+        SELECT COUNT(*) FROM predictions
+        WHERE outcome = 'Pending'
+          AND full_decision_json IS NOT NULL
+          AND trim(json_extract(full_decision_json, '$.ticker')) != ''
+        "#,
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap_or(0);
+
+    let kalshi_resolved: i64 = sqlx::query_scalar(
+        r#"
+        SELECT COUNT(*) FROM predictions
+        WHERE outcome IN ('Win', 'Loss', 'Push')
+          AND full_decision_json IS NOT NULL
+          AND trim(json_extract(full_decision_json, '$.ticker')) != ''
+        "#,
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap_or(0);
+
+    let readiness = format_category_readiness(&category_stats);
     let message = if !model_exists {
-        "No model trained yet. Need at least 10 resolved predictions to train.".to_string()
+        format!(
+            "No model trained yet. Need at least 10 resolved predictions to train.{}",
+            readiness
+        )
     } else if let Some(s) = samples {
         format!(
-            "Model trained on {} samples. CV accuracy: {:.1}%",
+            "Model trained on {} samples. CV accuracy: {:.1}%.{}",
             s,
-            cv_mean.unwrap_or(0.0) * 100.0
+            cv_mean.unwrap_or(0.0) * 100.0,
+            readiness
         )
     } else {
-        "Model file exists but metadata is missing. Retrain for best results.".to_string()
+        format!(
+            "Model file exists but metadata is missing. Retrain for best results.{}",
+            readiness
+        )
     };
+
+    let trainable_non_sports = count_trainable_non_sports_categories(&category_stats);
+    let next_unlock = nearest_non_sports_sidecar_unlock(&category_stats);
 
     Ok(MLModelStatus {
         model_exists,
@@ -360,6 +980,21 @@ pub async fn get_model_status(
         feature_importance,
         pending_predictions: pending,
         resolved_predictions: resolved,
+        category_stats,
+        training_category_breakdown,
+        per_category_models,
+        trainable_non_sports_categories: trainable_non_sports,
+        non_sports_sidecar_target: default_non_sports_sidecar_target(),
+        next_sidecar_category: next_unlock.as_ref().map(|(c, _)| c.clone()),
+        next_sidecar_samples_needed: next_unlock.map(|(_, n)| n),
+        auto_retrain_eligible: auto_retrain_eligible(resolved),
+        resolved_until_auto_retrain: resolved_until_auto_retrain(resolved),
+        phase_3_data_metric_ready: phase_3_data_metric_ready(
+            trainable_non_sports,
+            default_non_sports_sidecar_target(),
+        ),
+        kalshi_resolved_predictions: kalshi_resolved,
+        kalshi_pending_predictions: kalshi_pending,
         message,
     })
 }
@@ -392,18 +1027,17 @@ pub async fn init_ml_tables(pool: &Pool<Sqlite>) -> Result<(), String> {
     .ok();
 
     sqlx::query(
-        "CREATE INDEX IF NOT EXISTS idx_ml_pred_ticker ON ml_predictions(ticker)",
-    )
-    .execute(pool)
-    .await
-    .ok();
-
-    sqlx::query(
         "CREATE INDEX IF NOT EXISTS idx_ml_pred_created ON ml_predictions(created_at)",
     )
     .execute(pool)
     .await
     .ok();
+
+    // Legacy index referenced a non-existent ticker column; safe no-op on fresh DBs.
+    sqlx::query("DROP INDEX IF EXISTS idx_ml_pred_ticker")
+        .execute(pool)
+        .await
+        .ok();
 
     Ok(())
 }
@@ -474,6 +1108,7 @@ pub async fn get_stored_ml_predictions(
             original_confidence: r.get::<Option<i64>, _>("confidence_score").unwrap_or(50),
             original_probability: r.get("probability"),
             line_change: 0.0,  // not stored in ml_predictions table
+            category_code: None,
         })
         .collect())
 }
@@ -496,11 +1131,12 @@ pub fn generate_ml_context(predictions: &[MLPrediction], accuracy: Option<f64>) 
             "❌"
         };
         ctx.push_str(&format!(
-            "  {} {} {} {} — ML Win Prob: {:.1}% ({}), Line: {:.1}\n",
+            "  {} {} {} {} (cat:{}) — ML Win Prob: {:.1}% ({}), Line: {:.1}\n",
             emoji,
             pred.player_name,
             pred.ml_prediction,
             pred.stat_category,
+            pred.category_code.unwrap_or(0),
             pred.ml_win_probability * 100.0,
             if pred.ml_win_probability >= 0.5 {
                 "Lean Over"
@@ -568,4 +1204,297 @@ pub async fn export_features_csv(
     .map_err(|e| format!("Task join error: {}", e))??;
 
     Ok(result.output_path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ml_prediction_deserializes_category_code() {
+        let json = r#"{
+            "prediction_id": "p1",
+            "player_name": "FED-25DEC",
+            "stat_category": "Economics",
+            "line": 62.0,
+            "ml_win_probability": 0.55,
+            "ml_prediction": "Win",
+            "original_confidence": 55,
+            "original_probability": 0.55,
+            "line_change": 0.0,
+            "category_code": 2
+        }"#;
+        let pred: MLPrediction = serde_json::from_str(json).expect("parse");
+        assert_eq!(pred.category_code, Some(2));
+    }
+
+    #[test]
+    fn format_category_readiness_lists_trainable_flags() {
+        let stats = vec![
+            MLCategoryStats {
+                category: "Politics".into(),
+                resolved_count: 12,
+                pending_count: 1,
+                trainable: true,
+                samples_until_trainable: 0,
+                min_resolved_for_sidecar: 10,
+            },
+            MLCategoryStats {
+                category: "Weather".into(),
+                resolved_count: 3,
+                pending_count: 0,
+                trainable: false,
+                samples_until_trainable: 7,
+                min_resolved_for_sidecar: 10,
+            },
+        ];
+        let msg = format_category_readiness(&stats);
+        assert!(msg.contains("Politics: ready"));
+        assert!(msg.contains("Weather: 3/10 graded (7 more for sidecar)"));
+    }
+
+    #[test]
+    fn should_retrain_after_grading_requires_positive_count() {
+        assert!(!should_retrain_after_grading(0));
+        assert!(should_retrain_after_grading(1));
+    }
+
+    #[test]
+    fn should_retrain_given_resolved_requires_ten_graded_rows() {
+        assert!(!should_retrain_given_resolved(1, 9));
+        assert!(should_retrain_given_resolved(1, 10));
+        assert!(!should_retrain_given_resolved(0, 100));
+    }
+
+    #[test]
+    fn count_trainable_non_sports_ignores_sports_and_subthreshold() {
+        let stats = vec![
+            MLCategoryStats {
+                category: "Politics".into(),
+                resolved_count: 11,
+                pending_count: 0,
+                trainable: true,
+                samples_until_trainable: 0,
+                min_resolved_for_sidecar: 10,
+            },
+            MLCategoryStats {
+                category: "Economics".into(),
+                resolved_count: 10,
+                pending_count: 0,
+                trainable: true,
+                samples_until_trainable: 0,
+                min_resolved_for_sidecar: 10,
+            },
+            MLCategoryStats {
+                category: "Weather".into(),
+                resolved_count: 4,
+                pending_count: 0,
+                trainable: false,
+                samples_until_trainable: 6,
+                min_resolved_for_sidecar: 10,
+            },
+            MLCategoryStats {
+                category: "Sports".into(),
+                resolved_count: 50,
+                pending_count: 0,
+                trainable: true,
+                samples_until_trainable: 0,
+                min_resolved_for_sidecar: 10,
+            },
+        ];
+        assert_eq!(count_trainable_non_sports_categories(&stats), 2);
+    }
+
+    #[test]
+    fn ensure_non_sports_sidecar_stats_adds_missing_targets() {
+        let stats = vec![MLCategoryStats {
+            category: "Sports".into(),
+            resolved_count: 20,
+            pending_count: 0,
+            trainable: true,
+            samples_until_trainable: 0,
+            min_resolved_for_sidecar: 10,
+        }];
+        let merged = ensure_non_sports_sidecar_stats(stats);
+        assert!(merged.iter().any(|s| s.category == "Politics"));
+        assert!(merged.iter().any(|s| s.category == "Economics"));
+        assert!(merged.iter().any(|s| s.category == "Weather"));
+        let politics = merged
+            .iter()
+            .find(|s| s.category == "Politics")
+            .expect("politics");
+        assert_eq!(politics.resolved_count, 0);
+        assert_eq!(politics.samples_until_trainable, 10);
+    }
+
+    #[test]
+    fn nearest_non_sports_sidecar_unlock_picks_smallest_gap() {
+        let stats = ensure_non_sports_sidecar_stats(vec![
+            MLCategoryStats {
+                category: "Politics".into(),
+                resolved_count: 8,
+                pending_count: 0,
+                trainable: false,
+                samples_until_trainable: 2,
+                min_resolved_for_sidecar: 10,
+            },
+            MLCategoryStats {
+                category: "Weather".into(),
+                resolved_count: 3,
+                pending_count: 0,
+                trainable: false,
+                samples_until_trainable: 7,
+                min_resolved_for_sidecar: 10,
+            },
+        ]);
+        let nearest = nearest_non_sports_sidecar_unlock(&stats).expect("hint");
+        assert_eq!(nearest.0, "Politics");
+        assert_eq!(nearest.1, 2);
+    }
+
+    #[test]
+    fn auto_retrain_threshold_helpers() {
+        assert!(!auto_retrain_eligible(9));
+        assert!(auto_retrain_eligible(10));
+        assert_eq!(resolved_until_auto_retrain(9), 1);
+        assert_eq!(resolved_until_auto_retrain(10), 0);
+    }
+
+    #[test]
+    fn phase_3_data_metric_ready_when_three_categories_trainable() {
+        assert!(!phase_3_data_metric_ready(2, 3));
+        assert!(phase_3_data_metric_ready(3, 3));
+        assert!(phase_3_data_metric_ready(4, 3));
+    }
+
+    #[test]
+    fn parse_unified_model_meta_json_reads_cv_and_trained_at() {
+        let json = r#"{"trained_at":"2026-07-01T12:00:00Z","samples":42,"cv_accuracy_mean":0.612,"cv_accuracy_std":0.04,"win_rate":0.5,"feature_importance":[]}"#;
+        let meta = parse_unified_model_meta_json(json);
+        assert_eq!(meta.cv_accuracy_mean, Some(0.612));
+        assert_eq!(meta.cv_accuracy_std, Some(0.04));
+        assert_eq!(meta.trained_at.as_deref(), Some("2026-07-01T12:00:00Z"));
+    }
+
+    #[test]
+    fn parse_active_sidecar_models_from_meta_reads_per_category() {
+        let json = r#"{"per_category_models":{"Economics":{"samples":14,"cv_accuracy_mean":0.58}}}"#;
+        let unified = PathBuf::from("/tmp/ml_model.joblib");
+        let parsed = parse_active_sidecar_models_from_meta(json, &unified).expect("sidecars");
+        let econ = parsed.get("Economics").expect("economics");
+        assert_eq!(econ.samples, 14);
+        assert_eq!(econ.cv_accuracy_mean, Some(0.58));
+        assert!(!econ.model_exists);
+    }
+
+    #[test]
+    fn build_phase3_dashboard_summary_merges_sidecar_placeholders() {
+        let summary = build_phase3_dashboard_summary(
+            vec![MLCategoryStats {
+                category: "Politics".into(),
+                resolved_count: 8,
+                pending_count: 1,
+                trainable: false,
+                samples_until_trainable: 2,
+                min_resolved_for_sidecar: 10,
+            }],
+            12,
+            3,
+            12,
+        );
+        assert_eq!(summary.trainable_non_sports_categories, 0);
+        assert_eq!(summary.non_sports_sidecar_target, 3);
+        assert!(!summary.phase_3_data_metric_ready);
+        assert_eq!(summary.kalshi_resolved_predictions, 12);
+        assert_eq!(summary.kalshi_pending_predictions, 3);
+        assert_eq!(summary.next_sidecar_category.as_deref(), Some("Politics"));
+        assert_eq!(summary.next_sidecar_samples_needed, Some(2));
+        assert!(summary.auto_retrain_eligible);
+        assert_eq!(summary.resolved_until_auto_retrain, 0);
+        assert!(!summary.unified_model_on_disk);
+        assert_eq!(summary.active_sidecar_count, 0);
+        assert_eq!(summary.non_sports_category_stats.len(), 3);
+        assert_eq!(
+            summary
+                .non_sports_category_stats
+                .iter()
+                .find(|s| s.category == "Politics")
+                .map(|s| s.resolved_count),
+            Some(8)
+        );
+    }
+
+    #[test]
+    fn format_ml_training_header_includes_phase_3_progress_when_incomplete() {
+        let status = MLModelStatus {
+            model_exists: true,
+            model_path: "/tmp/model.joblib".into(),
+            trained_at: None,
+            samples: Some(12),
+            cv_accuracy_mean: Some(0.55),
+            cv_accuracy_std: None,
+            win_rate: None,
+            feature_importance: None,
+            pending_predictions: 0,
+            resolved_predictions: 12,
+            category_stats: vec![],
+            training_category_breakdown: None,
+            per_category_models: None,
+            trainable_non_sports_categories: 1,
+            non_sports_sidecar_target: 3,
+            next_sidecar_category: None,
+            next_sidecar_samples_needed: None,
+            auto_retrain_eligible: true,
+            resolved_until_auto_retrain: 0,
+            phase_3_data_metric_ready: false,
+            kalshi_resolved_predictions: 5,
+            kalshi_pending_predictions: 2,
+            message: String::new(),
+        };
+        let header = format_ml_training_header(&status);
+        assert!(header.contains("Phase 3 sidecar data: 1/3 categories ready"));
+        assert!(header.contains("Kalshi journal: 5 resolved paper rows"));
+    }
+
+    #[test]
+    fn format_ml_training_header_includes_sidecars_and_cv_std() {
+        let mut sidecars = std::collections::HashMap::new();
+        sidecars.insert(
+            "Politics".to_string(),
+            MLPerCategoryModel {
+                model_exists: true,
+                samples: 12,
+                cv_accuracy_mean: Some(0.62),
+            },
+        );
+        let status = MLModelStatus {
+            model_exists: true,
+            model_path: "/tmp/model.joblib".into(),
+            trained_at: None,
+            samples: Some(40),
+            cv_accuracy_mean: Some(0.55),
+            cv_accuracy_std: Some(0.04),
+            win_rate: None,
+            feature_importance: None,
+            pending_predictions: 0,
+            resolved_predictions: 40,
+            category_stats: vec![],
+            training_category_breakdown: None,
+            per_category_models: Some(sidecars),
+            trainable_non_sports_categories: 1,
+            non_sports_sidecar_target: 3,
+            next_sidecar_category: None,
+            next_sidecar_samples_needed: None,
+            auto_retrain_eligible: true,
+            resolved_until_auto_retrain: 0,
+            phase_3_data_metric_ready: true,
+            kalshi_resolved_predictions: 0,
+            kalshi_pending_predictions: 0,
+            message: String::new(),
+        };
+        let header = format_ml_training_header(&status);
+        assert!(header.contains("40 samples"));
+        assert!(header.contains("55.0% ± 4.0%"));
+        assert!(header.contains("active sidecars: Politics"));
+    }
 }

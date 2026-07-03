@@ -1,116 +1,119 @@
 import { invoke } from '@tauri-apps/api/core';
 import type {
-  KalshiMarket,
-  ChatRequest,
-  ChatResponse,
+  MLTrainingResult,
+  AnalysisContext,
+  ApiStatus,
+  AppConfig,
+  BankrollConfig,
+  BankrollSummary,
   ChatMessage,
-  PredictionRecord,
-  RedactedConfig,
+  ChatSession,
   DataSourceStatus,
-  PropPick,
-  PropScoreInput,
-  PropScore,
-  PropFilterRequest,
+  EdgeAnalysisInput,
+  ModelInfo,
+  OpenRouterResponse,
+  PredictionRecord,
+  PropAnalysisResult,
+  SecurityPosture,
+  ScoredProp,
+  MLModelStatus,
+  NotificationSettings,
 } from '../types';
 
-// Kalshi compatibility commands
-export const kalshiApi = {
-  getMarkets: (category?: string, limit?: number) =>
-    invoke<KalshiMarket[]>('kalshi_get_markets', { category, limit }),
+// ── Config ──────────────────────────────────────────────────────
 
-  searchMarkets: (query: string) =>
-    invoke<KalshiMarket[]>('kalshi_search_markets', { query }),
+export const configApi = {
+  get: () => invoke<AppConfig>('get_config'),
 
-  getMarket: (ticker: string) =>
-    invoke<KalshiMarket>('kalshi_get_market', { ticker }),
+  save: (config: AppConfig) => invoke<void>('save_config', { config }),
 
-  getCategories: () =>
-    invoke<string[]>('kalshi_get_categories'),
+  checkApiStatus: () => invoke<ApiStatus>('check_api_status'),
 
-  getPortfolio: () =>
-    invoke<unknown>('kalshi_get_portfolio'),
+  getSecurityPosture: () => invoke<SecurityPosture>('get_security_posture'),
 
-  getBalance: () =>
-    invoke<number>('kalshi_get_balance'),
-
-  getMarketHistory: (ticker: string, startTime?: string, endTime?: string) =>
-    invoke<unknown>('kalshi_get_market_history', { ticker, startTime, endTime }),
+  getAvailableModels: () => invoke<ModelInfo[]>('get_available_models'),
 };
 
-// PrizePicks sports prop commands
-export const propsApi = {
-  list: (filter?: string, limit?: number) =>
-    invoke<PropPick[]>('props_list', { filter, limit }),
+// ── Chat ────────────────────────────────────────────────────────
 
-  recommend: (limit?: number) =>
-    invoke<PropPick[]>('props_recommend', { limit }),
-
-  score: (input: PropScoreInput) =>
-    invoke<PropScore>('props_score', { input }),
-
-  filter: (request: PropFilterRequest) =>
-    invoke<PropPick[]>('props_filter', { request }),
-};
-
-// Chat commands
 export const chatApi = {
-  send: (request: ChatRequest) =>
-    invoke<ChatResponse>('chat_send', { request }),
+  newSession: (name?: string) => invoke<ChatSession>('new_chat_session', { name: name ?? null }),
+
+  sendMessage: (message: string, sessionId: string) =>
+    invoke<OpenRouterResponse>('send_message', { message, sessionId }),
+
+  sendMessageStream: (message: string, sessionId: string) =>
+    invoke<void>('send_message_stream', { message, sessionId }),
+
+  listSessions: () => invoke<ChatSession[]>('list_chat_sessions'),
+
+  deleteSession: (sessionId: string) => invoke<void>('delete_chat_session', { sessionId }),
 
   getHistory: (sessionId: string) =>
-    invoke<ChatMessage[]>('chat_get_history', { sessionId }),
-
-  newSession: () =>
-    invoke<string>('chat_new_session'),
+    invoke<ChatMessage[]>('get_session_messages', { sessionId }),
 };
 
-// Prediction commands
+// ── Analysis / props ────────────────────────────────────────────
+
+export const analysisApi = {
+  analyzeProp: (input: EdgeAnalysisInput) =>
+    invoke<PropAnalysisResult>('analyze_prop', { input }),
+
+  analyzeMultiple: (inputs: EdgeAnalysisInput[]) =>
+    invoke<AnalysisContext>('analyze_multiple_props', { inputs }),
+
+  getScoredByTier: (inputs: EdgeAnalysisInput[], minTier: string) =>
+    invoke<ScoredProp[]>('get_scored_props_by_tier', { inputs, minTier }),
+};
+
+// ── Predictions ─────────────────────────────────────────────────
+
 export const predictionApi = {
-  add: (input: Omit<PredictionRecord, 'id' | 'result' | 'profit_loss' | 'created_at' | 'resolved_at'>) =>
-    invoke<PredictionRecord>('prediction_add', { input }),
+  getSession: (sessionId: string) =>
+    invoke<PredictionRecord[]>('get_session_predictions', { sessionId }),
 
-  list: (resultFilter?: string, limit?: number) =>
-    invoke<PredictionRecord[]>('prediction_list', { resultFilter, limit }),
+  getAll: () => invoke<PredictionRecord[]>('get_all_predictions'),
 
-  grade: (id: string, result: string, profitLoss: number) =>
-    invoke<boolean>('prediction_grade', { id, result, profitLoss }),
+  gradePending: () => invoke<unknown>('grade_pending_predictions'),
 
-  exportCsv: (path: string) =>
-    invoke<boolean>('prediction_export_csv', { path }),
+  exportCsv: () => invoke<string>('export_predictions_csv'),
 };
 
-// Bankroll commands
+// ── Bankroll ────────────────────────────────────────────────────
+
 export const bankrollApi = {
-  calculateStake: (balance: number, marketProb: number, marketPrice: number, kellyFraction: number) =>
-    invoke<number>('bankroll_calculate_stake', { balance, marketProb, marketPrice, kellyFraction }),
+  getConfig: () => invoke<BankrollConfig>('get_bankroll_config'),
 
-  calculateEdge: (estimatedProb: number, marketPrice: number) =>
-    invoke<number>('bankroll_calculate_edge', { estimatedProb, marketPrice }),
+  saveConfig: (config: BankrollConfig) =>
+    invoke<void>('save_bankroll_config', { config }),
+
+  getSummary: (config: BankrollConfig) =>
+    invoke<BankrollSummary>('get_bankroll_summary', { config }),
+
+  refreshHistoricalBrier: () =>
+    invoke<number>('refresh_historical_brier'),
 };
 
-// Market context
-export const marketContextApi = {
-  detectCategory: (query: string) =>
-    invoke<string | null>('market_context_detect_category', { query }),
-};
+// ── Status ──────────────────────────────────────────────────────
 
-// Notifications
-export const notifyApi = {
-  sendPick: (title: string, body: string) =>
-    invoke<boolean>('notify_send_pick', { title, body }),
-};
-
-// Config
-export const configApi = {
-  get: () =>
-    invoke<RedactedConfig>('config_get'),
-
-  update: (newConfig: RedactedConfig) =>
-    invoke<boolean>('config_update', { newConfig }),
-};
-
-// Data source status
 export const statusApi = {
-  getDataSourceStatus: () =>
-    invoke<DataSourceStatus>('get_data_source_status'),
+  getDataSourceStatus: () => invoke<DataSourceStatus>('get_data_source_status'),
+};
+
+// ── ML (multi-category readiness) ───────────────────────────────
+
+export const mlApi = {
+  getModelStatus: () => invoke<MLModelStatus>('ml_get_model_status', { modelPath: null }),
+
+  trainModel: () =>
+    invoke<MLTrainingResult>('ml_train_model', { dbPath: null, outputPath: null }),
+};
+
+// ── In-app notifications ────────────────────────────────────────
+
+export const notificationApi = {
+  getSettings: () => invoke<NotificationSettings>('get_notification_settings'),
+
+  saveSettings: (settings: NotificationSettings) =>
+    invoke<void>('save_notification_settings', { settings }),
 };

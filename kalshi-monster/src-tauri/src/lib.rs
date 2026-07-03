@@ -15,6 +15,7 @@ pub mod kalshi;
 pub mod line_tracker;
 pub mod ml_predictor;
 pub mod prizepicks;
+pub mod paper;
 
 use chat::ChatState;
 use football::api_client::{SportsApiClient, SportsApiConfig};
@@ -60,10 +61,24 @@ pub fn run() {
         }
     });
 
+    // Initialize Kalshi market cache persistence (dashboard instant launch)
+    rt.block_on(async {
+        if let Err(e) = kalshi::init_market_cache_table(&db_pool).await {
+            tracing::warn!("Failed to init kalshi market cache table: {}", e);
+        }
+    });
+
     // Initialize ML prediction tables
     rt.block_on(async {
         if let Err(e) = ml_predictor::init_ml_tables(&db_pool).await {
             tracing::warn!("Failed to init ML tables: {}", e);
+        }
+    });
+
+    // Initialize paper-trading journal tables
+    rt.block_on(async {
+        if let Err(e) = paper::init_paper_tables(&db_pool).await {
+            tracing::warn!("Failed to init paper tables: {}", e);
         }
     });
 
@@ -80,9 +95,25 @@ pub fn run() {
     let weather_client = Arc::new(Mutex::new(WeatherClient::new(
         config::load_config().openweathermap_api_key,
     )));
-    let kalshi_client = Arc::new(Mutex::new(kalshi::KalshiClient::new(
+    // Shared cache that read-only commands access without locking the client mutex
+    let kalshi_cache_holder: kalshi::SharedCache = Arc::new(tokio::sync::RwLock::new(None));
+    let kalshi_persisted = rt.block_on(async {
+        kalshi::load_persisted_cache(&db_pool)
+            .await
+            .unwrap_or_else(|e| {
+                tracing::warn!("kalshi persisted cache load failed: {}", e);
+                None
+            })
+    });
+    let mut kalshi_client_inner = kalshi::KalshiClient::new(
         kalshi::kalshi_config_from_app(&config::load_config()),
-    )));
+        kalshi_cache_holder.clone(),
+        Some(Arc::new(db_pool.clone())),
+    );
+    if let Some(cache) = kalshi_persisted {
+        kalshi_client_inner.hydrate_cache(cache);
+    }
+    let kalshi_client = Arc::new(Mutex::new(kalshi_client_inner));
     let api_client = Arc::new(Mutex::new(
         SportsApiClient::new(SportsApiConfig::default())
             .expect("Failed to create sports API client"),
@@ -115,12 +146,32 @@ pub fn run() {
 
             // Background auto-grade for resolved Kalshi markets
             kalshi::spawn_auto_grade_task(
-                kalshi_for_grade,
+                kalshi_for_grade.clone(),
                 prediction_tracker_for_setup.clone(),
+                db_pool.clone(),
+                app.handle().clone(),
                 kalshi_auto_grade_secs,
             );
 
-            // Warm full Kalshi catalog in the background (dashboard uses quick cache first)
+            // Settle open paper lots when Kalshi markets resolve
+            paper::spawn_paper_settle_task(
+                db_pool.clone(),
+                kalshi_for_grade,
+                kalshi_auto_grade_secs,
+            );
+
+            // Phase 4: prefetch quick cache at startup so the dashboard is warm before first open
+            let kalshi_quick = kalshi_for_warm.clone();
+            tauri::async_runtime::spawn(async move {
+                let mut client = kalshi_quick.lock().await;
+                if let Err(e) = client.ensure_quick_cache().await {
+                    tracing::warn!("kalshi startup quick cache prefetch failed: {}", e);
+                } else {
+                    tracing::info!("kalshi startup quick cache prefetched");
+                }
+            });
+
+            // Full catalog warm after idle window (quick cache already painted the dashboard)
             let kalshi_warm = kalshi_for_warm.clone();
             tauri::async_runtime::spawn(async move {
                 tokio::time::sleep(std::time::Duration::from_secs(8)).await;
@@ -145,6 +196,7 @@ pub fn run() {
         .manage(weather_client)
         .manage(api_client)
         .manage(kalshi_client)
+        .manage(kalshi_cache_holder)
         .manage(prizepicks_fetcher)
         .manage(db_pool_state)
         .invoke_handler(tauri::generate_handler![
@@ -152,6 +204,7 @@ pub fn run() {
             commands::get_config,
             commands::save_config,
             commands::check_api_status,
+            commands::get_security_posture,
             commands::get_available_models,
             // Chat
             commands::send_message,
@@ -198,6 +251,7 @@ pub fn run() {
             commands::recommend_bets,
             commands::recommend_parlay,
             commands::record_bankroll_result,
+            commands::refresh_historical_brier,
             // Multi-Sport Scoreboard
             commands::fetch_league_scoreboard,
             commands::fetch_all_scoreboards,
@@ -226,6 +280,8 @@ pub fn run() {
             commands::kalshi_get_orderbook,
             commands::kalshi_search_markets,
             commands::kalshi_get_top_markets,
+            commands::kalshi_get_dashboard_bootstrap,
+            commands::kalshi_get_cache_state,
             commands::kalshi_get_category_stats,
             commands::kalshi_get_portfolio,
             commands::kalshi_refresh,
@@ -235,9 +291,14 @@ pub fn run() {
             commands::kalshi_get_grading_summary,
             commands::export_kalshi_predictions_csv,
             commands::kalshi_compute_stake_adjustment,
+            commands::kalshi_get_calibration_status,
             commands::kalshi_snapshot_prices,
             commands::kalshi_get_price_history,
             commands::kalshi_record_paper_decision,
+            commands::paper_get_analytics,
+            commands::paper_get_positions,
+            commands::paper_settle_pending,
+            commands::paper_reset_account,
             // Bot integration
             commands::get_bot_config,
             commands::save_bot_config,
@@ -253,6 +314,12 @@ pub fn run() {
             commands::get_tracked_line_stat_categories,
             commands::get_latest_line_snapshot,
             commands::prune_line_movements,
+            // Analysis engine
+            commands::analyze_prop,
+            commands::analyze_multiple_props,
+            commands::get_scored_props_by_tier,
+            commands::analyze_parlay_correlation,
+            commands::generate_analysis_context,
             // ML Predictor
             commands::ml_train_model,
             commands::ml_predict_batch,

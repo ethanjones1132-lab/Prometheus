@@ -54,6 +54,10 @@ pub enum NotificationType {
     PredictionLoss,
     PredictionPush,
     GradingComplete,
+    /// A Kalshi market prediction was graded as a win
+    KalshiMarketWin,
+    /// A Kalshi market prediction was graded as a loss
+    KalshiMarketLoss,
     Info,
 }
 
@@ -67,6 +71,8 @@ impl std::fmt::Display for NotificationType {
             NotificationType::PredictionLoss => write!(f, "prediction_loss"),
             NotificationType::PredictionPush => write!(f, "prediction_push"),
             NotificationType::GradingComplete => write!(f, "grading_complete"),
+            NotificationType::KalshiMarketWin => write!(f, "kalshi_market_win"),
+            NotificationType::KalshiMarketLoss => write!(f, "kalshi_market_loss"),
             NotificationType::Info => write!(f, "info"),
         }
     }
@@ -83,6 +89,8 @@ impl std::str::FromStr for NotificationType {
             "prediction_loss" => Ok(NotificationType::PredictionLoss),
             "prediction_push" => Ok(NotificationType::PredictionPush),
             "grading_complete" => Ok(NotificationType::GradingComplete),
+            "kalshi_market_win" => Ok(NotificationType::KalshiMarketWin),
+            "kalshi_market_loss" => Ok(NotificationType::KalshiMarketLoss),
             "info" => Ok(NotificationType::Info),
             _ => Err(format!("Unknown notification type: {}", s)),
         }
@@ -97,6 +105,8 @@ pub struct NotificationSettings {
     pub game_final_enabled: bool,
     pub prediction_graded_enabled: bool,
     pub grading_complete_enabled: bool,
+    #[serde(default = "default_kalshi_notifications_enabled")]
+    pub kalshi_notifications_enabled: bool,
     pub poll_interval_secs: u64,
     pub game_starting_minutes_before: u32,
     pub show_os_notifications: bool,
@@ -110,11 +120,59 @@ impl Default for NotificationSettings {
             game_final_enabled: true,
             prediction_graded_enabled: true,
             grading_complete_enabled: true,
+            kalshi_notifications_enabled: true,
             poll_interval_secs: 60,
             game_starting_minutes_before: 30,
             show_os_notifications: true,
         }
     }
+}
+
+const NOTIFICATION_SETTINGS_FILE: &str = "notification_settings.json";
+
+fn default_kalshi_notifications_enabled() -> bool {
+    true
+}
+
+/// Path to the persisted notification settings file (alongside `config.json`).
+pub fn settings_path() -> std::path::PathBuf {
+    crate::config::config_dir().join(NOTIFICATION_SETTINGS_FILE)
+}
+
+/// Load notification settings from disk, falling back to defaults if the file
+/// is missing or unreadable.
+pub fn load_settings() -> NotificationSettings {
+    let path = settings_path();
+    if let Ok(content) = std::fs::read_to_string(&path) {
+        if let Ok(settings) = serde_json::from_str::<NotificationSettings>(&content) {
+            return settings;
+        }
+    }
+    NotificationSettings::default()
+}
+
+/// Persist notification settings to disk as pretty-printed JSON.
+pub fn save_settings(settings: &NotificationSettings) -> Result<(), String> {
+    let path = settings_path();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create config dir: {}", e))?;
+    }
+    let json = serde_json::to_string_pretty(settings)
+        .map_err(|e| format!("Failed to serialize notification settings: {}", e))?;
+    std::fs::write(&path, json)
+        .map_err(|e| format!("Failed to write notification settings: {}", e))?;
+    Ok(())
+}
+
+/// Whether Kalshi market win/loss notifications should be emitted.
+pub fn kalshi_market_notifications_enabled(settings: &NotificationSettings) -> bool {
+    settings.enabled && settings.kalshi_notifications_enabled
+}
+
+/// Whether grading-complete summary notifications should be emitted.
+pub fn grading_summary_notifications_enabled(settings: &NotificationSettings) -> bool {
+    settings.enabled && settings.grading_complete_enabled
 }
 
 /// Tracked game state for detecting transitions
@@ -679,4 +737,49 @@ pub fn spawn_polling_task(
             }
         }
     });
+}
+
+#[cfg(test)]
+mod notification_settings_tests {
+    use super::*;
+    use std::str::FromStr;
+
+    #[test]
+    fn notification_type_kalshi_roundtrip() {
+        assert_eq!(
+            NotificationType::KalshiMarketWin.to_string(),
+            "kalshi_market_win"
+        );
+        assert_eq!(
+            NotificationType::from_str("kalshi_market_loss").unwrap(),
+            NotificationType::KalshiMarketLoss
+        );
+    }
+
+    #[test]
+    fn settings_missing_kalshi_field_defaults_true() {
+        let json = r#"{
+            "enabled": true,
+            "game_starting_enabled": true,
+            "game_final_enabled": true,
+            "prediction_graded_enabled": true,
+            "grading_complete_enabled": true,
+            "poll_interval_secs": 60,
+            "game_starting_minutes_before": 30,
+            "show_os_notifications": true
+        }"#;
+        let s: NotificationSettings = serde_json::from_str(json).unwrap();
+        assert!(s.kalshi_notifications_enabled);
+    }
+
+    #[test]
+    fn kalshi_market_gated_by_master_switch() {
+        let mut s = NotificationSettings::default();
+        assert!(kalshi_market_notifications_enabled(&s));
+        s.enabled = false;
+        assert!(!kalshi_market_notifications_enabled(&s));
+        s.enabled = true;
+        s.kalshi_notifications_enabled = false;
+        assert!(!kalshi_market_notifications_enabled(&s));
+    }
 }

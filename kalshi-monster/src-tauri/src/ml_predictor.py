@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """
-PrizePicks Monster — ML Prop Prediction Trainer & Inference Engine
+Kalshi / PrizePicks Monster — ML Prop Prediction Trainer & Inference Engine
 
 Trains a GradientBoosting classifier on historical prediction outcomes
-combined with line movement features to predict prop win probability.
+combined with line movement features (sports) or decision features (Kalshi)
+to predict outcome probability. Supports multi-category (politics, econ, weather, etc).
 
 Usage:
     python3 ml_predictor.py train --db /path/to/predictions.db --output /path/to/model.joblib
@@ -36,21 +37,89 @@ FEATURE_COLUMNS = [
     "days_since_first",   # days since first snapshot
     "direction_up",       # 1 if line moved up
     "direction_down",     # 1 if line moved down
-    "outcome_encoded",    # target: 1=Win, 0=Loss/Push
+    "category_code",      # 0=Sports,1=Politics,2=Economics,3=Crypto,4=Finance,5=Weather,6=Other (for multi-cat ML)
+    # outcome_encoded is target, not a feature
 ]
+
+CATEGORY_MAP = {
+    "Sports": 0,
+    "Politics": 1,
+    "Economics": 2,
+    "Crypto": 3,
+    "Finance": 4,
+    "Weather": 5,
+    "Other": 6,
+}
+CODE_TO_CATEGORY = {code: name for name, code in CATEGORY_MAP.items()}
+
+MIN_CATEGORY_TRAIN_SAMPLES = 10
+PER_CATEGORY_MODEL_NAMES = ("Politics", "Economics", "Weather")
+
+
+def category_sidecar_path(output_path: str, category: str) -> str:
+    p = Path(output_path)
+    return str(p.with_name(f"{p.stem}_{category.lower()}.joblib"))
+
+
+def _fit_gradient_boosting_pipeline(X: np.ndarray, y: np.ndarray):
+    from sklearn.ensemble import GradientBoostingClassifier
+    from sklearn.model_selection import cross_val_score
+    from sklearn.preprocessing import StandardScaler
+    from sklearn.pipeline import Pipeline
+
+    pipeline = Pipeline([
+        ("scaler", StandardScaler()),
+        ("model", GradientBoostingClassifier(
+            n_estimators=min(100, max(10, len(X) // 2)),
+            max_depth=min(5, max(2, len(X) // 10)),
+            learning_rate=0.1,
+            random_state=42,
+        )),
+    ])
+
+    cv_folds = min(5, len(X))
+    if cv_folds >= 2:
+        cv_scores = cross_val_score(pipeline, X, y, cv=cv_folds, scoring="accuracy")
+    else:
+        cv_scores = np.array([0.0])
+
+    pipeline.fit(X, y)
+    model = pipeline.named_steps["model"]
+    importances = model.feature_importances_.tolist()
+    feature_importance = sorted(
+        zip(FEATURE_COLUMNS, importances),
+        key=lambda x: x[1],
+        reverse=True,
+    )
+    return pipeline, cv_scores, feature_importance
+
+
+def _load_category_sidecars(model_path: str) -> dict:
+    import joblib
+
+    sidecars = {}
+    for cat in PER_CATEGORY_MODEL_NAMES:
+        path = category_sidecar_path(model_path, cat)
+        if Path(path).exists():
+            try:
+                sidecars[cat] = joblib.load(path)
+            except Exception:
+                pass
+    return sidecars
+
 
 def extract_features_from_db(db_path: str) -> dict:
     """Extract training features from the SQLite database."""
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
 
-    # Get resolved predictions with outcomes
+    # Get resolved predictions with outcomes (sports + Kalshi via full_decision_json)
     predictions = conn.execute("""
         SELECT id, player_name, stat_category, line, confidence_score,
-               probability, outcome, actual_result, created_at
+               probability, outcome, actual_result, created_at, full_decision_json
         FROM predictions
         WHERE outcome IN ('Win', 'Loss', 'Push')
-          AND line IS NOT NULL
+          AND (line IS NOT NULL OR full_decision_json IS NOT NULL)
         ORDER BY created_at DESC
     """).fetchall()
 
@@ -58,7 +127,7 @@ def extract_features_from_db(db_path: str) -> dict:
         conn.close()
         return {"X": np.array([]), "y": np.array([]), "metadata": []}
 
-    # Get line movement data
+    # Get line movement data (sports only)
     line_data = {}
     try:
         rows = conn.execute("""
@@ -91,42 +160,83 @@ def extract_features_from_db(db_path: str) -> dict:
     metadata = []
 
     for pred in predictions:
-        player = pred["player_name"] or ""
-        stat = pred["stat_category"] or ""
-        key = f"{player}|{stat}"
-        lm = line_data.get(key, {})
-
+        full_dec_json = pred.get("full_decision_json")
         outcome = pred["outcome"]
         target = 1 if outcome == "Win" else 0
 
-        # Compute line features
-        opening = lm.get("opening_line") or pred["line"]
-        current = lm.get("current_line") or pred["line"]
-        line_change = (current - opening) if opening else 0.0
-        line_volatility = 0.0
-        if lm.get("min_line") is not None and lm.get("max_line") is not None:
-            line_volatility = lm["max_line"] - lm["min_line"]
-
-        snap_count = lm.get("snapshot_count", 0)
-        days_since_first = 0.0
-        if lm.get("first_seen"):
+        if full_dec_json:
             try:
-                first = datetime.fromisoformat(lm["first_seen"].replace("Z", "+00:00"))
-                days_since_first = (datetime.now(timezone.utc) - first).total_seconds() / 86400.0
+                dec = json.loads(full_dec_json) if isinstance(full_dec_json, (str, bytes)) else (full_dec_json or {})
+                cat = dec.get("category", "Other") if isinstance(dec, dict) else "Other"
+                category_code = CATEGORY_MAP.get(cat, 6)
+                fair = float(dec.get("fair_probability_pct", 50.0)) if isinstance(dec, dict) else 50.0
+                mkt = float(dec.get("market_price_pct", 50.0)) if isinstance(dec, dict) else 50.0
+                edge_pct = float(dec.get("edge_points", 0.0)) if isinstance(dec, dict) else 0.0
+                ev = float(dec.get("ev_roi_pct", 0.0)) if isinstance(dec, dict) else 0.0
+                kelly = float(dec.get("fractional_kelly_pct", 0.0)) if isinstance(dec, dict) else 0.0
+                win_prob = fair / 100.0
+                conf = int(fair)
+                line_val = mkt
+                probability = fair / 100.0
+                line_change = 0.0
+                line_volatility = 0.0
+                snap_count = 0
+                days_since_first = 0.0
+                dir_up = 0.0
+                dir_down = 0.0
+                player = dec.get("ticker", "") if isinstance(dec, dict) else ""
+                stat = cat
             except Exception:
-                pass
-
-        # Estimate edge_pct and EV from available data
-        conf = pred["confidence_score"] or 50
-        edge_pct = (conf - 50) * 0.4  # rough proxy
-        ev = edge_pct * 0.8
-        kelly = max(0.0, ev / 10.0)
-        win_prob = pred["probability"] or (50.0 + edge_pct)
+                # fallback to sports logic
+                player = pred["player_name"] or ""
+                stat = pred["stat_category"] or ""
+                line_val = pred["line"] or 0.0
+                conf = pred["confidence_score"] or 50
+                probability = pred["probability"] or 50.0
+                edge_pct = (conf - 50) * 0.4
+                ev = edge_pct * 0.8
+                kelly = max(0.0, ev / 10.0)
+                win_prob = probability or (50.0 + edge_pct)
+                line_change = 0.0
+                line_volatility = 0.0
+                snap_count = 0
+                days_since_first = 0.0
+                dir_up = 0.0
+                dir_down = 0.0
+                category_code = 0
+        else:
+            player = pred["player_name"] or ""
+            stat = pred["stat_category"] or ""
+            key = f"{player}|{stat}"
+            lm = line_data.get(key, {})
+            line_val = pred["line"] or 0.0
+            opening = lm.get("opening_line") or line_val
+            current = lm.get("current_line") or line_val
+            line_change = (current - opening) if opening else 0.0
+            line_volatility = 0.0
+            if lm.get("min_line") is not None and lm.get("max_line") is not None:
+                line_volatility = lm["max_line"] - lm["min_line"]
+            snap_count = lm.get("snapshot_count", 0)
+            days_since_first = 0.0
+            if lm.get("first_seen"):
+                try:
+                    first = datetime.fromisoformat(lm["first_seen"].replace("Z", "+00:00"))
+                    days_since_first = (datetime.now(timezone.utc) - first).total_seconds() / 86400.0
+                except Exception:
+                    pass
+            conf = pred["confidence_score"] or 50
+            edge_pct = (conf - 50) * 0.4
+            ev = edge_pct * 0.8
+            kelly = max(0.0, ev / 10.0)
+            win_prob = pred["probability"] or (50.0 + edge_pct)
+            dir_up = 1.0 if line_change > 0.05 else 0.0
+            dir_down = 1.0 if line_change < -0.05 else 0.0
+            category_code = 0
 
         row = [
-            pred["line"] or 0.0,           # line
+            line_val,                        # line
             float(conf),                     # confidence_score
-            pred["probability"] or 50.0,    # probability
+            probability or 50.0,             # probability
             edge_pct,                        # edge_pct
             ev,                              # expected_value
             kelly,                           # kelly_pct
@@ -135,19 +245,21 @@ def extract_features_from_db(db_path: str) -> dict:
             line_volatility,                 # line_volatility
             float(snap_count),               # snapshot_count
             days_since_first,                # days_since_first
-            1.0 if line_change > 0.05 else 0.0,   # direction_up
-            1.0 if line_change < -0.05 else 0.0,  # direction_down
+            dir_up,                          # direction_up
+            dir_down,                        # direction_down
+            float(category_code),            # category_code
             float(target),                   # outcome_encoded (target)
         ]
 
-        X_rows.append(row[:-1])  # all except target
+        X_rows.append(row[:-1])  # 14 features
         y_rows.append(row[-1])   # target
         metadata.append({
             "id": pred["id"],
             "player_name": player,
             "stat_category": stat,
-            "line": pred["line"],
+            "line": line_val,
             "outcome": outcome,
+            "category_code": category_code,
         })
 
     return {
@@ -156,13 +268,8 @@ def extract_features_from_db(db_path: str) -> dict:
         "metadata": metadata,
     }
 
-
 def train_model(db_path: str, output_path: str) -> dict:
-    """Train a model on historical data."""
-    from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier
-    from sklearn.model_selection import cross_val_score
-    from sklearn.preprocessing import StandardScaler
-    from sklearn.pipeline import Pipeline
+    """Train unified model plus per-category sidecars when enough graded samples exist."""
     import joblib
 
     data = extract_features_from_db(db_path)
@@ -175,41 +282,39 @@ def train_model(db_path: str, output_path: str) -> dict:
             "message": f"Need at least 10 resolved predictions, found {len(X)}. Resolve more predictions first.",
         }
 
-    # GradientBoosting with StandardScaler
-    pipeline = Pipeline([
-        ("scaler", StandardScaler()),
-        ("model", GradientBoostingClassifier(
-            n_estimators=min(100, max(10, len(X) // 2)),
-            max_depth=min(5, max(2, len(X) // 10)),
-            learning_rate=0.1,
-            random_state=42,
-        )),
-    ])
+    pipeline, cv_scores, feature_importance = _fit_gradient_boosting_pipeline(X, y)
 
-    # Cross-validation
-    cv_folds = min(5, len(X))
-    if cv_folds >= 2:
-        cv_scores = cross_val_score(pipeline, X, y, cv=cv_folds, scoring="accuracy")
-    else:
-        cv_scores = np.array([0.0])
-
-    # Train on full data
-    pipeline.fit(X, y)
-
-    # Feature importances
-    model = pipeline.named_steps["model"]
-    importances = model.feature_importances_.tolist()
-    feature_importance = sorted(
-        zip(FEATURE_COLUMNS, importances),
-        key=lambda x: x[1],
-        reverse=True,
-    )
-
-    # Save model
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     joblib.dump(pipeline, output_path)
 
-    # Also save feature metadata
+    from collections import Counter
+
+    cat_counts = Counter(m.get("category_code", 0) for m in data["metadata"])
+    category_breakdown = {
+        CODE_TO_CATEGORY.get(code, "Other"): int(count)
+        for code, count in sorted(cat_counts.items())
+    }
+
+    per_category_models = {}
+    for cat_name in PER_CATEGORY_MODEL_NAMES:
+        code = CATEGORY_MAP[cat_name]
+        indices = [
+            i for i, m in enumerate(data["metadata"])
+            if m.get("category_code") == code
+        ]
+        if len(indices) < MIN_CATEGORY_TRAIN_SAMPLES:
+            continue
+        X_cat = X[indices]
+        y_cat = y[indices]
+        cat_pipeline, cat_cv, _ = _fit_gradient_boosting_pipeline(X_cat, y_cat)
+        cat_path = category_sidecar_path(output_path, cat_name)
+        joblib.dump(cat_pipeline, cat_path)
+        per_category_models[cat_name] = {
+            "model_path": cat_path,
+            "samples": len(X_cat),
+            "cv_accuracy_mean": round(float(cat_cv.mean()), 4),
+        }
+
     meta_path = output_path.replace(".joblib", "_meta.json")
     with open(meta_path, "w") as f:
         json.dump({
@@ -219,7 +324,14 @@ def train_model(db_path: str, output_path: str) -> dict:
             "cv_accuracy_std": float(cv_scores.std()),
             "feature_importance": [{"feature": ft, "importance": float(imp)} for ft, imp in feature_importance],
             "win_rate": float(y.mean()),
+            "category_breakdown": category_breakdown,
+            "per_category_models": per_category_models,
         }, f, indent=2)
+
+    sidecar_note = ""
+    if per_category_models:
+        names = ", ".join(per_category_models.keys())
+        sidecar_note = f" Sidecar models: {names}."
 
     return {
         "status": "trained",
@@ -229,9 +341,10 @@ def train_model(db_path: str, output_path: str) -> dict:
         "win_rate": round(float(y.mean()), 4),
         "model_path": output_path,
         "feature_importance": [{"feature": ft, "importance": round(float(imp), 4)} for ft, imp in feature_importance],
-        "message": f"Trained on {len(X)} samples. CV accuracy: {cv_scores.mean():.1%} ± {cv_scores.std():.1%}",
+        "category_breakdown": category_breakdown,
+        "per_category_models": per_category_models,
+        "message": f"Trained on {len(X)} samples. CV accuracy: {cv_scores.mean():.1%} ± {cv_scores.std():.1%}.{sidecar_note}",
     }
-
 
 def predict_batch(db_path: str, model_path: str) -> dict:
     """Generate predictions for all pending props."""
@@ -241,17 +354,18 @@ def predict_batch(db_path: str, model_path: str) -> dict:
         return {"status": "no_model", "message": f"Model not found at {model_path}. Train first."}
 
     pipeline = joblib.load(model_path)
+    category_pipelines = _load_category_sidecars(model_path)
 
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
 
-    # Get pending predictions
+    # Get pending predictions (sports + Kalshi)
     predictions = conn.execute("""
         SELECT id, player_name, stat_category, line, confidence_score,
-               probability, created_at
+               probability, created_at, full_decision_json
         FROM predictions
         WHERE outcome = 'Pending'
-          AND line IS NOT NULL
+          AND (line IS NOT NULL OR full_decision_json IS NOT NULL)
         ORDER BY created_at DESC
         LIMIT 200
     """).fetchall()
@@ -260,7 +374,7 @@ def predict_batch(db_path: str, model_path: str) -> dict:
         conn.close()
         return {"status": "no_pending", "predictions": []}
 
-    # Get line movement data
+    # Get line movement data (sports only)
     line_data = {}
     try:
         rows = conn.execute("""
@@ -287,37 +401,79 @@ def predict_batch(db_path: str, model_path: str) -> dict:
 
     results = []
     for pred in predictions:
-        player = pred["player_name"] or ""
-        stat = pred["stat_category"] or ""
-        key = f"{player}|{stat}"
-        lm = line_data.get(key, {})
-
-        opening = lm.get("opening_line") or pred["line"]
-        current = lm.get("current_line") or pred["line"]
-        line_change = (current - opening) if opening else 0.0
-        line_volatility = 0.0
-        if lm.get("min_line") is not None and lm.get("max_line") is not None:
-            line_volatility = lm["max_line"] - lm["min_line"]
-
-        snap_count = lm.get("snapshot_count", 0)
-        days_since_first = 0.0
-        if lm.get("first_seen"):
+        full_dec_json = pred.get("full_decision_json")
+        if full_dec_json:
             try:
-                first = datetime.fromisoformat(lm["first_seen"].replace("Z", "+00:00"))
-                days_since_first = (datetime.now(timezone.utc) - first).total_seconds() / 86400.0
+                dec = json.loads(full_dec_json) if isinstance(full_dec_json, (str, bytes)) else (full_dec_json or {})
+                cat = dec.get("category", "Other") if isinstance(dec, dict) else "Other"
+                category_code = CATEGORY_MAP.get(cat, 6)
+                fair = float(dec.get("fair_probability_pct", 50.0)) if isinstance(dec, dict) else 50.0
+                mkt = float(dec.get("market_price_pct", 50.0)) if isinstance(dec, dict) else 50.0
+                edge_pct = float(dec.get("edge_points", 0.0)) if isinstance(dec, dict) else 0.0
+                ev = float(dec.get("ev_roi_pct", 0.0)) if isinstance(dec, dict) else 0.0
+                kelly = float(dec.get("fractional_kelly_pct", 0.0)) if isinstance(dec, dict) else 0.0
+                win_prob = fair / 100.0
+                conf = int(fair)
+                line_val = mkt
+                probability = fair / 100.0
+                line_change = 0.0
+                line_volatility = 0.0
+                snap_count = 0
+                days_since_first = 0.0
+                dir_up = 0.0
+                dir_down = 0.0
+                player = dec.get("ticker", "") if isinstance(dec, dict) else ""
+                stat = cat
             except Exception:
-                pass
-
-        conf = pred["confidence_score"] or 50
-        edge_pct = (conf - 50) * 0.4
-        ev = edge_pct * 0.8
-        kelly = max(0.0, ev / 10.0)
-        win_prob = pred["probability"] or (50.0 + edge_pct)
+                player = pred["player_name"] or ""
+                stat = pred["stat_category"] or ""
+                line_val = pred["line"] or 0.0
+                conf = pred["confidence_score"] or 50
+                probability = pred["probability"] or 50.0
+                edge_pct = (conf - 50) * 0.4
+                ev = edge_pct * 0.8
+                kelly = max(0.0, ev / 10.0)
+                win_prob = probability or (50.0 + edge_pct)
+                line_change = 0.0
+                line_volatility = 0.0
+                snap_count = 0
+                days_since_first = 0.0
+                dir_up = 0.0
+                dir_down = 0.0
+                category_code = 0
+        else:
+            player = pred["player_name"] or ""
+            stat = pred["stat_category"] or ""
+            key = f"{player}|{stat}"
+            lm = line_data.get(key, {})
+            line_val = pred["line"] or 0.0
+            opening = lm.get("opening_line") or line_val
+            current = lm.get("current_line") or line_val
+            line_change = (current - opening) if opening else 0.0
+            line_volatility = 0.0
+            if lm.get("min_line") is not None and lm.get("max_line") is not None:
+                line_volatility = lm["max_line"] - lm["min_line"]
+            snap_count = lm.get("snapshot_count", 0)
+            days_since_first = 0.0
+            if lm.get("first_seen"):
+                try:
+                    first = datetime.fromisoformat(lm["first_seen"].replace("Z", "+00:00"))
+                    days_since_first = (datetime.now(timezone.utc) - first).total_seconds() / 86400.0
+                except Exception:
+                    pass
+            conf = pred["confidence_score"] or 50
+            edge_pct = (conf - 50) * 0.4
+            ev = edge_pct * 0.8
+            kelly = max(0.0, ev / 10.0)
+            win_prob = pred["probability"] or (50.0 + edge_pct)
+            dir_up = 1.0 if line_change > 0.05 else 0.0
+            dir_down = 1.0 if line_change < -0.05 else 0.0
+            category_code = 0
 
         features = np.array([[
-            pred["line"] or 0.0,
+            line_val,
             float(conf),
-            pred["probability"] or 50.0,
+            probability or 50.0,
             edge_pct,
             ev,
             kelly,
@@ -326,23 +482,27 @@ def predict_batch(db_path: str, model_path: str) -> dict:
             line_volatility,
             float(snap_count),
             days_since_first,
-            1.0 if line_change > 0.05 else 0.0,
-            1.0 if line_change < -0.05 else 0.0,
+            dir_up,
+            dir_down,
+            float(category_code),
         ]])
 
-        ml_win_prob = float(pipeline.predict_proba(features)[0][1])
+        cat_name = CODE_TO_CATEGORY.get(category_code, "Other")
+        scorer = category_pipelines.get(cat_name, pipeline)
+        ml_win_prob = float(scorer.predict_proba(features)[0][1])
         ml_prediction = "Win" if ml_win_prob >= 0.5 else "Loss"
 
         results.append({
             "prediction_id": pred["id"],
             "player_name": player,
             "stat_category": stat,
-            "line": pred["line"],
+            "line": line_val,
             "ml_win_probability": round(ml_win_prob, 4),
             "ml_prediction": ml_prediction,
             "original_confidence": conf,
             "original_probability": pred["probability"],
             "line_change": round(line_change, 2),
+            "category_code": category_code,
         })
 
     return {
@@ -351,7 +511,6 @@ def predict_batch(db_path: str, model_path: str) -> dict:
         "predictions_count": len(results),
         "predictions": results,
     }
-
 
 def export_features_csv(db_path: str, output_path: str) -> dict:
     """Export feature matrix as CSV for external analysis."""
@@ -366,7 +525,7 @@ def export_features_csv(db_path: str, output_path: str) -> dict:
 
     with open(output_path, "w", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow(FEATURE_COLUMNS[:14] + ["outcome"])  # 14 features + target
+        writer.writerow(FEATURE_COLUMNS + ["outcome"])  # 14 features + target
         for i in range(len(X)):
             row = list(X[i]) + [int(y[i])]
             writer.writerow(row)
@@ -377,9 +536,8 @@ def export_features_csv(db_path: str, output_path: str) -> dict:
         "output_path": output_path,
     }
 
-
 def main():
-    parser = argparse.ArgumentParser(description="PrizePicks Monster ML Engine")
+    parser = argparse.ArgumentParser(description="Kalshi / PrizePicks Monster ML Engine")
     subparsers = parser.add_subparsers(dest="command", help="Command to run")
 
     # Train
@@ -422,7 +580,6 @@ def main():
         sys.exit(1)
 
     print(json.dumps(result, indent=2))
-
 
 if __name__ == "__main__":
     main()
