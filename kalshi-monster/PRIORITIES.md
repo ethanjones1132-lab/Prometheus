@@ -1,12 +1,18 @@
 # Kalshi Monster — Priority Roadmap
 
-Last updated: 2026-07-03 (maintenance — trading posture from tape quality notes; health green, 99 tests)
+Last updated: 2026-07-04 (maintenance — tradingPostureFromTape unit tests + stale posture vitest; health green, 99 tests)
 
 Working copy: `C:\\Users\\ethan\\kalshi-build\\kalshi-monster`
 
 Quick status: **P0 done · P1 done · P2 done · P3 1 pending**
 
 ---
+
+## Maintenance notes (2026-07-04, maintenance pass) — Trading posture test coverage
+
+- **`KalshiView.tradingPosture.test.ts`:** Unit tests for `tradingPostureFromTape` priority (in-progress > stale > snapshot > partial > full > warming).
+- **`KalshiView.test.tsx`:** Integration test asserts **Stale tape** trading posture card when only stale `data_quality_notes` (no in-progress override).
+- Health: cargo check, tsc, **99** lib tests pass; KalshiView vitest **12** green (6 posture unit + 6 component).
 
 ## Maintenance notes (2026-07-03, maintenance pass) — Trading posture tape hints
 
