@@ -293,6 +293,32 @@ describe('KalshiView', () => {
     ).toBeInTheDocument();
   });
 
+  test('trading posture card shows stale tape when only stale note is present', async () => {
+    vi.mocked(kalshiApi.getDashboardBootstrap).mockResolvedValue({
+      markets: [market],
+      categories: [{ category: 'Economics', count: 12, volume_24h: 123456 }],
+      cache_status: 'full',
+      cache_age_secs: 90,
+      partial_catalog: false,
+      last_refresh_at: '2026-06-22T17:00:00Z',
+      market_count: 1,
+      category_count: 1,
+      dashboard_generated_at: '2026-06-22T17:00:01Z',
+      data_quality_notes: [
+        'Full catalog cache ready',
+        'Market tape is older than 60s — use Refresh and snapshot for live prices',
+      ],
+      ml_phase3: null,
+    });
+
+    render(<KalshiView />);
+
+    expect(await screen.findByText('Stale tape')).toBeInTheDocument();
+    expect(
+      screen.getByText(/Prices are older than 60s — hit Refresh and snapshot before recording paper trades/),
+    ).toBeInTheDocument();
+  });
+
   test('trains ML from dashboard when auto-retrain gate is satisfied', async () => {
     vi.mocked(mlApi.trainModel).mockResolvedValue({
       status: 'trained',
