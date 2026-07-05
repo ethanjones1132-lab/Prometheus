@@ -1,12 +1,18 @@
 # Kalshi Monster — Priority Roadmap
 
-Last updated: 2026-07-04 (maintenance — tradingPostureFromTape unit tests + stale posture vitest; health green, 99 tests)
+Last updated: 2026-07-05 (maintenance — gitignore local predictions.db; health green, 99 lib + 20 vitest)
 
 Working copy: `C:\\Users\\ethan\\kalshi-build\\kalshi-monster`
 
 Quick status: **P0 done · P1 done · P2 done · P3 1 pending**
 
 ---
+
+## Maintenance notes (2026-07-05, maintenance pass) — Repo hygiene
+
+- **`.gitignore`:** Ignore `**/predictions.db` so dev copies under `src-tauri/` are not committed (canonical DB remains `~/.openclaw/kalshi-monster/predictions.db`).
+- **P3:** Multi-category ML still gated on ≥10 graded rows per politics/economics/weather in live DB — no code change this pass.
+- Health: cargo check, tsc, **99** lib tests; vitest **20** green.
 
 ## Maintenance notes (2026-07-04, maintenance pass) — Trading posture test coverage
 
