@@ -1,12 +1,18 @@
 # Kalshi Monster — Priority Roadmap
 
-Last updated: 2026-07-05 (maintenance — gitignore local predictions.db; health green, 99 lib + 20 vitest)
+Last updated: 2026-07-05 (afternoon maintenance — ROADMAP cadence fix; health green, 99 lib + 20 vitest)
 
 Working copy: `C:\\Users\\ethan\\kalshi-build\\kalshi-monster`
 
 Quick status: **P0 done · P1 done · P2 done · P3 1 pending**
 
 ---
+
+## Maintenance notes (2026-07-05, afternoon pass) — Planning doc sync
+
+- **`ROADMAP.md`:** Maintenance cadence branch corrected to `master`; vitest noted in health checklist.
+- **P3:** Multi-category ML still gated on ≥10 graded rows per politics/economics/weather in live `predictions.db` — no code change (per clean-tree blocked-P3 policy).
+- Health: `cargo check`, `tsc`, **99** lib tests; vitest **20**; `agent-healthcheck.ps1` PASS.
 
 ## Maintenance notes (2026-07-05, maintenance pass) — Repo hygiene
 

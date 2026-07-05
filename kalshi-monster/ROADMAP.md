@@ -1,6 +1,6 @@
 # Kalshi Monster — Roadmap
 
-Last updated: 2026-07-02
+Last updated: 2026-07-05
 
 Canonical backlog detail lives in `PRIORITIES.md`. This document is the phased plan and success metrics.
 
@@ -51,7 +51,7 @@ Targets from `PRIORITIES.md`: warm revisit &lt;300ms, category switch &lt;500ms.
 
 ## Maintenance cadence
 
-- Twice-daily cron on `feat/tier0-1-notifications-correlation` (health: `cargo check`, UI `tsc`, lib tests)
+- Twice-daily cron on `master` (health: `cargo check`, UI `tsc`, lib tests, vitest)
 - Agent skills: `kalshi-maintain`, `kalshi-ship-next` (see `AGENTS.md`)
 
 ## Related repos
