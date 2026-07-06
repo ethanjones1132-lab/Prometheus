@@ -1,12 +1,17 @@
 # Kalshi Monster — Priority Roadmap
 
-Last updated: 2026-07-06 (cron maintenance — health green, P3 data-gated; 99 lib + 20 vitest)
+Last updated: 2026-07-06 (afternoon cron — health green, P3 data-gated; 99 lib + 20 vitest)
 
 Working copy: `C:\\Users\\ethan\\kalshi-build\\kalshi-monster`
 
 Quick status: **P0 done · P1 done · P2 done · P3 1 pending**
 
 ---
+
+## Maintenance notes (2026-07-06, afternoon cron pass) — Health verification
+
+- Re-verified: `cargo check`, `tsc`, **99** lib tests, vitest **20**; working tree clean on `master`.
+- **P3:** Multi-category ML still gated on ≥10 graded rows per politics/economics/weather in live `predictions.db` — no unblocked code work (clean-tree blocked-P3 policy).
 
 ## Maintenance notes (2026-07-06, cron pass) — Health verification
 

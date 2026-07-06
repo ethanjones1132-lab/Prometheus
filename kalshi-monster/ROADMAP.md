@@ -1,6 +1,6 @@
 # Kalshi Monster — Roadmap
 
-Last updated: 2026-07-05
+Last updated: 2026-07-06
 
 Canonical backlog detail lives in `PRIORITIES.md`. This document is the phased plan and success metrics.
 
