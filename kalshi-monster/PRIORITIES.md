@@ -1,6 +1,12 @@
 # Kalshi Monster — Priority Roadmap
 
-Last updated: 2026-07-06 (afternoon cron — health green, P3 data-gated; 99 lib + 20 vitest)
+Last updated: 2026-07-07 (overnight cron — Phase 0 forecast ledger shipped; 102 lib + 20 vitest)
+
+## Maintenance notes (2026-07-07, overnight pass) — Phase 0: Forecast Ledger
+- Shipped the forecast ledger (`kalshi/src/kalshi/forecast.rs`) per the Fincept integration plan's Phase 0 schema: `forecasts` table with market ticker, timestamps, p_market/p_model/p_final, verdict (trade_yes/trade_no/pass), reasons, stake, agent breakdown, and resolution columns with Brier scores.
+- Every `kalshi_record_paper_decision` now writes a forecast row — any opinion (YES, NO, or PASS) gets a row. This is the data every later phase (calibration, edge engine) depends on.
+- Added +3 lib tests (insert, resolve+compute Brier, pass-outcome). 102 lib tests pass.
+- Phase 0 status: 3 of 5 items done (market board already live; `build_kalshi_context` already wired; `ml.rs` already removed; forecast ledger ✅ shipped; resolution poller — auto-grade exists for predictions, forecast resolution bridge is next pass).
 
 Working copy: `C:\\Users\\ethan\\kalshi-build\\kalshi-monster`
 
