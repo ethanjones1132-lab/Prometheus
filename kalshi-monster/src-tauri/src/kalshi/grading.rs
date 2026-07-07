@@ -1,5 +1,6 @@
 //! Contract-side-aware Kalshi grading and binary PnL.
 
+use super::forecast;
 use super::models::KalshiPrediction;
 use crate::kalshi::client::KalshiClient;
 use crate::kalshi::models::{KalshiGradingResult, KalshiGradingSummary};
@@ -142,6 +143,7 @@ pub fn evaluate_bet(pred: &KalshiPrediction, actual_outcome: &str) -> Option<Kal
 pub async fn grade_pending_predictions(
     tracker: &PredictionTracker,
     client: &KalshiClient,
+    pool: &Pool<Sqlite>,
 ) -> Result<KalshiGradingSummary, String> {
     let pending: Vec<KalshiPrediction> = tracker
         .get_kalshi_predictions()
@@ -178,6 +180,12 @@ pub async fn grade_pending_predictions(
 
         let actual = market.result.clone();
         let resolved_at = chrono::Utc::now().to_rfc3339();
+
+        if let Err(e) =
+            forecast::resolve_forecasts_for_market(pool, &ticker, &actual, &resolved_at).await
+        {
+            tracing::warn!("kalshi forecast resolve for {ticker}: {e}");
+        }
 
         for pred in preds {
             let Some(eval) = evaluate_bet(pred, &actual) else {
@@ -247,6 +255,48 @@ fn empty_summary() -> KalshiGradingSummary {
     }
 }
 
+/// Resolve forecast ledger rows whose markets have settled on Kalshi (no prediction rows required).
+pub async fn resolve_pending_forecasts(
+    pool: &Pool<Sqlite>,
+    client: &KalshiClient,
+) -> Result<u32, String> {
+    use std::collections::HashSet;
+
+    let unresolved = forecast::unresolved_forecasts(pool).await?;
+    if unresolved.is_empty() {
+        return Ok(0);
+    }
+
+    let tickers: HashSet<String> = unresolved
+        .iter()
+        .map(|f| f.market_ticker.clone())
+        .collect();
+    let resolved_at = chrono::Utc::now().to_rfc3339();
+    let mut total = 0u32;
+
+    for ticker in tickers {
+        let market = match client.fetch_market(&ticker).await {
+            Ok(m) => m,
+            Err(e) => {
+                tracing::warn!("forecast poller: skip {ticker} — {e}");
+                continue;
+            }
+        };
+        if market.result.is_empty() {
+            continue;
+        }
+        total += forecast::resolve_forecasts_for_market(
+            pool,
+            &ticker,
+            &market.result,
+            &resolved_at,
+        )
+        .await?;
+    }
+
+    Ok(total)
+}
+
 pub fn spawn_auto_grade_task(
     kalshi: std::sync::Arc<tokio::sync::Mutex<KalshiClient>>,
     tracker: std::sync::Arc<tokio::sync::Mutex<PredictionTracker>>,
@@ -268,20 +318,38 @@ pub fn spawn_auto_grade_task(
                     .filter(|p| p.actual_outcome.is_none())
                     .count()
             };
-            if pending_count == 0 {
+            let forecast_pending = forecast::unresolved_forecasts(&pool)
+                .await
+                .map(|v| v.len())
+                .unwrap_or(0);
+            if pending_count == 0 && forecast_pending == 0 {
                 continue;
             }
             let summary = {
                 let t = tracker.lock().await;
                 let client = kalshi.lock().await;
-                match grade_pending_predictions(&t, &client).await {
-                    Ok(s) => s,
-                    Err(e) => {
-                        tracing::warn!("kalshi auto-grade: {}", e);
-                        continue;
+                if pending_count > 0 {
+                    match grade_pending_predictions(&t, &client, &pool).await {
+                        Ok(s) => s,
+                        Err(e) => {
+                            tracing::warn!("kalshi auto-grade: {e}");
+                            continue;
+                        }
                     }
+                } else {
+                    empty_summary()
                 }
             };
+            if forecast_pending > 0 {
+                let client = kalshi.lock().await;
+                match resolve_pending_forecasts(&pool, &client).await {
+                    Ok(n) if n > 0 => {
+                        tracing::info!("kalshi forecast poller: {n} forecast row(s) resolved");
+                    }
+                    Ok(_) => {}
+                    Err(e) => tracing::warn!("kalshi forecast poller: {e}"),
+                }
+            }
             if summary.graded > 0 {
                 let settings = notification::load_settings();
                 let emit_kalshi =

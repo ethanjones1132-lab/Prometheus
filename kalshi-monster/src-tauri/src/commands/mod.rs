@@ -1736,10 +1736,11 @@ pub async fn kalshi_get_prediction_stats(
 pub async fn kalshi_grade_pending_predictions(
     tracker: State<'_, Arc<Mutex<crate::predictions::tracker::PredictionTracker>>>,
     kalshi: State<'_, KalshiState>,
+    db_pool: State<'_, Pool<Sqlite>>,
 ) -> Result<KalshiGradingSummary, String> {
     let t = tracker.lock().await;
     let client = kalshi.lock().await;
-    crate::kalshi::grade_pending_predictions(&t, &client).await
+    crate::kalshi::grade_pending_predictions(&t, &client, &db_pool).await
 }
 
 /// Portfolio-aware Kelly stake scaling for a proposed Kalshi trade.

@@ -1,12 +1,20 @@
 # Kalshi Monster — Priority Roadmap
 
-Last updated: 2026-07-07 (overnight cron — Phase 0 forecast ledger shipped; 102 lib + 20 vitest)
+Last updated: 2026-07-07 (maintenance pass — Phase 0 forecast resolution bridge; 103 lib tests)
 
-## Maintenance notes (2026-07-07, overnight pass) — Phase 0: Forecast Ledger
+## Maintenance notes (2026-07-07, maintenance pass) — Phase 0: Forecast resolution bridge
+- Wired the forecast ledger to Kalshi settlement: `resolve_forecasts_for_market` resolves all open rows per ticker with Brier scores.
+- `grade_pending_predictions` now takes `db_pool` and resolves forecasts when prediction grading sees a settled market.
+- `resolve_pending_forecasts` + auto-grade task poll when only forecast rows are pending (no prediction rows).
+- `kalshi_grade_pending_predictions` IPC passes `db_pool` for manual grade parity.
+- +1 lib test (`resolve_all_for_ticker`). **103** lib tests pass.
+- Phase 0 status: resolution poller **complete** for forecasts + predictions; exit criteria met pending live settled data accumulation.
+
+## Maintenance notes (2026-07-07, overnight cron — Phase 0 forecast ledger shipped; 102 lib + 20 vitest)
 - Shipped the forecast ledger (`kalshi/src/kalshi/forecast.rs`) per the Fincept integration plan's Phase 0 schema: `forecasts` table with market ticker, timestamps, p_market/p_model/p_final, verdict (trade_yes/trade_no/pass), reasons, stake, agent breakdown, and resolution columns with Brier scores.
 - Every `kalshi_record_paper_decision` now writes a forecast row — any opinion (YES, NO, or PASS) gets a row. This is the data every later phase (calibration, edge engine) depends on.
 - Added +3 lib tests (insert, resolve+compute Brier, pass-outcome). 102 lib tests pass.
-- Phase 0 status: 3 of 5 items done (market board already live; `build_kalshi_context` already wired; `ml.rs` already removed; forecast ledger ✅ shipped; resolution poller — auto-grade exists for predictions, forecast resolution bridge is next pass).
+- Phase 0 status: 5 of 5 items done (market board live; `build_kalshi_context` wired; `ml_predictor` kept; forecast ledger shipped; resolution poller bridges forecasts on settlement).
 
 Working copy: `C:\\Users\\ethan\\kalshi-build\\kalshi-monster`
 

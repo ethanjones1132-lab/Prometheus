@@ -215,6 +215,34 @@ pub async fn unresolved_forecasts(pool: &Pool<Sqlite>) -> Result<Vec<Forecast>, 
     Ok(forecasts)
 }
 
+/// Resolve every unresolved forecast row for a market that has settled.
+pub async fn resolve_forecasts_for_market(
+    pool: &Pool<Sqlite>,
+    market_ticker: &str,
+    actual: &str,
+    resolved_at: &str,
+) -> Result<u32, String> {
+    let outcome = match actual {
+        "Yes" => 1,
+        "No" => 0,
+        _ => return Ok(0),
+    };
+
+    let rows = sqlx::query("SELECT id FROM forecasts WHERE market_ticker = ?1 AND outcome IS NULL")
+        .bind(market_ticker)
+        .fetch_all(pool)
+        .await
+        .map_err(|e| format!("forecast ids for ticker: {e}"))?;
+
+    let mut count = 0u32;
+    for row in rows {
+        let id: i64 = row.get(0);
+        resolve_forecast(pool, id, outcome, resolved_at).await?;
+        count += 1;
+    }
+    Ok(count)
+}
+
 /// Count of resolved forecasts (for the calibration gate).
 pub async fn resolved_count(pool: &Pool<Sqlite>) -> Result<i64, String> {
     let row = sqlx::query("SELECT COUNT(*) FROM forecasts WHERE outcome IS NOT NULL")
@@ -329,5 +357,46 @@ mod tests {
 
         let count = resolved_count(&pool).await.unwrap();
         assert_eq!(count, 1);
+    }
+
+    #[tokio::test]
+    async fn resolve_all_for_ticker() {
+        let pool = mem_pool().await;
+        let _ = insert_forecast(
+            &pool,
+            "KXMULTI",
+            "2026-07-01T00:00:00Z",
+            "2026-08-01T00:00:00Z",
+            0.60,
+            None,
+            0.65,
+            "trade_yes",
+            r#"[]"#,
+            Some(10.0),
+            None,
+        )
+        .await
+        .unwrap();
+        let _ = insert_forecast(
+            &pool,
+            "KXMULTI",
+            "2026-07-02T00:00:00Z",
+            "2026-08-01T00:00:00Z",
+            0.55,
+            None,
+            0.55,
+            "pass",
+            r#"[]"#,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let n = resolve_forecasts_for_market(&pool, "KXMULTI", "Yes", "2026-08-02T00:00:00Z")
+            .await
+            .unwrap();
+        assert_eq!(n, 2);
+        assert!(unresolved_forecasts(&pool).await.unwrap().is_empty());
     }
 }
