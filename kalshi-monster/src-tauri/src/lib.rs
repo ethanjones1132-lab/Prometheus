@@ -76,11 +76,18 @@ pub fn run() {
     });
 
     // Initialize paper-trading journal tables
-    rt.block_on(async {
-        if let Err(e) = paper::init_paper_tables(&db_pool).await {
-            tracing::warn!("Failed to init paper tables: {}", e);
-        }
-    });
+        rt.block_on(async {
+            if let Err(e) = paper::init_paper_tables(&db_pool).await {
+                tracing::warn!("Failed to init paper tables: {e}");
+            }
+        });
+
+        // Initialize forecast ledger table
+        rt.block_on(async {
+            if let Err(e) = kalshi::forecast::init_forecast_table(&db_pool).await {
+                tracing::warn!("Failed to init forecast table: {e}");
+            }
+        });
 
     // Initialize prediction tracker (migrates JSON data on first run)
     let prediction_tracker = rt.block_on(async {

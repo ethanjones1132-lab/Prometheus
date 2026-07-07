@@ -1949,8 +1949,8 @@ pub async fn kalshi_record_paper_decision(
         } else {
             Some(adj.warnings.join("; "))
         },
-        created_at: now,
-        full_decision_json: Some(decision_json.clone()),
+        created_at: now.clone(),
+                full_decision_json: Some(decision_json.clone()),
         entry_price: Some(decision.market_price_pct),
         model_disagreement: decision.model_disagreement,
     };
@@ -1970,9 +1970,43 @@ pub async fn kalshi_record_paper_decision(
     };
 
     let t = tracker.lock().await;
-    t.save_prediction(record).await?;
+        t.save_prediction(record).await?;
 
-    if decision.contract_side != crate::chat::decision_schema::ContractSide::PASS {
+        // Write forecast ledger row — every opinion (including PASS) gets a row.
+        // This is the data all later phases (calibration, edge engine) depend on.
+        let verdict = match decision.contract_side {
+            crate::chat::decision_schema::ContractSide::YES => "trade_yes",
+            crate::chat::decision_schema::ContractSide::NO => "trade_no",
+            crate::chat::decision_schema::ContractSide::PASS => "pass",
+        };
+        let verdict_reasons = serde_json::to_string(&adj.warnings)
+            .unwrap_or_else(|_| "[]".to_string());
+        let close_time = chrono::Utc::now().to_rfc3339(); // KalshiTradeDecision doesn't carry close_time
+        let p_market = decision.market_price_pct / 100.0; // stored as pct, ledger uses 0-1
+        let p_model: Option<f64> = None; // no agent pipeline yet (Phase 2)
+        let p_final = decision.fair_probability_pct / 100.0;
+        let stake_suggested = if decision.recommended_stake_dollars > 0.0 {
+            Some(decision.recommended_stake_dollars)
+        } else {
+            None
+        };
+        if let Err(e) = crate::kalshi::forecast::insert_forecast(
+                    &db_pool,
+                    &decision.ticker,
+                    &now.clone(),
+                    &close_time,
+            p_market,
+            p_model,
+            p_final,
+            verdict,
+            &verdict_reasons,
+            stake_suggested,
+            None, // agent_breakdown: none until Phase 2
+        ).await {
+            tracing::warn!("forecast ledger write failed for {}: {e}", decision.ticker);
+        }
+
+        if decision.contract_side != crate::chat::decision_schema::ContractSide::PASS {
         let entry_cents = crate::paper::normalize_entry_cents(decision.price_to_enter);
         let stake = decision.recommended_stake_dollars.max(0.0);
         if stake > 0.0 && entry_cents > 0.0 && entry_cents < 100.0 {

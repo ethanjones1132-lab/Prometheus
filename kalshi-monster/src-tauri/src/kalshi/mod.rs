@@ -4,6 +4,7 @@ pub mod grading;
 pub mod portfolio_risk;
 pub mod price_tracker;
 pub mod market_cache_store;
+pub mod forecast;
 
 use std::sync::Arc;
 use tokio::sync::RwLock;
