@@ -1,6 +1,13 @@
 # Kalshi Monster — Priority Roadmap
 
-Last updated: 2026-07-07 (maintenance pass — Phase 0 forecast resolution bridge; 103 lib tests)
+Last updated: 2026-07-07 (maintenance pass — Phase 1 edge_engine + fincept-sidecar scaffold; 125 lib tests)
+
+## Maintenance notes (2026-07-07, maintenance pass) — Phase 1 groundwork (Fincept plan §4–§7)
+- Committed uncommitted WIP from prior pass: Rust `edge_engine` module (shrinkage, Kalshi fee model, aggregation, Kelly sizing; 22 unit tests) registered in `lib.rs`.
+- Added `fincept-sidecar/` FastAPI scaffold (auth, schemas, market-data engine, handshake tests) per plan Phase 1; copied plan + progress docs into `kalshi-monster/docs/`.
+- `.gitignore`: ignore `.pytest_cache/`.
+- **125** lib tests pass; `tsc` clean; `cargo check` clean.
+- **Next (Phase 1):** `FinceptBridge` Rust supervisor (spawn sidecar, READY handshake, health/restart) — not started this pass (scope >30 min with Tauri `externalBin` wiring).
 
 ## Maintenance notes (2026-07-07, maintenance pass) — Phase 0: Forecast resolution bridge
 - Wired the forecast ledger to Kalshi settlement: `resolve_forecasts_for_market` resolves all open rows per ticker with Brier scores.

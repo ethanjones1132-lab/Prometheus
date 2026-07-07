@@ -1,0 +1,28 @@
+[project]
+name = "fincept-sidecar"
+version = "0.1.0"
+description = "Analysis sidecar for Kalshi Monster: agent probability estimates, market data, and macro indicators behind a local HTTP API (AGPL-3.0)."
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
+    "pydantic>=2.5",
+]
+
+[project.optional-dependencies]
+# Market-data endpoints need yfinance (Apache-2.0 — permissive path, plan §3 Rule 5b).
+market = ["yfinance>=0.2.40"]
+dev = ["pytest>=8", "httpx>=0.27"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["fincept_sidecar*", "agents*"]

@@ -15,6 +15,7 @@ Thumbs.db
 *.app
 **/__pycache__/
 *.pyc
+.pytest_cache/
 
 # Local SQLite runtime (dev copies; canonical path is ~/.openclaw/kalshi-monster/)
 **/predictions.db

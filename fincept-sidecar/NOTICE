@@ -1,0 +1,19 @@
+fincept-sidecar
+Copyright (C) 2026 Ethan Jones
+
+Licensed under the GNU Affero General Public License v3.0 (see LICENSE).
+
+This project is designed to host analysis code extracted and adapted from
+Fincept Terminal by Fincept Corporation:
+
+    https://github.com/Fincept-Corporation/FinceptTerminal
+
+Upstream Fincept Terminal is dual-licensed (AGPL-3.0 + a commercial license).
+This repository uses it under AGPL-3.0. All Fincept-derived code lives in this
+repository ONLY — never in kalshi-monster or any other permissively-licensed
+repo (see README, "Licensing rules").
+
+As of the initial scaffold, this repository contains NO Fincept-derived code:
+everything here is original work (FastAPI wrapper, schemas, thin data-engine
+plumbing over permissively-licensed libraries). The AGPL-3.0 license is applied
+from day one so that Fincept code can land here without a relicensing event.

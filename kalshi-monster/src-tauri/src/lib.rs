@@ -1,6 +1,7 @@
 pub mod analysis;
 pub mod correlation;
 pub mod bot;
+pub mod edge_engine;
 pub mod commands;
 pub mod config;
 pub mod error;
