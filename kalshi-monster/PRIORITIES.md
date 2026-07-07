@@ -1,8 +1,16 @@
 # Kalshi Monster — Priority Roadmap
 
-Last updated: 2026-07-07 (maintenance pass — Phase 1 edge_engine + fincept-sidecar scaffold; 125 lib tests)
+Last updated: 2026-07-07 (maintenance pass — FinceptBridge Rust supervisor scaffold; 129 lib tests)
 
-## Maintenance notes (2026-07-07, maintenance pass) — Phase 1 groundwork (Fincept plan §4–§7)
+## Maintenance notes (2026-07-07, maintenance pass) — Phase 1: FinceptBridge supervisor
+- Added `src-tauri/src/fincept_bridge/mod.rs`: READY-line parser, per-launch token, 30s handshake timeout, bearer health check to `/api/v1/health`, restart budget (3 / 10 min) + degraded flag.
+- Dev spawn via `python` + `../../fincept-sidecar/main.py` (Tauri `externalBin` sidecar packaging deferred).
+- IPC: `get_fincept_bridge_status`, `fincept_bridge_start_dev`, `fincept_bridge_stop`.
+- `tokio` features: `process`, `io-util` for async stdout handshake.
+- **4** new unit tests (+1 ignored integration); **129** lib tests pass total.
+- **Next (Phase 1):** wire app startup spawn + background health supervisor; register `fincept-sidecar` in `tauri.conf.json` `externalBin` for packaged builds.
+
+## Maintenance notes (2026-07-07, maintenance pass) — Phase 1 edge_engine + fincept-sidecar scaffold; 125 lib tests
 - Committed uncommitted WIP from prior pass: Rust `edge_engine` module (shrinkage, Kalshi fee model, aggregation, Kelly sizing; 22 unit tests) registered in `lib.rs`.
 - Added `fincept-sidecar/` FastAPI scaffold (auth, schemas, market-data engine, handshake tests) per plan Phase 1; copied plan + progress docs into `kalshi-monster/docs/`.
 - `.gitignore`: ignore `.pytest_cache/`.

@@ -2,6 +2,7 @@ pub mod analysis;
 pub mod correlation;
 pub mod bot;
 pub mod edge_engine;
+pub mod fincept_bridge;
 pub mod commands;
 pub mod config;
 pub mod error;
@@ -127,6 +128,7 @@ pub fn run() {
             .expect("Failed to create sports API client"),
     ));
     let prizepicks_fetcher = Arc::new(Mutex::new(PrizePicksFetcher));
+    let fincept_bridge = Arc::new(fincept_bridge::FinceptBridge::new());
     let db_pool_state = db_pool.clone();
     let prediction_tracker_for_setup = prediction_tracker.clone();
     let kalshi_for_grade = kalshi_client.clone();
@@ -206,6 +208,7 @@ pub fn run() {
         .manage(kalshi_client)
         .manage(kalshi_cache_holder)
         .manage(prizepicks_fetcher)
+        .manage(fincept_bridge)
         .manage(db_pool_state)
         .invoke_handler(tauri::generate_handler![
             // Config
@@ -334,6 +337,10 @@ pub fn run() {
             commands::ml_get_model_status,
             commands::ml_get_predictions,
             commands::ml_export_features,
+            // Fincept sidecar (Phase 1)
+            commands::get_fincept_bridge_status,
+            commands::fincept_bridge_start_dev,
+            commands::fincept_bridge_stop,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

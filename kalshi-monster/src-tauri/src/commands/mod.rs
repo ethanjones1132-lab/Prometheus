@@ -2795,6 +2795,31 @@ pub async fn kalshi_get_cache_state(
     })
 }
 
+// ── Fincept sidecar bridge (Phase 1) ──
+
+#[tauri::command]
+pub async fn get_fincept_bridge_status(
+    bridge: State<'_, Arc<crate::fincept_bridge::FinceptBridge>>,
+) -> Result<crate::fincept_bridge::FinceptBridgeStatus, String> {
+    Ok(bridge.status().await)
+}
+
+#[tauri::command]
+pub async fn fincept_bridge_start_dev(
+    bridge: State<'_, Arc<crate::fincept_bridge::FinceptBridge>>,
+) -> Result<crate::fincept_bridge::FinceptBridgeStatus, String> {
+    bridge.start_dev_sidecar().await?;
+    Ok(bridge.status().await)
+}
+
+#[tauri::command]
+pub async fn fincept_bridge_stop(
+    bridge: State<'_, Arc<crate::fincept_bridge::FinceptBridge>>,
+) -> Result<crate::fincept_bridge::FinceptBridgeStatus, String> {
+    bridge.stop().await;
+    Ok(bridge.status().await)
+}
+
 #[cfg(test)]
 mod kalshi_dashboard_bootstrap_tests {
     use super::build_kalshi_dashboard_data_quality_notes;

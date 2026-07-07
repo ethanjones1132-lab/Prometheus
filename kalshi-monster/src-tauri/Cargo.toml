@@ -28,7 +28,7 @@ tauri-plugin-opener = "2.0.0-beta.0"
 tauri-plugin-notification = "2"
 
 # Async runtime
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync", "time"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync", "time", "process", "io-util"] }
 
 # HTTP client for OpenRouter API and football data
 reqwest = { version = "0.12", features = ["json", "blocking", "stream"] }
