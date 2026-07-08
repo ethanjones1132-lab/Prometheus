@@ -27,7 +27,9 @@ Canonical copy also lives in `C:\Users\ethan\OneDrive\Desktop\kalshi-monster-fin
 
 **Acceptance:** With valid Kalshi credentials, opening **Markets** shows ≥ `INITIAL_MARKET_LIMIT` rows within one refresh cycle; `market_count` > 0; bootstrap errors visible in UI; `cargo test` + KalshiView vitest green.
 
-**Tests to add/extend:** Lib test for bootstrap with mock cache; vitest for empty bootstrap → error banner + retry.
+**2026-07-08 cron slice (tag `kb1-tape-1`):** `tauri::async_runtime::spawn` for cache persist; empty-cache refetch in `ensure_quick_cache`; bootstrap + UI empty-tape alert/retry; tests extended. Live credential verification still required to close KB-1.
+
+**Tests to add/extend:** Lib test for bootstrap with mock cache; vitest for empty bootstrap → error banner + retry. ✅ vitest added; lib `data_quality_notes` extended.
 
 ---
 

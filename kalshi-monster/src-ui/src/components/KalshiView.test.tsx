@@ -319,6 +319,31 @@ describe('KalshiView', () => {
     ).toBeInTheDocument();
   });
 
+  test('empty bootstrap shows credential hint and retry refresh', async () => {
+    vi.mocked(kalshiApi.getDashboardBootstrap).mockResolvedValue({
+      markets: [],
+      categories: [],
+      cache_status: 'empty',
+      cache_age_secs: 0,
+      partial_catalog: false,
+      last_refresh_at: null,
+      market_count: 0,
+      category_count: 0,
+      dashboard_generated_at: '2026-07-08T12:00:00Z',
+      data_quality_notes: [
+        'Full catalog cache ready',
+        'No markets loaded — verify Kalshi API access in Settings and tap Refresh and snapshot',
+      ],
+      ml_phase3: null,
+    });
+
+    render(<KalshiView />);
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(/No markets loaded — verify Kalshi API access/);
+    expect(screen.getByRole('button', { name: /Retry refresh/i })).toBeInTheDocument();
+  });
+
   test('trains ML from dashboard when auto-retrain gate is satisfied', async () => {
     vi.mocked(mlApi.trainModel).mockResolvedValue({
       status: 'trained',

@@ -511,7 +511,7 @@ impl KalshiClient {
         if let (Some(pool), Some(cache)) = (&self.persist_pool, &self.cache) {
             let pool = pool.clone();
             let cache = cache.clone();
-            tokio::spawn(async move {
+            tauri::async_runtime::spawn(async move {
                 if let Err(e) =
                     crate::kalshi::market_cache_store::save_persisted_cache(&pool, &cache).await
                 {
@@ -555,7 +555,8 @@ impl KalshiClient {
     /// Skips HTTP fetch if a full warm is already in progress (returns stale cache).
     pub async fn ensure_quick_cache(&mut self) -> Result<(), String> {
         if let Some(cache) = &self.cache {
-            if !self.is_cache_stale() {
+            // Empty persisted snapshot must not block live fetch (KB-1).
+            if !self.is_cache_stale() && !cache.markets.is_empty() {
                 return Ok(());
             }
             if cache.full_catalog {

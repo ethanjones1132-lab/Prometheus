@@ -1582,6 +1582,7 @@ pub(crate) fn build_kalshi_dashboard_data_quality_notes(
     showing_persisted_snapshot: bool,
     cache_stale: bool,
     fetch_in_progress: bool,
+    tape_market_count: usize,
 ) -> Vec<String> {
     let mut notes = if partial_catalog {
         vec!["Partial catalog loaded for fast first paint".to_string()]
@@ -1603,6 +1604,12 @@ pub(crate) fn build_kalshi_dashboard_data_quality_notes(
     if fetch_in_progress {
         notes.push(
             "Live catalog refresh in progress — tape may update shortly".to_string(),
+        );
+    }
+    if tape_market_count == 0 {
+        notes.push(
+            "No markets loaded — verify Kalshi API access in Settings and tap Refresh and snapshot"
+                .to_string(),
         );
     }
     notes
@@ -1630,6 +1637,7 @@ pub async fn kalshi_get_dashboard_bootstrap(
         client.showing_persisted_snapshot(),
         client.is_cache_stale(),
         client.is_fetch_in_progress(),
+        market_count,
     );
 
     let ml_phase3 = crate::ml_predictor::phase3_dashboard_summary(&db_pool).await;
@@ -2846,16 +2854,17 @@ mod kalshi_dashboard_bootstrap_tests {
 
     #[test]
     fn data_quality_notes_include_stale_and_fetch_hints() {
-        let notes = build_kalshi_dashboard_data_quality_notes(true, true, true, true);
+        let notes = build_kalshi_dashboard_data_quality_notes(true, true, true, true, 0);
         assert!(notes.iter().any(|n| n.contains("Partial catalog")));
         assert!(notes.iter().any(|n| n.contains("saved market snapshot")));
         assert!(notes.iter().any(|n| n.contains("older than 60s")));
         assert!(notes.iter().any(|n| n.contains("refresh in progress")));
+        assert!(notes.iter().any(|n| n.contains("No markets loaded")));
     }
 
     #[test]
     fn data_quality_notes_full_catalog_without_extras() {
-        let notes = build_kalshi_dashboard_data_quality_notes(false, false, false, false);
+        let notes = build_kalshi_dashboard_data_quality_notes(false, false, false, false, 12);
         assert_eq!(notes.len(), 1);
         assert!(notes[0].contains("Full catalog"));
     }

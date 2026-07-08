@@ -194,6 +194,13 @@ export function KalshiView({ onAnalyzeMarket }: KalshiViewProps = {}) {
         setCategoryCount(bootstrap.category_count);
         setDataQualityNotes(bootstrap.data_quality_notes);
         setMlPhase3(bootstrap.ml_phase3 ?? null);
+        if (bootstrap.market_count === 0 && bootstrap.markets.length === 0) {
+          const emptyNote = bootstrap.data_quality_notes.find((n) => n.includes('No markets loaded'));
+          setError(
+            emptyNote ??
+              'No Kalshi markets loaded. Check API access in Settings, then use Refresh and snapshot.',
+          );
+        }
         setMarketsReady(true);
         return;
       }
@@ -588,7 +595,7 @@ export function KalshiView({ onAnalyzeMarket }: KalshiViewProps = {}) {
       </div>
 
       {loading && <p className="muted pad">Loading markets...</p>}
-      {error && <p className="error pad">{error}</p>}
+      {error && (loading || markets.length > 0) && <p className="error pad">{error}</p>}
 
       {!loading && (
         <section className="marketTape">
@@ -626,8 +633,20 @@ export function KalshiView({ onAnalyzeMarket }: KalshiViewProps = {}) {
         </section>
       )}
 
-      {!loading && markets.length === 0 && !error && (
-        <p className="muted pad">No markets found.</p>
+      {!loading && markets.length === 0 && (
+        <div className="pad" role="alert">
+          <p className={error ? 'error' : 'muted'}>
+            {error ?? 'No markets found.'}
+          </p>
+          <button
+            type="button"
+            className="primaryBtn"
+            onClick={() => void refreshAll()}
+            disabled={refreshing || loading}
+          >
+            {refreshing ? 'Refreshing…' : 'Retry refresh'}
+          </button>
+        </div>
       )}
 
       {marketsReady && <KalshiPredictionsPanel />}

@@ -1,6 +1,16 @@
 # Kalshi Monster — Priority Roadmap
 
-Last updated: 2026-07-08 (fleet backlog KB-1/KB-2 — user P0)
+Last updated: 2026-07-08 (KB-1 slice: Tauri runtime persist + empty tape UX)
+
+## Maintenance notes (2026-07-08, cron KB-1) — tape populate reliability
+- `schedule_persist` uses `tauri::async_runtime::spawn` instead of bare `tokio::spawn` so SQLite cache writes run on the Tauri reactor.
+- `ensure_quick_cache` refetches when persisted cache has **zero** markets (not only when stale).
+- Bootstrap `data_quality_notes` includes **No markets loaded** when `market_count == 0`.
+- `KalshiView`: empty tape `role="alert"` + **Retry refresh**; vitest `empty bootstrap shows credential hint and retry refresh`.
+- **137** lib tests (data_quality_notes); **7** KalshiView vitest; `cargo check` + `tsc` clean.
+- **KB-1 remaining:** Confirm ≥ `INITIAL_MARKET_LIMIT` rows with valid Kalshi credentials on a live run.
+
+---
 
 ## Fleet backlog (2026-07-08) — cron priority
 
@@ -8,7 +18,7 @@ Last updated: 2026-07-08 (fleet backlog KB-1/KB-2 — user P0)
 
 | ID | Issue | Status |
 |----|--------|--------|
-| **KB-1** | Markets not populating in UI; suspected tokio/async spawn | 🔴 Open |
+| **KB-1** | Markets not populating in UI; suspected tokio/async spawn | 🟡 Partial (runtime + empty UX; verify live creds) |
 | **KB-2** | Analyst tab (`ChatView`) — major UX/context work | 🔴 Open |
 
 **Cron rule:** One KB-* slice per pass; **KB-1 before KB-2** until markets populate with valid credentials.
