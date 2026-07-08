@@ -129,6 +129,7 @@ pub fn run() {
     ));
     let prizepicks_fetcher = Arc::new(Mutex::new(PrizePicksFetcher));
     let fincept_bridge = Arc::new(fincept_bridge::FinceptBridge::new());
+    let fincept_bridge_for_startup = fincept_bridge.clone();
     let db_pool_state = db_pool.clone();
     let prediction_tracker_for_setup = prediction_tracker.clone();
     let kalshi_for_grade = kalshi_client.clone();
@@ -191,6 +192,30 @@ pub fn run() {
                         tracing::warn!("kalshi background cache warm failed: {}", e);
                     } else {
                         tracing::info!("kalshi full catalog cache warmed");
+                    }
+                }
+            });
+
+            // Phase 1: start the Fincept sidecar at app launch + background health supervisor.
+            // Dev: spawns `python fincept-sidecar/main.py`. Prod: uses Tauri externalBin.
+            let bridge = fincept_bridge_for_startup.clone();
+            tauri::async_runtime::spawn(async move {
+                if let Err(e) = bridge.start_dev_sidecar().await {
+                    tracing::warn!("FinceptBridge: dev sidecar start failed ({e}); continuing without analysis engine");
+                    bridge.record_health_failure().await;
+                    return;
+                }
+                tracing::info!("FinceptBridge: sidecar online");
+
+                // Background health poll every 60 s — failure → restart (up to 3/10 min) → degraded.
+                let health_interval = tokio::time::Duration::from_secs(60);
+                loop {
+                    tokio::time::sleep(health_interval).await;
+                    match bridge.health_check().await {
+                        Ok(true) => { /* healthy */ }
+                        Ok(false) | Err(_) => {
+                            bridge.record_health_failure().await;
+                        }
                     }
                 }
             });
