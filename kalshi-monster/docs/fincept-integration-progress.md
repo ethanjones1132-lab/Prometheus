@@ -4,6 +4,37 @@ Tracks execution of `docs/fincept-integration-plan.md` (v2.1). Newest entry firs
 
 ---
 
+## 2026-07-08 — Maintenance pass: Phase 1 wiring + World Markets UI
+
+### Health
+
+- `cargo check` (kalshi-monster `src-tauri`): **pass**
+- `npm run build` (`src-ui`): **pass**
+
+### Shipped this pass
+
+| Item | Change |
+|------|--------|
+| Sidecar tracker | `fincept-sidecar/fincept_sidecar/engines/tracker.py` — category watchlists + chat snapshot tickers |
+| Sidecar routes | `GET /api/v1/market/tracker`, `/tracker/{category}`, `/snapshot` in `routers/market.py` |
+| Bridge HTTP | `FinceptBridge::get_json` for authenticated sidecar GETs |
+| Chat context | `chat/fincept_context.rs` + wired into `send_message` and `send_message_stream` after Kalshi context |
+| Tauri command | `get_fincept_market_tracker` registered in `lib.rs` |
+| UI | **World markets** nav tab + `WorldMarketsView.tsx`; `finceptApi` in `services/tauri.ts` |
+
+### Phase 0 note (forecast ↔ poller)
+
+No code change required: `kalshi::grading::grade_pending_predictions` already calls `forecast::resolve_forecasts_for_market`, and `spawn_auto_grade_task` runs `resolve_pending_forecasts` when unresolved forecast rows exist.
+
+### Still open (plan order)
+
+1. Ledger / PASS logging columns (Phase 0 delta in progress doc 2026-07-07)
+2. Expand tracker toward Appendix A (132 instruments)
+3. Sidecar pytest: `tests/test_tracker.py` (3 tests, mocked quotes) — **pass** via `uv run pytest`
+4. Settings UI hooks for `fincept_bridge_start_dev` / status (API exists; Settings panel not yet wired)
+
+---
+
 ## 2026-07-07 — First implementation pass
 
 ### Gap analysis: the plan's Phase 0 is already substantially done

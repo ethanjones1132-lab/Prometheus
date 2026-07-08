@@ -117,3 +117,24 @@ export const notificationApi = {
   saveSettings: (settings: NotificationSettings) =>
     invoke<void>('save_notification_settings', { settings }),
 };
+
+// ── Fincept sidecar (Phase 1 world markets) ─────────────────────
+
+export type FinceptBridgeStatus = {
+  online: boolean;
+  degraded: boolean;
+  base_url?: string | null;
+  last_error?: string | null;
+  restarts_remaining: number;
+};
+
+export const finceptApi = {
+  getBridgeStatus: () => invoke<FinceptBridgeStatus>('get_fincept_bridge_status'),
+
+  startDev: () => invoke<FinceptBridgeStatus>('fincept_bridge_start_dev'),
+
+  stop: () => invoke<FinceptBridgeStatus>('fincept_bridge_stop'),
+
+  getMarketTracker: (category?: string | null) =>
+    invoke<Record<string, unknown>>('get_fincept_market_tracker', { category: category ?? null }),
+};

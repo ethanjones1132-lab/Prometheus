@@ -216,6 +216,41 @@ impl FinceptBridge {
         Ok(resp.status().is_success())
     }
 
+    /// Authenticated GET returning JSON body (plan §7 market/tracker/snapshot).
+    pub async fn get_json(&self, path: &str) -> Result<serde_json::Value, String> {
+        let path = if path.starts_with('/') {
+            path.to_string()
+        } else {
+            format!("/{path}")
+        };
+        let (base_url, token) = {
+            let inner = self.inner.lock().await;
+            match (&inner.base_url, &inner.token) {
+                (Some(u), Some(t)) => (u.clone(), t.clone()),
+                _ => return Err("fincept sidecar not online".into()),
+            }
+        };
+
+        let url = format!("{base_url}{path}");
+        let resp = self
+            .http
+            .get(&url)
+            .header("authorization", format!("Bearer {token}"))
+            .send()
+            .await
+            .map_err(|e| format!("fincept GET {path}: {e}"))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(format!("fincept GET {path} returned {status}: {body}"));
+        }
+
+        resp.json()
+            .await
+            .map_err(|e| format!("fincept GET {path} json: {e}"))
+    }
+
     /// On repeated health failures, attempt restart until budget exhausted → degraded.
     pub async fn record_health_failure(&self) -> FinceptBridgeStatus {
         let mut inner = self.inner.lock().await;

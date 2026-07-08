@@ -10,9 +10,30 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
 
-from ..engines import market_data
+from ..engines import market_data, tracker
 
 router = APIRouter(tags=["market"])
+
+
+@router.get("/tracker")
+async def tracker_all() -> dict:
+    return await tracker.get_tracker(None)
+
+
+@router.get("/tracker/{category}")
+async def tracker_category(category: str) -> dict:
+    if category not in tracker.VALID_CATEGORIES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"unknown category {category!r}; expected one of {sorted(tracker.VALID_CATEGORIES)}",
+        )
+    return await tracker.get_tracker(category)
+
+
+@router.get("/snapshot")
+async def chat_snapshot() -> dict:
+    """Compact cross-asset snapshot for chat context injection."""
+    return await tracker.get_chat_snapshot()
 
 
 @router.get("/price/{ticker}")

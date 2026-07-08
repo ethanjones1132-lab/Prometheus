@@ -366,6 +366,7 @@ pub fn run() {
             commands::get_fincept_bridge_status,
             commands::fincept_bridge_start_dev,
             commands::fincept_bridge_stop,
+            commands::get_fincept_market_tracker,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

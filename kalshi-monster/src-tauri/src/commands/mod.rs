@@ -87,6 +87,7 @@ pub async fn send_message(
     chat_state: State<'_, Arc<Mutex<session::ChatState>>>,
     tracker: State<'_, Arc<Mutex<PredictionTracker>>>,
     kalshi: State<'_, KalshiState>,
+    fincept: State<'_, Arc<crate::fincept_bridge::FinceptBridge>>,
     db_pool: State<'_, Pool<Sqlite>>,
 ) -> Result<OpenRouterResponse, String> {
     let config = state.lock().await.clone();
@@ -121,11 +122,14 @@ pub async fn send_message(
     // Fetch Kalshi market context (Kalshi-first — replaces ESPN/Sleeper as default)
     let kalshi_context = {
         let mut kalshi = kalshi.lock().await;
-        crate::chat::kalshi_context::build_kalshi_context(
+        let mut ctx = crate::chat::kalshi_context::build_kalshi_context(
             &mut kalshi,
             &message,
             None, // portfolio not injected by default in non-streaming path
-        ).await
+        )
+        .await;
+        crate::chat::fincept_context::append_fincept_context(fincept.inner().as_ref(), &mut ctx).await;
+        ctx
     };
 
     // Send to OpenRouter with enriched context + Kalshi data injection
@@ -202,6 +206,7 @@ pub async fn send_message_stream(
     chat_state: State<'_, Arc<Mutex<session::ChatState>>>,
     tracker: State<'_, Arc<Mutex<PredictionTracker>>>,
     kalshi: State<'_, KalshiState>,
+    fincept: State<'_, Arc<crate::fincept_bridge::FinceptBridge>>,
     db_pool: State<'_, Pool<Sqlite>>,
     app: tauri::AppHandle<tauri::Wry>,
 ) -> Result<(), String> {
@@ -264,14 +269,17 @@ pub async fn send_message_stream(
         }
     });
 
-    // Fetch live data context (ESPN + Sleeper) — real-time injection
+    // Fetch live data context — Kalshi + Fincept cross-asset when sidecar is online
     let kalshi_context = {
         let mut kalshi = kalshi.lock().await;
-        crate::chat::kalshi_context::build_kalshi_context(
+        let mut ctx = crate::chat::kalshi_context::build_kalshi_context(
             &mut kalshi,
             &message,
             None,
-        ).await
+        )
+        .await;
+        crate::chat::fincept_context::append_fincept_context(fincept.inner().as_ref(), &mut ctx).await;
+        ctx
     };
 
     // Send to OpenRouter with streaming + Kalshi data injection
@@ -2818,6 +2826,18 @@ pub async fn fincept_bridge_stop(
 ) -> Result<crate::fincept_bridge::FinceptBridgeStatus, String> {
     bridge.stop().await;
     Ok(bridge.status().await)
+}
+
+#[tauri::command]
+pub async fn get_fincept_market_tracker(
+    category: Option<String>,
+    bridge: State<'_, Arc<crate::fincept_bridge::FinceptBridge>>,
+) -> Result<serde_json::Value, String> {
+    let path = match category.as_deref() {
+        None | Some("") => "/api/v1/market/tracker".to_string(),
+        Some(cat) => format!("/api/v1/market/tracker/{cat}"),
+    };
+    bridge.get_json(&path).await
 }
 
 #[cfg(test)]

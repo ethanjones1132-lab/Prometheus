@@ -4,11 +4,13 @@ import { ChatView } from './components/ChatView';
 import { KalshiPredictionsPanel } from './components/KalshiPredictionsPanel';
 import { KalshiView } from './components/KalshiView';
 import { SettingsView } from './components/SettingsView';
+import { WorldMarketsView } from './components/WorldMarketsView';
 
-type Tab = 'markets' | 'chat' | 'predictions' | 'settings';
+type Tab = 'markets' | 'world' | 'chat' | 'predictions' | 'settings';
 
 const tabs: Array<{ id: Tab; label: string }> = [
   { id: 'markets', label: 'Command desk' },
+  { id: 'world', label: 'World markets' },
   { id: 'chat', label: 'Analyst' },
   { id: 'predictions', label: 'Paper portfolio' },
   { id: 'settings', label: 'Settings' },
@@ -53,6 +55,7 @@ export default function App() {
 
       <main className="main">
         {activeTab === 'markets' && <KalshiView onAnalyzeMarket={openAnalyst} />}
+        {activeTab === 'world' && <WorldMarketsView />}
         {activeTab === 'chat' && (
           <ChatView
             initialPrompt={analystPrompt}
