@@ -1,6 +1,13 @@
 # Kalshi Monster — Priority Roadmap
 
-Last updated: 2026-07-07 (maintenance pass — FinceptBridge Rust supervisor scaffold; 129 lib tests)
+Last updated: 2026-07-08 (overnight pass — FinceptBridge auto-spawn at startup + background health supervisor; 129 lib tests)
+
+## Maintenance notes (2026-07-08, overnight pass) — Phase 1: FinceptBridge auto-spawn + health supervisor
+- Wired sidecar auto-spawn at app startup: `lib.rs` clones `fincept_bridge` before `setup(move |app|)`, then spawns `start_dev_sidecar()` in a tokio task at setup time.
+- Background health supervisor: polls `/api/v1/health` every 60 s; on failure, `record_health_failure()` triggers restart (up to 3/10 min) before marking degraded.
+- `externalBin` registration in `tauri.conf.json` deferred — Python sidecar uses `python main.py` dev path; PyInstaller bundling is a later packaging task.
+- **129** lib tests pass; `tsc` clean; `cargo check` clean.
+- **Next (Phase 1):** wire the sidecar into `MarketContextBuilder` (feed live market data to chat context); "World Markets" tab in React UI.
 
 ## Maintenance notes (2026-07-07, maintenance pass) — Phase 1: FinceptBridge supervisor
 - Added `src-tauri/src/fincept_bridge/mod.rs`: READY-line parser, per-launch token, 30s handshake timeout, bearer health check to `/api/v1/health`, restart budget (3 / 10 min) + degraded flag.
