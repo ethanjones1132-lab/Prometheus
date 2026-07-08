@@ -1,6 +1,19 @@
 # Kalshi Monster — Priority Roadmap
 
-Last updated: 2026-07-08 (maintenance pass — Phase 1 Fincept chat context + World Markets tab committed)
+Last updated: 2026-07-08 (fleet backlog KB-1/KB-2 — user P0)
+
+## Fleet backlog (2026-07-08) — cron priority
+
+**Source:** `docs/fleet-backlog-2026-07-08.md` + integration plan §13 items 6–7.
+
+| ID | Issue | Status |
+|----|--------|--------|
+| **KB-1** | Markets not populating in UI; suspected tokio/async spawn | 🔴 Open |
+| **KB-2** | Analyst tab (`ChatView`) — major UX/context work | 🔴 Open |
+
+**Cron rule:** One KB-* slice per pass; **KB-1 before KB-2** until markets populate with valid credentials.
+
+---
 
 ## Maintenance notes (2026-07-08, maintenance pass) — Phase 1: sidecar tracker + chat/UI wiring
 - Committed prior-session WIP: `tracker.py` + market routes (`/tracker`, `/snapshot`); `FinceptBridge::get_json`; `fincept_context` appended after Kalshi context in chat send/stream; `get_fincept_market_tracker` IPC; **World markets** tab + `WorldMarketsView.tsx`.
