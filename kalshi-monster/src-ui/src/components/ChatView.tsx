@@ -18,9 +18,16 @@ interface ChatViewProps {
   onPromptConsumed?: () => void;
 }
 
+function extractTickerFromPrompt(prompt: string): { ticker: string; title: string } | null {
+  const m = prompt.match(/Analyze Kalshi market (\S+): (.+?)($|\n|Category:)/);
+  if (!m) return null;
+  return { ticker: m[1], title: m[2] };
+}
+
 export function ChatView({ initialPrompt, onPromptConsumed }: ChatViewProps = {}) {
   const { messages, isStreaming, error, sendMessage, initSession } = useChat();
   const [input, setInput] = useState('');
+  const [activeContext, setActiveContext] = useState<{ ticker: string; title: string } | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -34,6 +41,8 @@ export function ChatView({ initialPrompt, onPromptConsumed }: ChatViewProps = {}
   useEffect(() => {
     if (!initialPrompt) return;
     setInput(initialPrompt);
+    const ctx = extractTickerFromPrompt(initialPrompt);
+    if (ctx) setActiveContext(ctx);
     onPromptConsumed?.();
   }, [initialPrompt]);
 
@@ -56,7 +65,34 @@ export function ChatView({ initialPrompt, onPromptConsumed }: ChatViewProps = {}
         <span style={styles.subtitle}>AI-Powered Market Analysis</span>
       </div>
 
-      {/* Quick Prompts */}
+            {/* Active Market Context */}
+      {activeContext && (
+        <div style={styles.contextChip}>
+          <div style={styles.contextChipInner}>
+            <span style={styles.contextBadge}>🔍 {activeContext.ticker}</span>
+            <span style={styles.contextTitle}>{activeContext.title}</span>
+            <button
+              style={styles.contextDismiss}
+              onClick={() => setActiveContext(null)}
+              title="Dismiss context"
+            >
+              ×
+            </button>
+          </div>
+          <div style={styles.contextHint}>
+            The AI sees live Kalshi market data. Responses factor in current prices, volume, and category trends.
+          </div>
+        </div>
+      )}
+
+      {/* Degraded Context Banner */}
+      {activeContext && messages.length === 0 && !isStreaming && (
+        <div style={styles.degradedBanner} role="alert">
+          ⚠️ Market tape may be cold. If the response lacks market data, switch to <strong>Markets</strong> and refresh the catalog first.
+        </div>
+      )}
+
+{/* Quick Prompts */}
       <div style={styles.quickPrompts}>
         {QUICK_PROMPTS.map((prompt) => (
           <button
@@ -269,5 +305,55 @@ const styles: Record<string, React.CSSProperties> = {
     color: '#fff',
     fontSize: '14px',
     cursor: 'pointer',
+  },
+  contextChip: {
+    margin: '12px 16px 0',
+    padding: '10px 14px',
+    background: '#1a2332',
+    border: '1px solid #1f6feb',
+    borderRadius: '10px',
+  },
+  contextChipInner: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '10px',
+  },
+  contextBadge: {
+    padding: '2px 8px',
+    background: '#1f6feb',
+    color: '#fff',
+    borderRadius: '4px',
+    fontSize: '12px',
+    fontWeight: 600,
+    fontFamily: 'monospace',
+  },
+  contextTitle: {
+    flex: 1,
+    fontSize: '13px',
+    color: '#c9d1d9',
+    fontWeight: 500,
+  },
+  contextDismiss: {
+    padding: '0 4px',
+    background: 'none',
+    border: 'none',
+    color: '#8b949e',
+    fontSize: '16px',
+    cursor: 'pointer',
+    lineHeight: 1,
+  },
+  contextHint: {
+    marginTop: '6px',
+    fontSize: '11px',
+    color: '#6e7681',
+  },
+  degradedBanner: {
+    margin: '8px 16px 0',
+    padding: '8px 12px',
+    background: '#3d2e00',
+    border: '1px solid #d29922',
+    borderRadius: '6px',
+    fontSize: '12px',
+    color: '#e3b341',
   },
 };

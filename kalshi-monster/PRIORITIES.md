@@ -1,6 +1,15 @@
 # Kalshi Monster — Priority Roadmap
 
-Last updated: 2026-07-08 (KB-1 slice: Tauri runtime persist + empty tape UX)
+Last updated: 2026-07-09 (KB-2a slice: Analyst context chip + degraded tape banner)
+
+## Maintenance notes (2026-07-09, overnight cron KB-2a) — Analyst market context UX
+
+- **ChatView:** `extractTickerFromPrompt` helper parses ticker from "Analyze Kalshi market <TICKER>: <title>" prompt string.
+- **Context chip:** When arriving from Markets → "Analyze with AI", shows a blue chip with 🔍 ticker + title + dismiss button, plus a hint that "AI sees live Kalshi market data."
+- **Degraded context banner:** When `activeContext` is set but no messages yet (cold session from Analyze), shows an amber `role="alert"` banner: "Market tape may be cold. Switch to Markets and refresh."
+- Quick prompts remain generic placeholders; contextual follow-ups deferred to KB-2c.
+- All 130 lib tests pass; all 21 vitest pass; `tsc` clean; `cargo check` clean.
+- **KB-2a remaining:** Surface backend context-failure signals (when `build_kalshi_context` returns empty / no markets in cache) — needs a Tauri IPC field from chat response.
 
 ## Maintenance notes (2026-07-08, cron KB-1) — tape populate reliability
 - `schedule_persist` uses `tauri::async_runtime::spawn` instead of bare `tokio::spawn` so SQLite cache writes run on the Tauri reactor.
@@ -19,7 +28,7 @@ Last updated: 2026-07-08 (KB-1 slice: Tauri runtime persist + empty tape UX)
 | ID | Issue | Status |
 |----|--------|--------|
 | **KB-1** | Markets not populating in UI; suspected tokio/async spawn | 🟡 Partial (runtime + empty UX; verify live creds) |
-| **KB-2** | Analyst tab (`ChatView`) — major UX/context work | 🔴 Open |
+| **KB-2** | Analyst tab (`ChatView`) — major UX/context work | 🟡 Partial (KB-2a: context chip + degraded banner done; KB-2b-e open) |
 
 **Cron rule:** One KB-* slice per pass; **KB-1 before KB-2** until markets populate with valid credentials.
 
