@@ -1636,14 +1636,15 @@ pub async fn kalshi_get_dashboard_bootstrap(
     let last_refresh_at = fetched_at
         .and_then(|ts| chrono::DateTime::from_timestamp(ts as i64, 0))
         .map(|dt| dt.to_rfc3339());
-    let market_count = markets.len();
+    let tape_market_count = client.cached_tape_market_count();
+    let market_count = tape_market_count.max(markets.len());
     let category_count = categories.len();
     let data_quality_notes = build_kalshi_dashboard_data_quality_notes(
         partial_catalog,
         client.showing_persisted_snapshot(),
         client.is_cache_stale(),
         client.is_fetch_in_progress(),
-        market_count,
+        tape_market_count,
         client.last_fetch_error(),
     );
 

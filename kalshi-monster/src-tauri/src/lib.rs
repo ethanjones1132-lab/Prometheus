@@ -190,6 +190,7 @@ pub fn run() {
                 let mut client = kalshi_warm.lock().await;
                 if client.needs_full_catalog() {
                     if let Err(e) = client.fetch_all_markets().await {
+                        client.set_last_fetch_error(&e);
                         tracing::warn!("kalshi background cache warm failed: {}", e);
                     } else {
                         tracing::info!("kalshi full catalog cache warmed");

@@ -344,6 +344,30 @@ describe('KalshiView', () => {
     expect(screen.getByRole('button', { name: /Retry refresh/i })).toBeInTheDocument();
   });
 
+  test('empty bootstrap surfaces last catalog fetch error from data_quality_notes', async () => {
+    vi.mocked(kalshiApi.getDashboardBootstrap).mockResolvedValue({
+      markets: [],
+      categories: [],
+      cache_status: 'empty',
+      cache_age_secs: 0,
+      partial_catalog: false,
+      last_refresh_at: null,
+      market_count: 0,
+      category_count: 0,
+      dashboard_generated_at: '2026-07-09T12:00:00Z',
+      data_quality_notes: [
+        'No markets loaded — verify Kalshi API access in Settings and tap Refresh and snapshot',
+        'Last catalog fetch error: Kalshi API error (401): unauthorized',
+      ],
+      ml_phase3: null,
+    });
+
+    render(<KalshiView />);
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(/Kalshi API error \(401\): unauthorized/);
+  });
+
   test('trains ML from dashboard when auto-retrain gate is satisfied', async () => {
     vi.mocked(mlApi.trainModel).mockResolvedValue({
       status: 'trained',

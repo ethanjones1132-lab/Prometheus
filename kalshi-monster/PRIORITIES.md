@@ -1,6 +1,14 @@
 # Kalshi Monster — Priority Roadmap
 
-Last updated: 2026-07-09 (KB-1 slice: last fetch error in bootstrap + stream spawn fix)
+Last updated: 2026-07-09 (KB-1 slice: tape count in bootstrap + warm error surfacing)
+
+## Maintenance notes (2026-07-09, cron KB-1) — bootstrap tape count + warm failures
+
+- **`cached_tape_market_count`:** bootstrap `market_count` uses full tape size (not only the visible slice); `data_quality_notes` use tape count for "No markets loaded".
+- **Background full warm:** `lib.rs` sets `last_fetch_error` when `fetch_all_markets` fails at startup (parity with quick-cache warm).
+- **`ensure_quick_cache`:** when full catalog warm is in progress and tape is empty, stores a user-facing fetch hint for the UI.
+- **Tests:** `cached_tape_market_count_reflects_cache_len` lib test; vitest `empty bootstrap surfaces last catalog fetch error`.
+- **KB-1 remaining:** Live run with valid Kalshi credentials — confirm ≥ `INITIAL_MARKET_LIMIT` rows on Markets tab.
 
 ## Maintenance notes (2026-07-09, cron KB-1) — catalog fetch diagnostics
 
@@ -36,7 +44,7 @@ Last updated: 2026-07-09 (KB-1 slice: last fetch error in bootstrap + stream spa
 
 | ID | Issue | Status |
 |----|--------|--------|
-| **KB-1** | Markets not populating in UI; suspected tokio/async spawn | 🟡 Partial (runtime + empty UX; verify live creds) |
+| **KB-1** | Markets not populating in UI; suspected tokio/async spawn | 🟡 Partial (tape count + warm errors; verify live creds) |
 | **KB-2** | Analyst tab (`ChatView`) — major UX/context work | 🟡 Partial (KB-2a: context chip + degraded banner done; KB-2b-e open) |
 
 **Cron rule:** One KB-* slice per pass; **KB-1 before KB-2** until markets populate with valid credentials.

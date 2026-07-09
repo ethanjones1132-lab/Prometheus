@@ -138,6 +138,11 @@ impl KalshiClient {
         self.cache.as_ref().map(|c| &c.markets)
     }
 
+    /// Total markets in the in-memory tape (not the UI slice limit).
+    pub fn cached_tape_market_count(&self) -> usize {
+        self.cache.as_ref().map(|c| c.markets.len()).unwrap_or(0)
+    }
+
     fn is_token_valid(&self) -> bool {
         match (&self.token, self.token_expiry) {
             (Some(_), Some(expiry)) => Self::now_secs() + 60 < expiry,
@@ -584,6 +589,11 @@ impl KalshiClient {
         // caller will work with the stale/partial cache until the warm completes.
         if self.fetch_in_progress.load(Ordering::Relaxed) {
             tracing::info!("Kalshi full catalog warm in progress; skipping quick reload");
+            if self.cached_tape_market_count() == 0 {
+                self.set_last_fetch_error(
+                    "Catalog refresh in progress — wait a few seconds or tap Refresh and snapshot",
+                );
+            }
             return Ok(());
         }
 
@@ -941,6 +951,15 @@ mod tests {
         assert_eq!(markets[0].title, "Who will the next Pope be? - Pierbattista Pizzaballa");
         assert_eq!(markets[0].category.as_deref(), Some("Elections"));
         assert_eq!(markets[0].series_ticker.as_deref(), Some("KXNEWPOPE"));
+    }
+
+    #[test]
+    fn cached_tape_market_count_reflects_cache_len() {
+        let shared = Arc::new(RwLock::new(None));
+        let mut client = KalshiClient::new(KalshiConfig::default(), shared, None);
+        assert_eq!(client.cached_tape_market_count(), 0);
+        client.store_cache(vec![KalshiMarket::default(), KalshiMarket::default()], false);
+        assert_eq!(client.cached_tape_market_count(), 2);
     }
 }
 
