@@ -1,6 +1,39 @@
 # Kalshi Monster — Priority Roadmap
 
-Last updated: 2026-07-09 (KB-1 slice: tape count in bootstrap + warm error surfacing)
+Last updated: 2026-07-09 (Phase 3 core: calibration math + §6.4 circuit breakers)
+
+## Maintenance notes (2026-07-09, cron) — Phase 3 calibration core + §6.4 breakers
+
+Scheduled-task directive was "highest effort/reasoning areas of the plan"; KB-1's sole
+remaining item needs live Kalshi credentials (not verifiable in an automated pass) and
+KB-2b–e are UX slices, so this pass shipped the plan's Phase 3 mathematical core instead.
+
+- **`edge_engine/calibration.rs` (new):** Brier summaries (incl. apples-to-apples
+  market-restricted-to-model-rows mean), 10-bucket reliability diagram (p=1.0 lands in
+  bucket 9), **λ re-fit** by deterministic 0.001-grid argmin of mean Brier of the
+  *re-shrunk* `shrink(p_model, p_market, λ)` (§4.1; ties break toward smaller λ; requires
+  ≥50 model rows — `LAMBDA_REFIT_MIN_SAMPLES`), **calibration gate** (§7 Phase 3: ≥200
+  resolved AND Brier(p_final) ≤ Brier(p_market) AND paper P&L > 0, per-condition
+  reporting), and **rolling-50 degradation check** (§6.4 last row; `None` below a full
+  window — breakers must not trip or clear on partial data).
+- **`edge_engine/breakers.rs` (new):** §6.4 as a pure state machine
+  `(prev, inputs, cfg) → decision`. Daily-loss pause stateless (strict >5%); 15% drawdown
+  scaler with **hysteresis** (arms >15%, releases <10%, band retains); 25% breaker
+  **latches** until `manual_reenable` (re-latches if still in drawdown); calibration
+  degradation latches until a full *healthy* window (absence of evidence ≠ recovery).
+  `live_orders_allowed` encodes §6.5 invariant #2; should-fail test included.
+- **`kalshi/forecast.rs`:** `resolved_forecasts_for_calibration` accessor (sorted
+  ascending by `resolved_at` — the ordering contract `rolling_degradation` requires) +
+  out-of-order resolution test.
+- **Tests:** 18 new (13 calibration, 5 breakers incl. invariant sweep) + accessor test;
+  **51 pass** in module-shim harness (sandbox lacks webkit deps for full `cargo check` —
+  edge_engine + forecast modules compiled standalone against serde/serde_json/sqlx 0.8,
+  same versions as Cargo.toml). **Run full `cargo check` + `cargo test` on the host to
+  confirm workspace integration** (expected clean: new code touches only `pub mod`
+  registrations and one additive accessor).
+- **Next (Phase 3):** wire IPC — `get_calibration_report` (BrierSummary + reliability +
+  gate) and breaker state persistence + evaluation in the order path; then the
+  auto-analysis universe loop and Calibration tab (§9).
 
 ## Maintenance notes (2026-07-09, cron KB-1) — bootstrap tape count + warm failures
 
@@ -412,41 +445,4 @@ Quick status: **P0 done · P1 done · P2 done · P3 1 pending**
 P0–P2 are complete. 
 
 1. Volatility-adjusted Kelly from historical Brier (auto-shrinkage) — ✅ Done (2026-06-24; `volatility_adjusted_kelly` fn + `compute_historical_brier` + `refresh_historical_brier` command + UI trigger wired; strategy now uses real data for shrinkage when graded history accumulates in predictions.db)
-2. Multi-category ML classifiers (politics/econ/weather) — ⬜ In progress (2026-06-25; sidecar train/infer wired; UI readiness in Settings; fully active once politics/econ/weather each accumulate 10+ graded rows)
-
-Off-roadmap fix shipped 2026-06-22: notification settings now persist to `~/.openclaw/kalshi-monster/notification_settings.json` (`notification::load_settings`/`save_settings`); previously `save_notification_settings` only logged and `get_notification_settings` always returned defaults.
-
----
-
-## Dashboard performance (deferred)
-
-**Phase 1 (shipped 2026-06-17):** flat `GET /markets` quick cache (replaces nested `/events` for dashboard load). See `kalshi/client.rs` — `fetch_markets_flat_pages`, `ensure_quick_cache`.
-
-### Phase 2 — Decouple cache reads from long fetches ✅ Done (2026-06-26)
-
-- Extract `Arc<RwLock<KalshiCache>>` + `fetch_in_progress` guard so UI reads never block on 20-page full warm ✅
-- Background full-catalog warm writes cache without holding the outer `KalshiClient` mutex across HTTP pagination ✅
-- Add `kalshi_get_cache_state` Tauri command (read-only, no client lock) ✅
-- Optionally slim cache to `KalshiMarketSummary` instead of full `KalshiMarket`
-- **Target:** warm revisit under 300ms; category switch under 500ms
-
-### Phase 3 — Frontend critical-path trim (shipped 2026-06-23)
-
-- Keep `KalshiView` mounted across tab switches (avoid cold reload)
-- Combined IPC: `kalshi_get_dashboard_bootstrap` → `{ markets, categories, cache_full }` ✅ Shipped
-- Show partial-cache indicator when `full_catalog == false` ✅ Shipped (cacheLabel/partialCatalog in KalshiView)
-- Defer `KalshiPredictionsPanel` load; debounce `computeStakeAdjustment` in market detail ✅ Shipped (predictions deferred via `marketsReady`; stake debounce 300ms in MarketDetailPanel)
-- Calibration status inline display in MarketDetailPanel ✅ Shipped
-
-### Phase 4 — Startup prefetch and persistence (optional)
-
-- Prefetch quick cache at app startup (before user opens dashboard) ✅ Shipped (2026-06-26)
-- Delay full warm until quick cache exists + idle window (or explicit Refresh only) ✅ (quick prefetch + 8s delayed full warm)
-- Persist summary cache to SQLite for instant next-launch paint ✅ Shipped (2026-06-26; `kalshi_market_cache` + startup rehydrate)
-
----
-
-## Environment notes
-
-- Canonical WSL repo (`~/.openclaw/agents/coderclaw/workspace/kalshi-monster`) was unreachable as of 2026-06-17
-- `edge-eval` and `monster-edge-core` live at `C:\\Users\\ethan\\kalshi-build\\` (sibling paths)
+2. Multi-category ML classifiers (politics/econ/weather) — ⬜ In progress (2026-06-25; sidecar train/infer

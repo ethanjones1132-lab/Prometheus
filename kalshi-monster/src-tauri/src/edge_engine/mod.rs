@@ -28,6 +28,9 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+pub mod breakers;
+pub mod calibration;
+
 // ---------------------------------------------------------------------------
 // Configuration
 // ---------------------------------------------------------------------------

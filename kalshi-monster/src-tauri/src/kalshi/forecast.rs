@@ -243,6 +243,31 @@ pub async fn resolve_forecasts_for_market(
     Ok(count)
 }
 
+/// Resolved rows reduced to what the Phase 3 calibration math consumes
+/// (`edge_engine::calibration`), sorted **ascending by resolution time** —
+/// the ordering contract `rolling_degradation` requires.
+pub async fn resolved_forecasts_for_calibration(
+    pool: &Pool<Sqlite>,
+) -> Result<Vec<crate::edge_engine::calibration::ResolvedForecast>, String> {
+    let rows = sqlx::query(
+        "SELECT p_market, p_model, p_final, outcome FROM forecasts \
+         WHERE outcome IS NOT NULL ORDER BY resolved_at ASC, id ASC",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|e| format!("resolved forecasts for calibration: {e}"))?;
+
+    Ok(rows
+        .iter()
+        .map(|r| crate::edge_engine::calibration::ResolvedForecast {
+            p_market: r.get(0),
+            p_model: r.get(1),
+            p_final: r.get(2),
+            outcome: r.get::<i64, _>(3) == 1,
+        })
+        .collect())
+}
+
 /// Count of resolved forecasts (for the calibration gate).
 pub async fn resolved_count(pool: &Pool<Sqlite>) -> Result<i64, String> {
     let row = sqlx::query("SELECT COUNT(*) FROM forecasts WHERE outcome IS NOT NULL")
@@ -357,6 +382,37 @@ mod tests {
 
         let count = resolved_count(&pool).await.unwrap();
         assert_eq!(count, 1);
+    }
+
+    #[tokio::test]
+    async fn calibration_accessor_orders_by_resolution_time() {
+        let pool = mem_pool().await;
+        // Insert two rows and resolve them out of insertion order.
+        let a = insert_forecast(
+            &pool, "KXA", "2026-07-01T00:00:00Z", "2026-08-01T00:00:00Z",
+            0.60, Some(0.80), 0.65, "trade_yes", r#"[]"#, Some(10.0), None,
+        )
+        .await
+        .unwrap();
+        let b = insert_forecast(
+            &pool, "KXB", "2026-07-02T00:00:00Z", "2026-08-01T00:00:00Z",
+            0.40, None, 0.40, "pass", r#"[]"#, None, None,
+        )
+        .await
+        .unwrap();
+
+        // b resolves first, a later — accessor must return [b, a].
+        resolve_forecast(&pool, b, 0, "2026-08-02T00:00:00Z").await.unwrap();
+        resolve_forecast(&pool, a, 1, "2026-08-03T00:00:00Z").await.unwrap();
+
+        let rows = resolved_forecasts_for_calibration(&pool).await.unwrap();
+        assert_eq!(rows.len(), 2);
+        assert!((rows[0].p_market - 0.40).abs() < 1e-12);
+        assert!(!rows[0].outcome);
+        assert!(rows[0].p_model.is_none());
+        assert!((rows[1].p_market - 0.60).abs() < 1e-12);
+        assert!(rows[1].outcome);
+        assert!((rows[1].p_model.unwrap() - 0.80).abs() < 1e-12);
     }
 
     #[tokio::test]
