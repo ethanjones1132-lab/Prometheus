@@ -1,6 +1,15 @@
 # Kalshi Monster — Priority Roadmap
 
-Last updated: 2026-07-09 (KB-2a slice: Analyst context chip + degraded tape banner)
+Last updated: 2026-07-09 (KB-1 slice: last fetch error in bootstrap + stream spawn fix)
+
+## Maintenance notes (2026-07-09, cron KB-1) — catalog fetch diagnostics
+
+- **`KalshiClient`:** `last_fetch_error` field set on quick/full fetch failures and zero-market responses; cleared on successful non-empty cache.
+- **`build_kalshi_dashboard_data_quality_notes`:** appends **Last catalog fetch error:** when client has a stored error; bootstrap passes `client.last_fetch_error()`.
+- **`send_message_stream`:** forward task uses `tauri::async_runtime::spawn` (was bare `tokio::spawn`) — aligns with KB-1 spawn audit.
+- **Startup warm:** `lib.rs` records `set_last_fetch_error` when `ensure_quick_cache` fails at boot.
+- **`KalshiView`:** empty-tape error prefers the concrete fetch error string from `data_quality_notes`.
+- **Tests:** `data_quality_notes_include_stale_and_fetch_hints` asserts fetch-error note; `cargo check` + `tsc` clean.
 
 ## Maintenance notes (2026-07-09, overnight cron KB-2a) — Analyst market context UX
 

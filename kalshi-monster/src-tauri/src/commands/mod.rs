@@ -240,7 +240,7 @@ pub async fn send_message_stream(
     let app_clone = app.clone();
 
     // Spawn a task to forward chunks to Tauri events
-    let forward_handle = tokio::spawn(async move {
+    let forward_handle = tauri::async_runtime::spawn(async move {
         while let Some(chunk) = rx.recv().await {
             if chunk == "__STREAM_DONE__" {
                 let _ = app_clone.emit("stream-done", &session_id_clone);
@@ -1583,6 +1583,7 @@ pub(crate) fn build_kalshi_dashboard_data_quality_notes(
     cache_stale: bool,
     fetch_in_progress: bool,
     tape_market_count: usize,
+    last_fetch_error: Option<&str>,
 ) -> Vec<String> {
     let mut notes = if partial_catalog {
         vec!["Partial catalog loaded for fast first paint".to_string()]
@@ -1612,6 +1613,11 @@ pub(crate) fn build_kalshi_dashboard_data_quality_notes(
                 .to_string(),
         );
     }
+    if let Some(err) = last_fetch_error {
+        if !err.is_empty() {
+            notes.push(format!("Last catalog fetch error: {err}"));
+        }
+    }
     notes
 }
 
@@ -1638,6 +1644,7 @@ pub async fn kalshi_get_dashboard_bootstrap(
         client.is_cache_stale(),
         client.is_fetch_in_progress(),
         market_count,
+        client.last_fetch_error(),
     );
 
     let ml_phase3 = crate::ml_predictor::phase3_dashboard_summary(&db_pool).await;
@@ -2854,17 +2861,18 @@ mod kalshi_dashboard_bootstrap_tests {
 
     #[test]
     fn data_quality_notes_include_stale_and_fetch_hints() {
-        let notes = build_kalshi_dashboard_data_quality_notes(true, true, true, true, 0);
+        let notes = build_kalshi_dashboard_data_quality_notes(true, true, true, true, 0, Some("auth failed"));
         assert!(notes.iter().any(|n| n.contains("Partial catalog")));
         assert!(notes.iter().any(|n| n.contains("saved market snapshot")));
         assert!(notes.iter().any(|n| n.contains("older than 60s")));
         assert!(notes.iter().any(|n| n.contains("refresh in progress")));
         assert!(notes.iter().any(|n| n.contains("No markets loaded")));
+        assert!(notes.iter().any(|n| n.contains("Last catalog fetch error")));
     }
 
     #[test]
     fn data_quality_notes_full_catalog_without_extras() {
-        let notes = build_kalshi_dashboard_data_quality_notes(false, false, false, false, 12);
+        let notes = build_kalshi_dashboard_data_quality_notes(false, false, false, false, 12, None);
         assert_eq!(notes.len(), 1);
         assert!(notes[0].contains("Full catalog"));
     }

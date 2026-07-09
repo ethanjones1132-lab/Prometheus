@@ -176,6 +176,7 @@ pub fn run() {
             tauri::async_runtime::spawn(async move {
                 let mut client = kalshi_quick.lock().await;
                 if let Err(e) = client.ensure_quick_cache().await {
+                    client.set_last_fetch_error(&e);
                     tracing::warn!("kalshi startup quick cache prefetch failed: {}", e);
                 } else {
                     tracing::info!("kalshi startup quick cache prefetched");

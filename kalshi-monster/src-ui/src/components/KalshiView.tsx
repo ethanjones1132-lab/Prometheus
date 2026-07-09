@@ -195,9 +195,13 @@ export function KalshiView({ onAnalyzeMarket }: KalshiViewProps = {}) {
         setDataQualityNotes(bootstrap.data_quality_notes);
         setMlPhase3(bootstrap.ml_phase3 ?? null);
         if (bootstrap.market_count === 0 && bootstrap.markets.length === 0) {
+          const fetchErr = bootstrap.data_quality_notes.find((n) =>
+            n.includes('Last catalog fetch error'),
+          );
           const emptyNote = bootstrap.data_quality_notes.find((n) => n.includes('No markets loaded'));
           setError(
-            emptyNote ??
+            fetchErr?.replace('Last catalog fetch error: ', '') ??
+              emptyNote ??
               'No Kalshi markets loaded. Check API access in Settings, then use Refresh and snapshot.',
           );
         }

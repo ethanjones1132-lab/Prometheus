@@ -54,6 +54,8 @@ pub struct KalshiClient {
     persist_pool: Option<Arc<Pool<Sqlite>>>,
     /// True when in-memory cache was restored from SQLite (not yet refreshed from API)
     cache_from_persisted: bool,
+    /// Last Kalshi catalog fetch error (startup warm or dashboard quick load) for UI hints
+    last_fetch_error: Option<String>,
 }
 
 impl KalshiClient {
@@ -76,7 +78,20 @@ impl KalshiClient {
             fetch_in_progress: Arc::new(AtomicBool::new(false)),
             persist_pool,
             cache_from_persisted: false,
+            last_fetch_error: None,
         }
+    }
+
+    pub fn last_fetch_error(&self) -> Option<&str> {
+        self.last_fetch_error.as_deref()
+    }
+
+    pub fn set_last_fetch_error(&mut self, message: impl Into<String>) {
+        self.last_fetch_error = Some(message.into());
+    }
+
+    fn clear_fetch_error(&mut self) {
+        self.last_fetch_error = None;
     }
 
     fn base_url(&self) -> &str {
@@ -578,12 +593,25 @@ impl KalshiClient {
             QUICK_LOAD_PAGES,
             FLAT_MARKET_PAGE_LIMIT
         );
-        let markets = self.fetch_markets_flat_resilient(QUICK_LOAD_PAGES).await?;
+        let markets = match self.fetch_markets_flat_resilient(QUICK_LOAD_PAGES).await {
+            Ok(m) => m,
+            Err(e) => {
+                self.set_last_fetch_error(&e);
+                return Err(e);
+            }
+        };
         tracing::info!(
             "Kalshi quick cache ready: {} markets in {}ms",
             markets.len(),
             started.elapsed().as_millis()
         );
+        if markets.is_empty() {
+            self.set_last_fetch_error(
+                "Kalshi API returned zero open markets — check credentials in Settings",
+            );
+        } else {
+            self.clear_fetch_error();
+        }
         self.store_cache(markets, false);
         Ok(())
     }
@@ -626,6 +654,13 @@ impl KalshiClient {
             all_markets.len(),
             started.elapsed().as_millis()
         );
+        if all_markets.is_empty() {
+            self.set_last_fetch_error(
+                "Kalshi full catalog refresh returned zero markets — check API access",
+            );
+        } else {
+            self.clear_fetch_error();
+        }
         self.store_cache(all_markets.clone(), true);
         Ok(all_markets)
     }
