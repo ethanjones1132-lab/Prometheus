@@ -1589,4 +1589,362 @@ button {
   .categoryPulse div {
     flex-direction: column;
   }
+
+  .analystPage {
+    grid-template-columns: 1fr;
+  }
+
+  .analystSessions {
+    max-height: 200px;
+    border-right: 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  }
+}
+
+/* ── Analyst workspace (KB-2) ───────────────────────────────────── */
+
+.analystPage {
+  display: grid;
+  grid-template-columns: minmax(200px, 260px) minmax(0, 1fr);
+  gap: 0;
+  max-width: none;
+  height: calc(100vh - 48px);
+  margin: 0;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 18px;
+  overflow: hidden;
+  background: rgba(9, 9, 8, 0.72);
+}
+
+.analystSessions {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-right: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(0, 0, 0, 0.35);
+  padding: 14px 12px;
+}
+
+.analystSessionsHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.sessionList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sessionList li {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 4px;
+  align-items: stretch;
+}
+
+.sessionItem {
+  text-align: left;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: transparent;
+  color: #c9c9c0;
+  border: 1px solid transparent;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sessionItem strong {
+  font-size: 13px;
+  letter-spacing: -0.02em;
+}
+
+.sessionItem span {
+  font-size: 11px;
+}
+
+.sessionItem:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.sessionItem.active {
+  border-color: rgba(201, 168, 76, 0.35);
+  background: rgba(201, 168, 76, 0.1);
+  color: #f5f5f0;
+}
+
+.sessionDelete {
+  padding: 4px 8px !important;
+  min-width: 0;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.sessionEmpty {
+  padding: 12px;
+  font-size: 12px;
+}
+
+.analystMain {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  padding: 16px 18px 12px;
+}
+
+.analystHeader {
+  margin-bottom: 10px;
+  align-items: flex-start;
+}
+
+.analystHeaderMeta {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.statusPill {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.statusPill.ok {
+  color: #8fd4a0;
+  border-color: rgba(61, 154, 95, 0.4);
+  background: rgba(61, 154, 95, 0.12);
+}
+
+.statusPill.warn {
+  color: #e3b341;
+  border-color: rgba(210, 153, 34, 0.45);
+  background: rgba(61, 46, 0, 0.45);
+}
+
+.analystContextChip {
+  margin-bottom: 10px;
+  padding: 12px 14px;
+}
+
+.analystContextRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.contextTicker {
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: rgba(201, 168, 76, 0.2);
+  color: #c9a84c;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.analystDegraded {
+  margin-bottom: 10px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(210, 153, 34, 0.45);
+  background: rgba(61, 46, 0, 0.4);
+  color: #e3b341;
+  font-size: 13px;
+}
+
+.analystDegraded ul {
+  margin: 8px 0;
+  padding-left: 18px;
+}
+
+.analystDegraded .primaryBtn {
+  margin-top: 8px;
+}
+
+.analystQuickRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.chipBtn {
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.04);
+  color: #d2d2c8;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.chipBtn:hover:not(:disabled) {
+  border-color: rgba(201, 168, 76, 0.4);
+  color: #f5f5f0;
+}
+
+.chipBtn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.analystMessages {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 4px 2px 12px;
+}
+
+.analystEmpty {
+  margin: 28px auto;
+  max-width: 420px;
+  text-align: center;
+}
+
+.analystEmpty h3 {
+  margin: 0 0 8px;
+  letter-spacing: -0.03em;
+}
+
+.messageBubble {
+  max-width: min(780px, 92%);
+  padding: 12px 16px;
+  border-radius: 14px;
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.userBubble {
+  align-self: flex-end;
+  background: linear-gradient(145deg, rgba(201, 168, 76, 0.28), rgba(201, 168, 76, 0.12));
+  border: 1px solid rgba(201, 168, 76, 0.35);
+  color: #f5f5f0;
+}
+
+.assistantBubble {
+  align-self: flex-start;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+}
+
+.streamingBubble {
+  border-color: rgba(201, 168, 76, 0.35);
+}
+
+.messageContent {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.messageMeta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+
+.reasoning {
+  margin-bottom: 8px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.28);
+  font-size: 12px;
+  color: #a9a9a0;
+}
+
+.reasoning summary {
+  cursor: pointer;
+  color: #c9a84c;
+  font-weight: 600;
+}
+
+.streamingDots {
+  color: #c9a84c;
+  font-weight: 600;
+}
+
+.analystComposer {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+  align-items: end;
+  padding-top: 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.analystInput {
+  width: 100%;
+  resize: vertical;
+  min-height: 52px;
+  max-height: 160px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(0, 0, 0, 0.4);
+  color: #f5f5f0;
+  outline: none;
+}
+
+.analystInput:focus {
+  border-color: rgba(201, 168, 76, 0.45);
+}
+
+.composerActions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.analystError {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(248, 81, 73, 0.4);
+  background: rgba(63, 21, 24, 0.55);
+  color: #f85149;
+  font-size: 13px;
+}
+
+.analystErrorActions {
+  display: flex;
+  gap: 8px;
+}
+
+.analystPaperMsg {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(61, 154, 95, 0.35);
+  background: rgba(61, 154, 95, 0.1);
+  color: #8fd4a0;
+  font-size: 13px;
 }

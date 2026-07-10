@@ -1,21 +1,37 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { useChat } from '../hooks/useChat';
+import { kalshiApi } from '../services/kalshi';
 import type { ChatMessage } from '../types';
+import type { KalshiCategoryStat } from '../types/kalshi';
+import { extractPaperDecision } from '../utils/paperFromChat';
 
-const QUICK_PROMPTS = [
-  { label: 'Mispriced Markets', query: 'What are the most mispriced markets on Kalshi today? Analyze implied probabilities vs expected values.' },
-  { label: 'Fed Rate Analysis', query: 'Analyze the latest Fed rate decision contracts on Kalshi. What do the markets predict?' },
-  { label: 'Election Edge', query: 'Which election markets on Kalshi currently have the best edge? Consider volume, spread, and recent movement.' },
-  { label: 'Crypto Predictions', query: 'What are the top crypto price predictions on Kalshi? Analyze BTC and ETH contracts.' },
-  { label: 'High Volume', query: 'Show me the highest volume markets on Kalshi with favorable odds. What trends do you see?' },
-  { label: 'Weather Markets', query: 'Are there any weather-related prediction markets on Kalshi? What do they indicate?' },
-  { label: 'Economic Indicators', query: 'What economic indicator markets (CPI, GDP, unemployment) are available on Kalshi? Any mispricings?' },
-  { label: 'Parlay Opportunities', query: 'Identify potential parlay opportunities on Kalshi with uncorrelated or positively correlated outcomes.' },
+const FALLBACK_PROMPTS = [
+  {
+    label: 'Mispriced markets',
+    query:
+      'What are the most mispriced markets on Kalshi today? Compare implied probabilities to a careful fair value.',
+  },
+  {
+    label: 'Fed / rates',
+    query: 'Analyze the latest Fed / rate decision contracts on Kalshi. What does the market price imply?',
+  },
+  {
+    label: 'High volume',
+    query: 'Show the highest-volume open Kalshi markets and where the book looks thin vs liquid.',
+  },
+  {
+    label: 'Economic releases',
+    query: 'Which CPI, GDP, or unemployment contracts look interesting this week? Flag catalysts.',
+  },
 ];
 
 interface ChatViewProps {
   initialPrompt?: string | null;
   onPromptConsumed?: () => void;
+  /** Switch shell to Command desk when tape is cold (KB-1 path). */
+  onOpenMarkets?: () => void;
+  /** Switch to Paper portfolio after a successful paper record. */
+  onOpenPaper?: () => void;
 }
 
 function extractTickerFromPrompt(prompt: string): { ticker: string; title: string } | null {
@@ -24,19 +40,50 @@ function extractTickerFromPrompt(prompt: string): { ticker: string; title: strin
   return { ticker: m[1], title: m[2] };
 }
 
-export function ChatView({ initialPrompt, onPromptConsumed }: ChatViewProps = {}) {
-  const { messages, isStreaming, error, sendMessage, initSession, kalshiContextStatus } = useChat();
+export function ChatView({
+  initialPrompt,
+  onPromptConsumed,
+  onOpenMarkets,
+  onOpenPaper,
+}: ChatViewProps = {}) {
+  const {
+    messages,
+    sessions,
+    sessionId,
+    isStreaming,
+    streamingText,
+    streamingThought,
+    error,
+    lastFailedPrompt,
+    sendMessage,
+    initSession,
+    selectSession,
+    deleteSession,
+    refreshSessions,
+    cancelStream,
+    retryLast,
+    clearError,
+    kalshiContextStatus,
+  } = useChat();
+
   const [input, setInput] = useState('');
   const [activeContext, setActiveContext] = useState<{ ticker: string; title: string } | null>(null);
+  const [categories, setCategories] = useState<KalshiCategoryStat[]>([]);
+  const [paperBusy, setPaperBusy] = useState<string | null>(null);
+  const [paperMsg, setPaperMsg] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
-    initSession();
-  }, [initSession]);
+    void initSession().then(() => refreshSessions());
+  }, [initSession, refreshSessions]);
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+    const el = messagesEndRef.current;
+    if (el && typeof el.scrollIntoView === 'function') {
+      el.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [messages, streamingText, isStreaming]);
 
   useEffect(() => {
     if (!initialPrompt) return;
@@ -44,341 +91,337 @@ export function ChatView({ initialPrompt, onPromptConsumed }: ChatViewProps = {}
     const ctx = extractTickerFromPrompt(initialPrompt);
     if (ctx) setActiveContext(ctx);
     onPromptConsumed?.();
-  }, [initialPrompt]);
+    // Focus composer so user can send immediately
+    queueMicrotask(() => inputRef.current?.focus());
+  }, [initialPrompt, onPromptConsumed]);
+
+  useEffect(() => {
+    let cancelled = false;
+    kalshiApi
+      .getCategoryStats()
+      .then((stats) => {
+        if (!cancelled) setCategories(stats.slice(0, 8));
+      })
+      .catch(() => {
+        if (!cancelled) setCategories([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [kalshiContextStatus?.tape_market_count]);
+
+  const livePrompts = useMemo(() => {
+    if (kalshiContextStatus?.degraded || categories.length === 0) {
+      return FALLBACK_PROMPTS;
+    }
+    const fromCats = categories.slice(0, 4).map((c) => ({
+      label: c.category,
+      query: `Analyze the top open Kalshi markets in ${c.category}. Note volume ($${Math.round(c.volume_24h).toLocaleString()} 24h across ${c.count} markets) and flag any that look mispriced.`,
+    }));
+    return [...fromCats, ...FALLBACK_PROMPTS.slice(0, 2)];
+  }, [categories, kalshiContextStatus?.degraded]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!input.trim() || isStreaming) return;
-    sendMessage(input.trim());
+    void sendMessage(input.trim());
     setInput('');
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      if (!input.trim() || isStreaming) return;
+      void sendMessage(input.trim());
+      setInput('');
+    }
   };
 
   const handleQuickPrompt = (query: string) => {
     if (isStreaming) return;
-    sendMessage(query);
+    void sendMessage(query);
   };
 
+  const recordPaper = async (message: ChatMessage) => {
+    const decision = extractPaperDecision(message.content, {
+      ticker: activeContext?.ticker,
+      title: activeContext?.title,
+    });
+    if (!decision) {
+      setPaperMsg('Could not parse a YES/NO decision + ticker from this reply. Ask the model for a structured JSON decision.');
+      return;
+    }
+    setPaperBusy(message.id);
+    setPaperMsg(null);
+    try {
+      const id = await kalshiApi.recordPaperDecision(sessionId ?? 'analyst', decision);
+      setPaperMsg(
+        `Paper ${decision.decision} on ${decision.ticker} recorded (${id.slice(0, 8)}…). Ledger + forecast row written.`,
+      );
+    } catch (e) {
+      setPaperMsg(e instanceof Error ? e.message : String(e));
+    } finally {
+      setPaperBusy(null);
+    }
+  };
+
+  const tapeCold = kalshiContextStatus?.degraded === true;
+  const tapeCount = kalshiContextStatus?.tape_market_count ?? 0;
+
   return (
-    <div style={styles.container}>
-      <div style={styles.header}>
-        <h2 style={styles.title}>🧠 Kalshi Intelligence</h2>
-        <span style={styles.subtitle}>AI-Powered Market Analysis</span>
-      </div>
-
-            {/* Active Market Context */}
-      {activeContext && (
-        <div style={styles.contextChip}>
-          <div style={styles.contextChipInner}>
-            <span style={styles.contextBadge}>🔍 {activeContext.ticker}</span>
-            <span style={styles.contextTitle}>{activeContext.title}</span>
-            <button
-              style={styles.contextDismiss}
-              onClick={() => setActiveContext(null)}
-              title="Dismiss context"
-            >
-              ×
-            </button>
-          </div>
-          <div style={styles.contextHint}>
-            The AI sees live Kalshi market data. Responses factor in current prices, volume, and category trends.
-          </div>
-        </div>
-      )}
-
-      {/* Degraded Kalshi tape (KB-2a) */}
-      {kalshiContextStatus?.degraded && (
-        <div style={styles.degradedBanner} role="alert">
-          <strong>⚠️ Limited Kalshi market context</strong>
-          {kalshiContextStatus.reasons.length > 0 ? (
-            <ul style={styles.degradedList}>
-              {kalshiContextStatus.reasons.map((reason) => (
-                <li key={reason}>{reason}</li>
-              ))}
-            </ul>
-          ) : (
-            <span> Market tape has {kalshiContextStatus.tape_market_count} markets — refresh the catalog on Markets.</span>
-          )}
-        </div>
-      )}
-
-      {/* Legacy hint when a ticker is pinned but tape looks cold before first message */}
-      {activeContext && messages.length === 0 && !isStreaming && kalshiContextStatus?.degraded && (
-        <div style={styles.contextHintOnly}>
-          Pinned market: responses may omit live tape until you refresh the catalog.
-        </div>
-      )}
-
-{/* Quick Prompts */}
-      <div style={styles.quickPrompts}>
-        {QUICK_PROMPTS.map((prompt) => (
+    <section className="page analystPage" aria-label="Analyst workspace">
+      <aside className="analystSessions" aria-label="Chat sessions">
+        <div className="analystSessionsHeader">
+          <span className="panelEyebrow">Sessions</span>
           <button
-            key={prompt.label}
-            style={styles.quickPromptBtn}
-            onClick={() => handleQuickPrompt(prompt.query)}
+            type="button"
+            className="ghostBtn"
             disabled={isStreaming}
+            onClick={() => void initSession()}
           >
-            {prompt.label}
+            New
           </button>
-        ))}
-      </div>
-
-      {/* Messages */}
-      <div style={styles.messages}>
-        {messages.length === 0 && (
-          <div style={styles.emptyState}>
-            <p>Ask about Kalshi markets, get AI-powered analysis</p>
-            <p style={styles.hint}>Try a quick prompt above or type your own question</p>
-          </div>
-        )}
-        {messages.map((msg) => (
-          <MessageBubble key={msg.id} message={msg} />
-        ))}
-        {isStreaming && (
-          <div style={styles.streaming}>
-            <span style={styles.dot}>●</span>
-            <span style={styles.dot}>●</span>
-            <span style={styles.dot}>●</span>
-          </div>
-        )}
-        <div ref={messagesEndRef} />
-      </div>
-
-      {/* Error */}
-      {error && (
-        <div style={styles.error}>
-          ⚠️ {error}
         </div>
-      )}
+        <ul className="sessionList">
+          {sessions.length === 0 && (
+            <li className="sessionEmpty muted">No saved threads yet. Send a message to start.</li>
+          )}
+          {sessions.map((s) => (
+            <li key={s.id}>
+              <button
+                type="button"
+                className={`sessionItem ${s.id === sessionId ? 'active' : ''}`}
+                disabled={isStreaming}
+                onClick={() => void selectSession(s.id)}
+              >
+                <strong>{s.name || 'Untitled'}</strong>
+                <span className="muted">
+                  {s.message_count} msg · {new Date(s.updated_at).toLocaleString()}
+                </span>
+              </button>
+              <button
+                type="button"
+                className="sessionDelete ghostBtn danger"
+                title="Delete session"
+                disabled={isStreaming}
+                onClick={() => {
+                  if (window.confirm('Delete this session?')) void deleteSession(s.id);
+                }}
+              >
+                ×
+              </button>
+            </li>
+          ))}
+        </ul>
+      </aside>
 
-      {/* Input */}
-      <form style={styles.inputBar} onSubmit={handleSubmit}>
-        <input
-          style={styles.input}
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          placeholder="Ask about prediction markets..."
-          disabled={isStreaming}
-        />
-        <button
-          type="submit"
-          style={styles.sendBtn}
-          disabled={isStreaming || !input.trim()}
-        >
-          Send
-        </button>
-      </form>
-    </div>
+      <div className="analystMain">
+        <header className="kalshiHeader analystHeader">
+          <div>
+            <p className="panelEyebrow">Analyst</p>
+            <h2>Kalshi intelligence</h2>
+            <p className="muted">
+              Live tape context, structured decisions, and paper journal hooks — not order routing.
+            </p>
+          </div>
+          <div className="analystHeaderMeta">
+            <span className={`statusPill ${tapeCold ? 'warn' : 'ok'}`}>
+              {tapeCold ? `Tape limited (${tapeCount})` : `Tape ready · ${tapeCount} markets`}
+            </span>
+          </div>
+        </header>
+
+        {activeContext && (
+          <div className="analystContextChip insightCard accent">
+            <div className="analystContextRow">
+              <code className="contextTicker">{activeContext.ticker}</code>
+              <strong>{activeContext.title}</strong>
+              <button type="button" className="ghostBtn" onClick={() => setActiveContext(null)}>
+                Dismiss
+              </button>
+            </div>
+            <p className="muted">
+              Pinned from Command desk. Replies inject live Kalshi context when the tape is healthy.
+            </p>
+          </div>
+        )}
+
+        {tapeCold && (
+          <div className="analystDegraded" role="alert">
+            <strong>Limited Kalshi market context</strong>
+            {kalshiContextStatus?.reasons?.length ? (
+              <ul>
+                {kalshiContextStatus.reasons.map((r) => (
+                  <li key={r}>{r}</li>
+                ))}
+              </ul>
+            ) : (
+              <p className="muted">Market tape is cold or failed to load.</p>
+            )}
+            {onOpenMarkets && (
+              <button type="button" className="primaryBtn" onClick={onOpenMarkets}>
+                Open Command desk &amp; refresh tape
+              </button>
+            )}
+          </div>
+        )}
+
+        <div className="analystQuickRow">
+          {livePrompts.map((p) => (
+            <button
+              key={p.label}
+              type="button"
+              className="chipBtn"
+              disabled={isStreaming}
+              onClick={() => handleQuickPrompt(p.query)}
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
+
+        <div className="analystMessages" role="log" aria-live="polite">
+          {messages.length === 0 && !isStreaming && (
+            <div className="analystEmpty">
+              <h3>Ask with the book in view</h3>
+              {tapeCold ? (
+                <>
+                  <p className="muted">
+                    The catalog is not loaded, so analysis will be under-informed. Refresh markets first,
+                    then return here or use <strong>Analyze with AI</strong> on a contract.
+                  </p>
+                  {onOpenMarkets && (
+                    <button type="button" className="primaryBtn" onClick={onOpenMarkets}>
+                      Go to Command desk
+                    </button>
+                  )}
+                </>
+              ) : (
+                <p className="muted">
+                  Tape looks ready ({tapeCount} markets). Use a quick prompt, pin a market from Command
+                  desk, or type a question. Prefer structured YES/NO + stake if you want one-click paper.
+                </p>
+              )}
+            </div>
+          )}
+
+          {messages.map((msg) => (
+            <MessageBubble
+              key={msg.id}
+              message={msg}
+              paperBusy={paperBusy === msg.id}
+              onRecordPaper={msg.role === 'assistant' ? () => void recordPaper(msg) : undefined}
+            />
+          ))}
+
+          {isStreaming && (
+            <div className="messageBubble assistantBubble streamingBubble">
+              {streamingThought && (
+                <details className="reasoning" open>
+                  <summary>Reasoning stream</summary>
+                  <p>{streamingThought}</p>
+                </details>
+              )}
+              <div className="messageContent">
+                {streamingText || <span className="streamingDots" aria-label="Streaming">Analyzing…</span>}
+              </div>
+              <button type="button" className="ghostBtn" onClick={cancelStream}>
+                Stop
+              </button>
+            </div>
+          )}
+          <div ref={messagesEndRef} />
+        </div>
+
+        {paperMsg && (
+          <div className="analystPaperMsg">
+            <span>{paperMsg}</span>
+            {onOpenPaper && paperMsg.includes('recorded') && (
+              <button type="button" className="ghostBtn" onClick={onOpenPaper}>
+                Open paper portfolio
+              </button>
+            )}
+          </div>
+        )}
+
+        {error && (
+          <div className="analystError" role="alert">
+            <span>{error}</span>
+            <div className="analystErrorActions">
+              {lastFailedPrompt && (
+                <button type="button" className="primaryBtn" disabled={isStreaming} onClick={() => void retryLast()}>
+                  Retry
+                </button>
+              )}
+              <button type="button" className="ghostBtn" onClick={clearError}>
+                Dismiss
+              </button>
+            </div>
+          </div>
+        )}
+
+        <form className="analystComposer" onSubmit={handleSubmit}>
+          <textarea
+            ref={inputRef}
+            className="analystInput"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder={
+              activeContext
+                ? `Ask about ${activeContext.ticker}… (Enter to send, Shift+Enter for newline)`
+                : 'Ask about prediction markets… (Enter to send)'
+            }
+            disabled={isStreaming}
+            rows={2}
+          />
+          <div className="composerActions">
+            {isStreaming ? (
+              <button type="button" className="ghostBtn" onClick={cancelStream}>
+                Stop
+              </button>
+            ) : (
+              <button type="submit" className="primaryBtn" disabled={!input.trim()}>
+                Send
+              </button>
+            )}
+          </div>
+        </form>
+      </div>
+    </section>
   );
 }
 
-function MessageBubble({ message }: { message: ChatMessage }) {
+function MessageBubble({
+  message,
+  onRecordPaper,
+  paperBusy,
+}: {
+  message: ChatMessage;
+  onRecordPaper?: () => void;
+  paperBusy?: boolean;
+}) {
   const isUser = message.role === 'user';
+  const canPaper = !isUser && onRecordPaper && extractPaperDecision(message.content) != null;
+
   return (
-    <div style={{
-      ...styles.messageBubble,
-      ...(isUser ? styles.userBubble : styles.assistantBubble),
-    }}>
+    <div className={`messageBubble ${isUser ? 'userBubble' : 'assistantBubble'}`}>
       {message.reasoning && (
-        <details style={styles.reasoning}>
-          <summary>💭 Reasoning</summary>
+        <details className="reasoning">
+          <summary>Reasoning</summary>
           <p>{message.reasoning}</p>
         </details>
       )}
-      <div style={styles.messageContent}>{message.content}</div>
-      {message.tokens_used != null && (
-        <span style={styles.tokens}>{message.tokens_used} tokens</span>
-      )}
+      <div className="messageContent">{message.content}</div>
+      <div className="messageMeta">
+        {message.tokens_used != null && <span className="muted">{message.tokens_used} tokens</span>}
+        {canPaper && (
+          <button type="button" className="ghostBtn" disabled={paperBusy} onClick={onRecordPaper}>
+            {paperBusy ? 'Recording…' : 'Record paper decision'}
+          </button>
+        )}
+      </div>
     </div>
   );
 }
 
-const styles: Record<string, React.CSSProperties> = {
-  container: {
-    display: 'flex',
-    flexDirection: 'column',
-    height: '100%',
-    background: '#0d1117',
-    color: '#c9d1d9',
-  },
-  header: {
-    padding: '16px 20px',
-    borderBottom: '1px solid #30363d',
-  },
-  title: {
-    margin: 0,
-    fontSize: '18px',
-    color: '#58a6ff',
-  },
-  subtitle: {
-    fontSize: '12px',
-    color: '#8b949e',
-  },
-  quickPrompts: {
-    display: 'flex',
-    flexWrap: 'wrap',
-    gap: '8px',
-    padding: '12px 16px',
-    borderBottom: '1px solid #30363d',
-  },
-  quickPromptBtn: {
-    padding: '6px 12px',
-    borderRadius: '16px',
-    border: '1px solid #30363d',
-    background: '#161b22',
-    color: '#c9d1d9',
-    fontSize: '12px',
-    cursor: 'pointer',
-  },
-  messages: {
-    flex: 1,
-    overflowY: 'auto',
-    padding: '16px',
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '12px',
-  },
-  emptyState: {
-    textAlign: 'center' as const,
-    color: '#8b949e',
-    marginTop: '40px',
-  },
-  hint: {
-    fontSize: '13px',
-    color: '#6e7681',
-  },
-  messageBubble: {
-    maxWidth: '80%',
-    padding: '12px 16px',
-    borderRadius: '12px',
-    fontSize: '14px',
-    lineHeight: '1.5',
-  },
-  userBubble: {
-    alignSelf: 'flex-end',
-    background: '#238636',
-    color: '#fff',
-  },
-  assistantBubble: {
-    alignSelf: 'flex-start',
-    background: '#161b22',
-    border: '1px solid #30363d',
-  },
-  reasoning: {
-    marginBottom: '8px',
-    padding: '8px',
-    background: '#0d1117',
-    borderRadius: '8px',
-    fontSize: '12px',
-    color: '#8b949e',
-  },
-  messageContent: {
-    whiteSpace: 'pre-wrap',
-  },
-  tokens: {
-    display: 'block',
-    marginTop: '4px',
-    fontSize: '10px',
-    color: '#6e7681',
-  },
-  streaming: {
-    display: 'flex',
-    gap: '4px',
-    padding: '12px 16px',
-    alignSelf: 'flex-start',
-  },
-  dot: {
-    color: '#58a6ff',
-    animation: 'pulse 1.5s infinite',
-  },
-  error: {
-    padding: '8px 16px',
-    background: '#3f1518',
-    color: '#f85149',
-    fontSize: '13px',
-    borderTop: '1px solid #30363d',
-  },
-  inputBar: {
-    display: 'flex',
-    gap: '8px',
-    padding: '12px 16px',
-    borderTop: '1px solid #30363d',
-  },
-  input: {
-    flex: 1,
-    padding: '10px 14px',
-    borderRadius: '8px',
-    border: '1px solid #30363d',
-    background: '#0d1117',
-    color: '#c9d1d9',
-    fontSize: '14px',
-    outline: 'none',
-  },
-  sendBtn: {
-    padding: '10px 20px',
-    borderRadius: '8px',
-    border: 'none',
-    background: '#238636',
-    color: '#fff',
-    fontSize: '14px',
-    cursor: 'pointer',
-  },
-  contextChip: {
-    margin: '12px 16px 0',
-    padding: '10px 14px',
-    background: '#1a2332',
-    border: '1px solid #1f6feb',
-    borderRadius: '10px',
-  },
-  contextChipInner: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '10px',
-  },
-  contextBadge: {
-    padding: '2px 8px',
-    background: '#1f6feb',
-    color: '#fff',
-    borderRadius: '4px',
-    fontSize: '12px',
-    fontWeight: 600,
-    fontFamily: 'monospace',
-  },
-  contextTitle: {
-    flex: 1,
-    fontSize: '13px',
-    color: '#c9d1d9',
-    fontWeight: 500,
-  },
-  contextDismiss: {
-    padding: '0 4px',
-    background: 'none',
-    border: 'none',
-    color: '#8b949e',
-    fontSize: '16px',
-    cursor: 'pointer',
-    lineHeight: 1,
-  },
-  contextHint: {
-    marginTop: '6px',
-    fontSize: '11px',
-    color: '#6e7681',
-  },
-  degradedBanner: {
-    margin: '8px 16px 0',
-    padding: '8px 12px',
-    background: '#3d2e00',
-    border: '1px solid #d29922',
-    borderRadius: '6px',
-    fontSize: '12px',
-    color: '#e3b341',
-  },
-  degradedList: {
-    margin: '6px 0 0',
-    paddingLeft: '18px',
-  },
-  contextHintOnly: {
-    margin: '4px 16px 0',
-    fontSize: '11px',
-    color: '#8b949e',
-  },
-};

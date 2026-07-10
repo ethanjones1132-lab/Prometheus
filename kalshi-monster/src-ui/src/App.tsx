@@ -62,6 +62,8 @@ export default function App() {
           <ChatView
             initialPrompt={analystPrompt}
             onPromptConsumed={() => setAnalystPrompt(null)}
+            onOpenMarkets={() => setActiveTab('markets')}
+            onOpenPaper={() => setActiveTab('predictions')}
           />
         )}
         {activeTab === 'predictions' && (

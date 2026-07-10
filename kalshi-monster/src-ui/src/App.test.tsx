@@ -14,10 +14,21 @@ vi.mock('./components/KalshiView', () => ({
 }));
 
 vi.mock('./components/ChatView', () => ({
-  ChatView: ({ initialPrompt }: { initialPrompt?: string | null }) => (
-    <main>
+  ChatView: ({
+    initialPrompt,
+    onOpenMarkets,
+  }: {
+    initialPrompt?: string | null;
+    onOpenMarkets?: () => void;
+  }) => (
+    <main aria-label="Analyst workspace">
       Analyst chat surface
       {initialPrompt && <p>{initialPrompt}</p>}
+      {onOpenMarkets && (
+        <button type="button" onClick={onOpenMarkets}>
+          Open Command desk &amp; refresh tape
+        </button>
+      )}
     </main>
   ),
 }));

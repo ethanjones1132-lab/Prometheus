@@ -14,13 +14,38 @@ Ordered by blocking / plan value. Do not invent calibration outcomes.
 |---|------|-----|--------------------|
 | **1** | ~~**KB-1 live verify**~~ | Done (catalog path) | See 2026-07-10 entry below. **Desktop UI paint** still a one-time human rebuild check. |
 | **2** | **Calibration flywheel (ongoing)** | Gate needs *resolved* rows | Ledger has pending forecasts; keep analyze + resolve as markets settle. Gate still LOCKED (resolved=0). |
-| **3** | **KB-2b–e Analyst UX** | Fleet backlog after KB-2a | See `docs/fleet-backlog-2026-07-08.md`: layout/sessions (2b), paper hook from chat (2c), streaming polish, contextual prompts. |
+| **3** | ~~**KB-2b–e Analyst UX**~~ | Shipped 2026-07-10 | Sessions rail, design tokens, streaming + stop/retry, live prompts, paper-from-chat, markets CTA when tape cold. Polish/rename session name optional later. |
 | **4** | **Phase 3 productization** | Math exists; ops path incomplete | Reliability diagram in UI; λ re-fit job from ledger; **breaker state persistence** + evaluate before any future order path (no live orders until gate). |
 | **5** | **Phase 1 leftovers** | Sidecar ops / data breadth | Settings UI for bridge start/status; expand tracker toward plan Appendix A; `externalBin` packaging later. |
 | **6** | **More agents (honest data only)** | p_model coverage | Fincept v4 extraction spike (§13.2) *or* native agents when data exists (macro/EconDB, news). Until then keep `probability=None`. |
 | **7** | **AGPL isolation hygiene** | Plan §3 Rule 1 | Split `fincept-sidecar` to its own public repo before any Fincept-derived code lands. |
 
 **Hard constraints (unchanged):** no fabricated ledger rows; no live order-execution until the gate passes for real; AGPL boundary stays process/HTTP only.
+
+---
+
+## 2026-07-10 — KB-2 Analyst UX (b–e)
+
+### Shipped
+
+| Slice | Change |
+|-------|--------|
+| **Layout** | `ChatView` uses app tokens (`.analystPage`, gold/user bubbles) — no GitHub-dark inline sheet |
+| **Sessions** | Rail: list / New / open history / Delete (`list_chat_sessions`, `get_session_messages`, `delete_chat_session`) |
+| **Streaming** | Default `sendMessageStream` + `stream-chunk` / thought / error; **Stop** + **Retry** on failure |
+| **Tape UX** | Degraded banner + **Open Command desk**; empty state cold-tape CTA; live category quick prompts when tape healthy |
+| **Paper (2c)** | `extractPaperDecision` + **Record paper decision** on assistant messages → `kalshi_record_paper_decision` |
+| **Shell** | `App` passes `onOpenMarkets` / `onOpenPaper` |
+
+### Verification
+
+- vitest: `ChatView.test.tsx`, `paperFromChat.test.ts`, `App.test.tsx`
+
+### Still open (optional polish)
+
+- Session rename IPC (create/delete only today)
+- True backend stream cancel (UI stop only)
+- Edge Board card embedded in chat
 
 ---
 
