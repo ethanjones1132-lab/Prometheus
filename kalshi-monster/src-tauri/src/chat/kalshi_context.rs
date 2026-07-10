@@ -1,5 +1,10 @@
 use crate::kalshi::client::KalshiClient;
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
+
+use super::market_gate::{
+    assess_market_gate_for_ticker, format_gate_line, MarketGate,
+};
 
 // ═══════════════════════════════════════════════════════════════
 // Kalshi Market Context Builder
@@ -137,6 +142,57 @@ pub fn assess_kalshi_chat_context(client: &KalshiClient) -> KalshiChatContextSta
     }
 }
 
+/// Max characters of resolution rules injected per market (full rules preferred over vague summary).
+const RULES_INJECT_MAX_CHARS: usize = 2500;
+
+/// Format resolution rules for prompt injection (truncate long legal text safely).
+pub fn format_resolution_rules(rules: &str, max_chars: usize) -> String {
+    let trimmed = rules.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    let char_len = trimmed.chars().count();
+    if char_len <= max_chars {
+        return trimmed.to_string();
+    }
+    // Prefer cutting on a word boundary near the limit (char-safe for UTF-8).
+    let mut truncated: String = trimmed.chars().take(max_chars).collect();
+    if let Some(idx) = truncated.rfind(|c: char| c.is_whitespace()) {
+        if idx > max_chars / 2 {
+            truncated.truncate(idx);
+        }
+    }
+    format!("{}… [rules truncated]", truncated.trim_end())
+}
+
+fn append_resolution_rules_block(ctx: &mut String, ticker: &str, title: &str, rules: &str, provisional: bool, can_close_early: bool) {
+    ctx.push_str(&format!("### {} — {}\n", ticker, title));
+    if provisional {
+        ctx.push_str("- Flag: PROVISIONAL settlement\n");
+    }
+    if can_close_early {
+        ctx.push_str("- Flag: can close early\n");
+    }
+    let formatted = format_resolution_rules(rules, RULES_INJECT_MAX_CHARS);
+    if formatted.is_empty() {
+        ctx.push_str("- Resolution rules: (missing from tape — reduce confidence; do not invent criteria)\n");
+    } else {
+        ctx.push_str("- Resolution rules (authoritative):\n");
+        ctx.push_str(&formatted);
+        ctx.push('\n');
+    }
+    ctx.push('\n');
+}
+
+/// Result of building Kalshi chat context (tape + gates + open-market set for web search).
+#[derive(Debug, Clone, Default)]
+pub struct KalshiContextBuild {
+    pub context: String,
+    /// (ticker, title) for markets that passed OPEN gate — eligible for web search.
+    pub open_markets: Vec<(String, String)>,
+    pub gates: Vec<(String, MarketGate)>,
+}
+
 /// Build a rich Kalshi context string for the AI prompt.
 /// Query-aware: prefer ticker detail + keyword-matched markets over dumping the whole tape.
 pub async fn build_kalshi_context(
@@ -144,36 +200,113 @@ pub async fn build_kalshi_context(
     user_message: &str,
     portfolio: Option<&PortfolioSnapshot>,
 ) -> String {
-    let mut ctx = String::with_capacity(8192);
+    build_kalshi_context_full(client, user_message, portfolio)
+        .await
+        .context
+}
+
+/// Full build including settlement gates and open-market list for gated web search.
+pub async fn build_kalshi_context_full(
+    client: &mut KalshiClient,
+    user_message: &str,
+    portfolio: Option<&PortfolioSnapshot>,
+) -> KalshiContextBuild {
+    let mut ctx = String::with_capacity(12288);
+    let mut open_markets: Vec<(String, String)> = Vec::new();
+    let mut gates: Vec<(String, MarketGate)> = Vec::new();
+    let now = Utc::now();
 
     ctx.push_str("# KALSHI MARKET INTELLIGENCE CONTEXT\n\n");
     ctx.push_str(
-        "Use ONLY markets listed below (plus any SELECTED MARKET DETAIL). \
-         Do not invent tickers or prices. Prefer fewer markets with complete analysis.\n\n",
+        "Use ONLY markets listed below (plus any SELECTED MARKET DETAIL / RESOLUTION RULES). \
+         Do not invent tickers, prices, or settlement criteria. Prefer fewer markets with complete analysis.\n\n",
+    );
+    ctx.push_str(
+        "## RESOLUTION DISCIPLINE (read first)\n\
+         - Quote the injected resolution rules before sizing any TAKE.\n\
+         - Multi-candidate / \"jungle\" markets (e.g. primaries): YES pays only if the **named candidate** \
+           (or exact contract definition) wins — not the party, not \"someone like them\". Sibling contracts \
+           are mutually exclusive unless rules say otherwise.\n\
+         - Ambiguous or missing rules → PASS or WATCH with AmbiguousResolution; never invent criteria.\n\
+         - Prices in this context are in **dollars** ($0.00–$1.00) unless labeled as percent.\n\
+         - SETTLEMENT GATES are authoritative: GATE=SETTLED or GATE=CLOSED → FORCE PASS. \
+           Never invent \"open field\" fair value for a finished event.\n\n",
     );
 
     let keywords = retrieval_keywords(user_message);
     let specific = extract_ticker_from_query(user_message);
+    let mut rule_tickers: Vec<String> = Vec::new();
 
-    // Top / retrieved markets (bounded)
-    match client.get_top_markets(40).await {
+    // Top / retrieved markets (bounded) — mid-prob re-rank + open-first, not pure volume longshots
+    let allow_longshots = wants_longshot_scan(user_message);
+    let mut selected_for_siblings: Vec<crate::kalshi::KalshiMarketSummary> = Vec::new();
+    match client.get_top_markets(80).await {
         Ok(markets) => {
-            let selected = select_markets_for_query(&markets, &keywords, specific.as_deref(), 8);
-            ctx.push_str("## RETRIEVED MARKETS (query-filtered from live tape)\n");
+            let selected = select_markets_for_query(
+                &markets,
+                &keywords,
+                specific.as_deref(),
+                8,
+                allow_longshots,
+                now,
+            );
+            selected_for_siblings = selected.clone();
+            ctx.push_str("## RETRIEVED MARKETS (query-filtered, open/mid-prob preferred)\n");
+            if allow_longshots {
+                ctx.push_str("(longshot scan enabled by query)\n");
+            }
             if selected.is_empty() {
                 ctx.push_str("(no matching markets — report tape miss; do not invent contracts)\n");
             } else {
                 for m in &selected {
+                    // Prefer full cache row for result/status/close
+                    let full = client.find_cached_market(&m.ticker);
+                    let status = full
+                        .as_ref()
+                        .map(|f| f.status.as_str())
+                        .unwrap_or(m.status.as_str());
+                    let result = full
+                        .as_ref()
+                        .map(|f| f.result.as_str())
+                        .unwrap_or(m.result.as_str());
+                    let close = full
+                        .as_ref()
+                        .and_then(|f| f.close_time.as_deref())
+                        .or(m.close_time.as_deref());
+                    let exp = full
+                        .as_ref()
+                        .and_then(|f| f.expiration_time.as_deref())
+                        .or(m.expiration_time.as_deref());
+                    let gate = assess_market_gate_for_ticker(
+                        Some(&m.ticker),
+                        status,
+                        result,
+                        close,
+                        exp,
+                        now,
+                    );
+                    gates.push((m.ticker.clone(), gate.clone()));
+                    if gate.allows_take() {
+                        open_markets.push((m.ticker.clone(), m.title.clone()));
+                    }
                     ctx.push_str(&format!(
-                        "- [{}] {} — Cat: {}, Yes: {:.1}%, Spread: {:.0}c, Vol24h: ${:.0}, Liq: ${:.0}\n",
+                        "- [{}] {} — Event: {}, Cat: {}, Status: {}, Result: {}, Yes: ${:.4} ({:.2}%), Spread: {:.1}c, Vol24h: ${:.0}, GATE={}\n",
                         m.ticker,
                         m.title,
+                        m.event_ticker,
                         m.category,
+                        status,
+                        if result.is_empty() { "—" } else { result },
+                        m.yes_ask.max(m.yes_prob_pct / 100.0),
                         m.yes_prob_pct,
                         m.spread * 100.0,
                         m.volume_24h,
-                        m.liquidity
+                        gate.label(),
                     ));
+                    // Collect top matches for rules injection (selected ticker first)
+                    if rule_tickers.len() < 3 {
+                        rule_tickers.push(m.ticker.clone());
+                    }
                 }
             }
             ctx.push('\n');
@@ -182,6 +315,9 @@ pub async fn build_kalshi_context(
             ctx.push_str("## RETRIEVED MARKETS\n(unavailable — refresh Command desk)\n\n");
         }
     }
+
+    // Sibling field for multi-candidate events (jungle / nominee books)
+    inject_sibling_field_context(client, &selected_for_siblings, &mut ctx, now, &mut gates);
 
     // Compact category overview (top 6 by count)
     match fetch_category_stats(client).await {
@@ -205,38 +341,124 @@ pub async fn build_kalshi_context(
         }
     }
 
-    // If user mentions a specific ticker or market, fetch detailed data
-    if let Some(ticker) = extract_ticker_from_query(user_message) {
-        match client.fetch_market(&ticker).await {
+    // Prefer explicit ticker for selected detail; fall back to best retrieved match
+    let detail_ticker = specific.clone().or_else(|| rule_tickers.first().cloned());
+
+    if let Some(ticker) = detail_ticker {
+        // Prefer cache (includes rules when catalog was nested); fall back to live fetch
+        let market = if let Some(m) = client.find_cached_market(&ticker) {
+            Ok(m)
+        } else {
+            client.fetch_market(&ticker).await
+        };
+
+        match market {
             Ok(market) => {
+                let gate = assess_market_gate_for_ticker(
+                    Some(&market.ticker),
+                    &market.status,
+                    &market.result,
+                    market.close_time.as_deref(),
+                    market.expiration_time.as_deref(),
+                    now,
+                );
+                if !gates.iter().any(|(t, _)| t.eq_ignore_ascii_case(&market.ticker)) {
+                    gates.push((market.ticker.clone(), gate.clone()));
+                }
+                if gate.allows_take()
+                    && !open_markets
+                        .iter()
+                        .any(|(t, _)| t.eq_ignore_ascii_case(&market.ticker))
+                {
+                    open_markets.push((market.ticker.clone(), market.display_title()));
+                }
+
                 ctx.push_str("## SELECTED MARKET DETAIL\n");
                 ctx.push_str(&format!("- Ticker: {}\n", market.ticker));
+                ctx.push_str(&format!("- Event: {}\n", market.event_ticker));
                 ctx.push_str(&format!("- Title: {}\n", market.display_title()));
+                if let Some(yes_sub) = market.yes_sub_title.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+                    ctx.push_str(&format!("- YES subtitle (candidate/outcome label): {}\n", yes_sub));
+                }
                 ctx.push_str(&format!("- Category: {}\n", market.infer_category()));
                 ctx.push_str(&format!("- Status: {}\n", market.status));
-                ctx.push_str(&format!("- YES Ask: ${:.2}, YES Bid: ${:.2}\n", market.yes_ask(), market.yes_bid()));
-                ctx.push_str(&format!("- NO Ask: ${:.2}, NO Bid: ${:.2}\n",
+                ctx.push_str(&format!(
+                    "- Settlement result: {}\n",
+                    if market.result.is_empty() {
+                        "—"
+                    } else {
+                        market.result.as_str()
+                    }
+                ));
+                ctx.push_str(&format!("- GATE: {} — {}\n", gate.label(), match &gate {
+                    MarketGate::Open => "eligible for TAKE".to_string(),
+                    MarketGate::Settled { reason, .. } | MarketGate::Closed { reason } => {
+                        format!("FORCE PASS ({reason})")
+                    }
+                }));
+                ctx.push_str(&format!(
+                    "- YES Ask: ${:.4}, YES Bid: ${:.4}\n",
+                    market.yes_ask(),
+                    market.yes_bid()
+                ));
+                ctx.push_str(&format!(
+                    "- NO Ask: ${:.4}, NO Bid: ${:.4}\n",
                     market.no_ask_dollars.parse::<f64>().unwrap_or(0.0),
-                    market.no_bid_dollars.parse::<f64>().unwrap_or(0.0)));
-                ctx.push_str(&format!("- Spread: {:.0}c\n", market.yes_spread() * 100.0));
-                ctx.push_str(&format!("- Implied YES prob: {:.1}%\n", market.yes_prob_pct()));
+                    market.no_bid_dollars.parse::<f64>().unwrap_or(0.0)
+                ));
+                ctx.push_str(&format!("- Spread: {:.1}c\n", market.yes_spread() * 100.0));
+                ctx.push_str(&format!(
+                    "- Implied YES: ${:.4} ({:.2}%)\n",
+                    market.yes_mid(),
+                    market.yes_prob_pct()
+                ));
                 ctx.push_str(&format!("- Liquidity: ${:.0}\n", market.liquidity()));
                 ctx.push_str(&format!("- 24h Volume: ${:.0}\n", market.volume_24h()));
                 if let Some(close) = &market.close_time {
                     ctx.push_str(&format!("- Closes: {}\n", close));
                 }
-                if !market.rules_primary.is_empty() {
-                    let rules = if market.rules_primary.len() > 500 {
-                        format!("{}...", &market.rules_primary[..500])
-                    } else {
-                        market.rules_primary.clone()
-                    };
-                    ctx.push_str(&format!("- Rules: {}\n", rules));
-                }
                 ctx.push('\n');
+
+                ctx.push_str("## RESOLUTION RULES (selected market)\n");
+                append_resolution_rules_block(
+                    &mut ctx,
+                    &market.ticker,
+                    &market.display_title(),
+                    &market.rules_primary,
+                    market.is_provisional,
+                    market.can_close_early,
+                );
             }
             Err(e) => {
-                ctx.push_str(&format!("## SELECTED MARKET DETAIL\nError fetching {}: {}\n\n", ticker, e));
+                ctx.push_str(&format!(
+                    "## SELECTED MARKET DETAIL\nError fetching {}: {}\n\n",
+                    ticker, e
+                ));
+            }
+        }
+    }
+
+    // Inject rules for additional top retrieved markets (sibling candidates / comparison set)
+    let extra: Vec<String> = rule_tickers
+        .into_iter()
+        .filter(|t| specific.as_ref().map(|s| !s.eq_ignore_ascii_case(t)).unwrap_or(true))
+        .take(2)
+        .collect();
+    if !extra.is_empty() {
+        ctx.push_str("## RESOLUTION RULES (related retrieved markets)\n");
+        ctx.push_str(
+            "Use these to enforce mutual exclusivity / jungle framing against the selected market.\n\n",
+        );
+        for t in extra {
+            if let Some(m) = client.find_cached_market(&t) {
+                append_resolution_rules_block(
+                    &mut ctx,
+                    &m.ticker,
+                    &m.display_title(),
+                    &m.rules_primary,
+                    m.is_provisional,
+                    m.can_close_early,
+                );
             }
         }
     }
@@ -261,13 +483,33 @@ pub async fn build_kalshi_context(
     // (see openrouter::build_sports_context). This keeps non-sports prediction-market
     // prompts focused on the retrieved Kalshi tape.
 
+    // Settlement gate summary (authoritative)
+    if !gates.is_empty() {
+        ctx.push_str("## SETTLEMENT GATES (authoritative — override narrative)\n");
+        for (ticker, gate) in &gates {
+            ctx.push_str(&format_gate_line(ticker, gate));
+            ctx.push('\n');
+        }
+        ctx.push_str(
+            "If GATE=SETTLED or CLOSED: decision must be PASS (or WATCH only for re-open risk). \
+             Do not assign open-field fair values to finished primaries/elections.\n\n",
+        );
+    }
+
     ctx.push_str("## TRADING SAFETY REMINDERS\n");
     ctx.push_str("- This is an analysis tool. No orders are placed automatically.\n");
     ctx.push_str("- Always verify prices on kalshi.com before trading.\n");
     ctx.push_str("- Never stake more than you can afford to lose.\n");
-    ctx.push_str("- Outcomes are probabilistic, never guaranteed.\n\n");
+    ctx.push_str("- Outcomes are probabilistic, never guaranteed.\n");
+    ctx.push_str("- App post-process caps fractional Kelly and stake (default ≤5% bankroll); do not recommend full-Kelly long-shots.\n");
+    ctx.push_str("- price_to_enter must be dollars on [0,1]; market_price_pct is percent 0–100 of $1.\n");
+    ctx.push_str("- WEB EVIDENCE (if present) is optional grounding only — never overrides GATE or rules.\n\n");
 
-    ctx
+    KalshiContextBuild {
+        context: ctx,
+        open_markets,
+        gates,
+    }
 }
 
 /// Determine if the user is asking about sports markets.
@@ -319,46 +561,186 @@ fn retrieval_keywords(query: &str) -> Vec<String> {
         .collect()
 }
 
+/// User explicitly wants extreme longshots / penny contracts.
+pub fn wants_longshot_scan(query: &str) -> bool {
+    let q = query.to_lowercase();
+    [
+        "longshot",
+        "long shot",
+        "lottery",
+        "penny",
+        "extreme",
+        "tail",
+        "dark horse",
+        "sub 1%",
+        "sub-1",
+        "under 1%",
+        "99%",
+        "0.1%",
+    ]
+    .iter()
+    .any(|k| q.contains(k))
+}
+
 fn select_markets_for_query(
     markets: &[crate::kalshi::KalshiMarketSummary],
     keywords: &[String],
     ticker: Option<&str>,
     limit: usize,
+    allow_longshots: bool,
+    now: chrono::DateTime<chrono::Utc>,
 ) -> Vec<crate::kalshi::KalshiMarketSummary> {
     let mut scored: Vec<(i32, &crate::kalshi::KalshiMarketSummary)> = markets
         .iter()
-        .map(|m| {
+        .filter_map(|m| {
+            let gate = assess_market_gate_for_ticker(
+                Some(&m.ticker),
+                &m.status,
+                &m.result,
+                m.close_time.as_deref(),
+                m.expiration_time.as_deref(),
+                now,
+            );
+            // Prefer open markets; only keep settled if explicit ticker match
+            let explicit = ticker.map(|t| m.ticker.eq_ignore_ascii_case(t)).unwrap_or(false);
+            if !gate.allows_take() && !explicit {
+                return None;
+            }
+
             let hay = format!(
-                "{} {} {}",
+                "{} {} {} {}",
                 m.ticker.to_lowercase(),
                 m.title.to_lowercase(),
-                m.category.to_lowercase()
+                m.category.to_lowercase(),
+                m.event_ticker.to_lowercase()
             );
             let mut score = 0i32;
-            if let Some(t) = ticker {
-                if m.ticker.eq_ignore_ascii_case(t) {
-                    score += 1000;
-                }
+            if explicit {
+                score += 1000;
             }
             for kw in keywords {
                 if hay.contains(kw) {
                     score += 10;
                 }
             }
-            // Mild volume prior so empty-keyword queries still get liquid names
+
+            // Mid-probability band preferred for "mispriced" scans (real edge space).
+            let p = m.yes_prob_pct;
+            if (10.0..=90.0).contains(&p) {
+                score += 25;
+            } else if (5.0..=95.0).contains(&p) {
+                score += 12;
+            } else if !allow_longshots {
+                // Extreme tails: heavy penalty unless user asked for longshots
+                score -= 40;
+            } else {
+                score += 5; // mild boost when longshot mode
+            }
+
+            // Tight spread bonus / wide spread penalty (spread is in dollars 0–1)
+            let spread_c = m.spread * 100.0;
+            if spread_c <= 2.0 {
+                score += 8;
+            } else if spread_c <= 5.0 {
+                score += 3;
+            } else if spread_c > 10.0 {
+                score -= 12;
+            }
+
+            // Liquidity / volume priors (mild)
+            if m.liquidity > 0.0 {
+                score += (m.liquidity.log10().max(0.0) as i32).min(6);
+            }
             score += (m.volume_24h.log10().max(0.0) as i32).min(8);
-            (score, m)
+
+            if !gate.allows_take() {
+                score -= 100; // explicit ticker settled still ranks low
+            }
+
+            Some((score, m))
         })
         .collect();
     scored.sort_by(|a, b| b.0.cmp(&a.0));
-    // If nothing keyword-matched, fall back to pure top volume
     let any_kw = scored.iter().any(|(s, _)| *s >= 10);
     scored
         .into_iter()
-        .filter(|(s, _)| if any_kw { *s >= 10 || ticker.is_some() } else { true })
+        .filter(|(s, _)| {
+            if any_kw {
+                *s >= 10 || ticker.is_some()
+            } else {
+                // Default scan: keep only non-negative scores (filters pure extreme junk)
+                *s >= 0 || allow_longshots
+            }
+        })
         .take(limit)
         .map(|(_, m)| m.clone())
         .collect()
+}
+
+/// Inject sibling contracts for multi-candidate events so the model sees the full field.
+fn inject_sibling_field_context(
+    client: &KalshiClient,
+    selected: &[crate::kalshi::KalshiMarketSummary],
+    ctx: &mut String,
+    now: chrono::DateTime<chrono::Utc>,
+    gates: &mut Vec<(String, MarketGate)>,
+) {
+    use std::collections::HashSet;
+    let mut seen_events = HashSet::new();
+    let mut block = String::new();
+    for m in selected.iter().take(4) {
+        if m.event_ticker.is_empty() || !seen_events.insert(m.event_ticker.to_uppercase()) {
+            continue;
+        }
+        let sibs = client.cached_siblings_for_event(&m.event_ticker, Some(&m.ticker), 8);
+        if sibs.is_empty() {
+            continue;
+        }
+        block.push_str(&format!(
+            "### Event field: {}\n(primary pick: [{}] {})\n",
+            m.event_ticker, m.ticker, m.title
+        ));
+        // Include primary first for sum context
+        block.push_str(&format!(
+            "- [{}] {} — Yes {:.1}%  [selected]\n",
+            m.ticker, m.title, m.yes_prob_pct
+        ));
+        let mut field_sum = m.yes_prob_pct;
+        for s in &sibs {
+            let gate = assess_market_gate_for_ticker(
+                Some(&s.ticker),
+                &s.status,
+                &s.result,
+                s.close_time.as_deref(),
+                s.expiration_time.as_deref(),
+                now,
+            );
+            if !gates.iter().any(|(t, _)| t.eq_ignore_ascii_case(&s.ticker)) {
+                gates.push((s.ticker.clone(), gate.clone()));
+            }
+            field_sum += s.yes_prob_pct;
+            block.push_str(&format!(
+                "- [{}] {} — Yes {:.1}%, Spread {:.1}c, GATE={}\n",
+                s.ticker,
+                s.title,
+                s.yes_prob_pct,
+                s.spread * 100.0,
+                gate.label()
+            ));
+        }
+        block.push_str(&format!(
+            "- Field sum (selected + siblings listed): ~{:.1}% (siblings mutually exclusive unless rules say otherwise)\n\n",
+            field_sum
+        ));
+    }
+    if !block.is_empty() {
+        ctx.push_str("## SIBLING FIELD (same event_ticker — use for relative fair value)\n");
+        ctx.push_str(
+            "Do not treat a single mid-tier name as frontrunner without comparing this field. \
+             YES pays only for the named outcome on each ticker.\n\n",
+        );
+        ctx.push_str(&block);
+    }
 }
 
 /// Whether the user query warrants cross-asset (Fincept) spot levels.
@@ -436,5 +818,73 @@ mod tests {
         assert!(status.degraded);
         assert_eq!(status.tape_market_count, 0);
         assert!(!status.reasons.is_empty());
+    }
+
+    #[test]
+    fn format_resolution_rules_preserves_short_text() {
+        let rules = "YES resolves if Candidate A wins the primary.";
+        assert_eq!(format_resolution_rules(rules, 2500), rules);
+    }
+
+    #[test]
+    fn format_resolution_rules_truncates_long_text() {
+        let rules = "word ".repeat(800);
+        let out = format_resolution_rules(&rules, 200);
+        assert!(out.len() < rules.len());
+        assert!(out.contains("truncated"));
+    }
+
+    #[test]
+    fn longshot_scan_flag() {
+        assert!(wants_longshot_scan("show me longshot misprices"));
+        assert!(!wants_longshot_scan("most mispriced markets today"));
+    }
+
+    #[test]
+    fn retrieval_prefers_mid_prob_over_extremes() {
+        use crate::kalshi::KalshiMarketSummary;
+        let mid = KalshiMarketSummary {
+            ticker: "KX-MID".into(),
+            event_ticker: "EV".into(),
+            title: "mid politics".into(),
+            category: "Politics".into(),
+            status: "open".into(),
+            yes_prob_pct: 45.0,
+            yes_ask: 0.45,
+            yes_bid: 0.44,
+            no_ask: 0.56,
+            no_bid: 0.55,
+            last_price: 0.45,
+            volume_24h: 10_000.0,
+            total_volume: 10_000.0,
+            liquidity: 5_000.0,
+            spread: 0.01,
+            close_time: Some("2028-01-01T00:00:00Z".into()),
+            expiration_time: None,
+            result: String::new(),
+            can_close_early: false,
+            is_provisional: false,
+        };
+        let extreme = KalshiMarketSummary {
+            ticker: "KX-EXT".into(),
+            title: "extreme politics".into(),
+            yes_prob_pct: 0.4,
+            yes_ask: 0.004,
+            volume_24h: 200_000.0,
+            liquidity: 0.0,
+            spread: 0.0,
+            ..mid.clone()
+        };
+        let now = chrono::Utc::now();
+        let picked = select_markets_for_query(
+            &[extreme.clone(), mid.clone()],
+            &["politics".into()],
+            None,
+            2,
+            false,
+            now,
+        );
+        assert!(!picked.is_empty());
+        assert_eq!(picked[0].ticker, "KX-MID");
     }
 }

@@ -17,7 +17,8 @@ pub struct KalshiTradeDecision {
     pub category: String,
     /// Which side of the contract: YES, NO, or PASS
     pub contract_side: ContractSide,
-    /// Current market price for the selected side (0.0–1.0)
+    /// Selected-side market price as percent of $1 (0–100). Prefer writing dollars in prompts;
+    /// post-process coerces 0–1 dollar inputs to this unit.
     pub market_price_pct: f64,
     /// Model's fair probability estimate (0.0–100.0)
     pub fair_probability_pct: f64,
@@ -33,7 +34,7 @@ pub struct KalshiTradeDecision {
     pub ev_roi_pct: f64,
     /// Raw Kelly percentage (unbounded, can be >100%)
     pub raw_kelly_pct: f64,
-    /// Recommended fractional Kelly percentage (conservative)
+    /// Recommended fractional Kelly percentage of bankroll (capped by app policy)
     pub fractional_kelly_pct: f64,
     /// Recommended stake in dollars
     pub recommended_stake_dollars: f64,
@@ -51,10 +52,84 @@ pub struct KalshiTradeDecision {
     pub risk_flags: Vec<RiskFlag>,
     /// Quality rating of the data behind this decision
     pub data_quality: DataQuality,
-    /// Price at which to enter the position
+    /// Entry price in dollars per contract (0–1). Never cents.
     pub price_to_enter: f64,
     /// Whether the model's fair probability diverges significantly from market implied prob
     pub model_disagreement: bool,
+}
+
+/// Coerce a contract price that may be dollars (0–1), cents, or percent into **dollars** in [0, 1].
+///
+/// Kalshi binary contracts cost between $0.01 and $0.99 typically. LLM outputs often mix
+/// units (0.55 dollars vs 55 cents vs 55 percent). Values in (0, 1] are treated as dollars;
+/// values in (1, 100] as cents/percent.
+pub fn coerce_price_to_dollars(raw: f64) -> f64 {
+    if !raw.is_finite() || raw <= 0.0 {
+        return 0.0;
+    }
+    if raw <= 1.0 {
+        raw
+    } else if raw <= 100.0 {
+        raw / 100.0
+    } else {
+        (raw / 100.0).clamp(0.0, 1.0)
+    }
+}
+
+/// Normalize `market_price_pct` + `price_to_enter` together so sub-1% markets
+/// (e.g. market_price_pct=0.45 meaning **0.45%**, price_to_enter=0.005 dollars)
+/// are not misread as $0.45.
+///
+/// Returns (market_price_pct 0–100, price_to_enter 0–1 dollars).
+pub fn coerce_market_and_entry(market_price_pct: f64, price_to_enter: f64) -> (f64, f64) {
+    let enter = if price_to_enter > 0.0 {
+        coerce_price_to_dollars(price_to_enter)
+    } else {
+        0.0
+    };
+
+    // Explicit dollar entry on (0,1]: use it to disambiguate market_price_pct.
+    if enter > 0.0 && enter <= 1.0 {
+        if market_price_pct > 1.0 {
+            return (market_price_pct.clamp(0.0, 100.0), enter);
+        }
+        if market_price_pct <= 0.0 {
+            return ((enter * 100.0).clamp(0.0, 100.0), enter);
+        }
+        // Both in (0,1]: if market ≈ enter → market was dollars; else market is percent (long-shot).
+        let rel = (market_price_pct - enter).abs() / enter.max(1e-9);
+        if rel < 0.25 {
+            return ((market_price_pct * 100.0).clamp(0.0, 100.0), enter);
+        }
+        return (market_price_pct.clamp(0.0, 100.0), enter);
+    }
+
+    // No usable entry — classic coerce
+    let market_dollars = coerce_price_to_dollars(market_price_pct);
+    let enter2 = if enter > 0.0 {
+        enter
+    } else {
+        market_dollars
+    };
+    (
+        (market_dollars * 100.0).clamp(0.0, 100.0),
+        enter2.clamp(0.0, 1.0),
+    )
+}
+
+/// Coerce a probability that may be 0–1 or 0–100 into **percent** in [0, 100].
+pub fn coerce_probability_to_pct(raw: f64) -> f64 {
+    if !raw.is_finite() {
+        return 50.0;
+    }
+    if raw < 0.0 {
+        return 0.0;
+    }
+    if raw <= 1.0 {
+        raw * 100.0
+    } else {
+        raw.min(100.0)
+    }
 }
 
 /// Side of the binary contract
@@ -117,6 +192,8 @@ pub enum RiskFlag {
     BankrollLimitExceeded,
     /// Model's fair probability diverges significantly from market implied probability
     ModelDisagreement,
+    /// Tape says market is settled / closed — TAKE forbidden
+    MarketSettledOrClosed,
     /// Other unspecified risk
     Other(String),
 }
@@ -167,9 +244,156 @@ impl KalshiTradeDecision {
         }
     }
 
+    /// Normalize price/probability units then clamp Kelly & stake to app policy **before** TAKE is actionable.
+    ///
+    /// Units after this call:
+    /// - `market_price_pct`: 0–100 (percent of $1)
+    /// - `fair_probability_pct`: 0–100
+    /// - `price_to_enter`: 0–1 dollars
+    /// - `fractional_kelly_pct` ≤ `max_bet_pct * 100` and ≤ `raw * kelly_fraction` when raw is known
+    /// - `recommended_stake_dollars` ≤ `bankroll * max_bet_pct`
+    pub fn sanitize_units_and_caps(
+        &mut self,
+        bankroll_dollars: f64,
+        kelly_fraction: f64,
+        max_bet_pct: f64,
+    ) {
+        // Joint unit normalize (handles sub-1% long-shots correctly).
+        let (mkt_pct, enter) =
+            coerce_market_and_entry(self.market_price_pct, self.price_to_enter);
+        self.market_price_pct = mkt_pct;
+        self.price_to_enter = enter;
+        self.fair_probability_pct = coerce_probability_to_pct(self.fair_probability_pct);
+
+        let kelly_frac = if kelly_fraction > 0.0 && kelly_fraction <= 1.0 {
+            kelly_fraction
+        } else {
+            0.25
+        };
+        let max_bet = if max_bet_pct > 0.0 && max_bet_pct <= 1.0 {
+            max_bet_pct
+        } else {
+            0.05
+        };
+        let max_frac_kelly_pct = max_bet * 100.0;
+
+        // Re-derive fractional from raw when raw is present and fractional looks noncompliant
+        // (e.g. LLM wrote fractional_kelly_pct ≈ 99.8 for a long-shot).
+        if self.raw_kelly_pct > 0.0 {
+            let policy_frac = self.raw_kelly_pct * kelly_frac;
+            if self.fractional_kelly_pct <= 0.0 || self.fractional_kelly_pct > policy_frac + 0.01 {
+                self.fractional_kelly_pct = policy_frac;
+            }
+        }
+
+        let mut capped = false;
+        if self.fractional_kelly_pct > max_frac_kelly_pct {
+            self.fractional_kelly_pct = max_frac_kelly_pct;
+            capped = true;
+        }
+        // Absolute safety rail: never surface >25% bankroll as "fractional Kelly" on a TAKE ticket.
+        if self.fractional_kelly_pct > 25.0 {
+            self.fractional_kelly_pct = 25.0_f64.min(max_frac_kelly_pct);
+            capped = true;
+        }
+
+        if bankroll_dollars > 0.0 {
+            let max_stake = bankroll_dollars * max_bet;
+            if self.recommended_stake_dollars <= 0.0
+                && self.decision == DecisionAction::TAKE
+                && self.fractional_kelly_pct > 0.0
+            {
+                self.recommended_stake_dollars =
+                    bankroll_dollars * (self.fractional_kelly_pct / 100.0);
+            }
+            if self.recommended_stake_dollars > max_stake {
+                self.recommended_stake_dollars = max_stake;
+                capped = true;
+            }
+            if self.max_position_dollars <= 0.0 || self.max_position_dollars > max_stake {
+                self.max_position_dollars = max_stake.min(self.recommended_stake_dollars.max(0.0));
+            } else {
+                self.max_position_dollars = self
+                    .max_position_dollars
+                    .min(max_stake)
+                    .min(self.recommended_stake_dollars.max(self.max_position_dollars));
+            }
+        }
+
+        if capped {
+            if !self.risk_flags.contains(&RiskFlag::BankrollLimitExceeded) {
+                self.risk_flags.push(RiskFlag::BankrollLimitExceeded);
+            }
+            if self.decision == DecisionAction::TAKE {
+                let note = format!(
+                    "[sizing capped: fractional Kelly ≤ {:.1}% bankroll, stake ≤ bankroll×{:.0}%]",
+                    max_frac_kelly_pct,
+                    max_bet * 100.0
+                );
+                if !self.thesis.contains("[sizing capped") {
+                    if !self.thesis.is_empty() {
+                        self.thesis.push(' ');
+                    }
+                    self.thesis.push_str(&note);
+                }
+            }
+        }
+    }
+
+    /// Hard rail: SETTLED/CLOSED tape → never keep TAKE. Zeros stake and rewrites decision.
+    pub fn enforce_settlement_gate(&mut self, gate: &crate::chat::market_gate::MarketGate) {
+        use crate::chat::market_gate::MarketGate;
+        if gate.allows_take() {
+            return;
+        }
+        let was_take = self.decision == DecisionAction::TAKE;
+        self.decision = DecisionAction::PASS;
+        self.contract_side = ContractSide::PASS;
+        self.recommended_stake_dollars = 0.0;
+        self.max_position_dollars = 0.0;
+        self.fractional_kelly_pct = 0.0;
+        self.raw_kelly_pct = 0.0;
+        self.confidence_tier = ConfidenceTier::None;
+        if !self.risk_flags.contains(&RiskFlag::MarketSettledOrClosed) {
+            self.risk_flags.push(RiskFlag::MarketSettledOrClosed);
+        }
+        let reason = match gate {
+            MarketGate::Settled { reason, result } => {
+                let r = result
+                    .as_deref()
+                    .map(|x| format!(" result={x}"))
+                    .unwrap_or_default();
+                format!("GATE=SETTLED{r}: {reason}")
+            }
+            MarketGate::Closed { reason } => format!("GATE=CLOSED: {reason}"),
+            MarketGate::Open => return,
+        };
+        let note = format!("[settlement rail: forced PASS — {reason}]");
+        if was_take || !self.thesis.contains("[settlement rail") {
+            if !self.thesis.is_empty() {
+                self.thesis.push(' ');
+            }
+            if !self.thesis.contains("[settlement rail") {
+                self.thesis.push_str(&note);
+            }
+        }
+    }
+
     /// Compute edge, EV, and Kelly sizing from market price and fair probability.
-    /// Call this after setting market_price_pct and fair_probability_pct.
+    /// Uses default max bet of 5% of bankroll.
     pub fn compute(&mut self, bankroll_dollars: f64, kelly_fraction: f64) {
+        self.compute_with_policy(bankroll_dollars, kelly_fraction, 0.05);
+    }
+
+    /// Compute edge/EV/Kelly then enforce unit normalization and sizing caps.
+    pub fn compute_with_policy(
+        &mut self,
+        bankroll_dollars: f64,
+        kelly_fraction: f64,
+        max_bet_pct: f64,
+    ) {
+        self.sanitize_units_and_caps(bankroll_dollars, kelly_fraction, max_bet_pct);
+
         let market_price = self.market_price_pct / 100.0;
         let fair_prob = self.fair_probability_pct / 100.0;
 
@@ -228,6 +452,12 @@ impl KalshiTradeDecision {
             0.0
         };
 
+        let max_bet = if max_bet_pct > 0.0 && max_bet_pct <= 1.0 {
+            max_bet_pct
+        } else {
+            0.05
+        };
+
         self.raw_kelly_pct = raw_kelly.max(0.0) * 100.0;
         self.fractional_kelly_pct = self.raw_kelly_pct * kelly_fraction;
         self.recommended_stake_dollars = bankroll_dollars * (self.fractional_kelly_pct / 100.0);
@@ -235,16 +465,20 @@ impl KalshiTradeDecision {
         // Liquidity score: simplistic scoring based on volume
         self.liquidity_score = ((self.liquidity_score / 50000.0) * 100.0).min(100.0);
 
-        // Max position: cap at 5% of bankroll or liquidity limit
-        self.max_position_dollars = (bankroll_dollars * 0.05).min(self.recommended_stake_dollars);
+        // Max position: policy max bet of bankroll
+        self.max_position_dollars =
+            (bankroll_dollars * max_bet).min(self.recommended_stake_dollars);
 
         // Model disagreement detection: flag when fair prob diverges significantly from market
         let market_implied_pct = self.market_price_pct;
         let divergence = (self.fair_probability_pct - market_implied_pct).abs();
         self.model_disagreement = divergence >= 15.0;
-        if self.model_disagreement {
+        if self.model_disagreement && !self.risk_flags.contains(&RiskFlag::ModelDisagreement) {
             self.risk_flags.push(RiskFlag::ModelDisagreement);
         }
+
+        // Re-apply hard caps after Kelly math (TAKE must never surface uncapped size)
+        self.sanitize_units_and_caps(bankroll_dollars, kelly_fraction, max_bet);
     }
 
     /// Compute with isotonic calibration and portfolio correlation Kelly scaling.
@@ -255,6 +489,24 @@ impl KalshiTradeDecision {
         kelly_scale: f64,
         apply_calibrator: bool,
     ) {
+        self.compute_risk_adjusted_with_policy(
+            bankroll_dollars,
+            kelly_fraction,
+            kelly_scale,
+            apply_calibrator,
+            0.05,
+        );
+    }
+
+    /// Like [`Self::compute_risk_adjusted`] with an explicit max-bet fraction of bankroll.
+    pub fn compute_risk_adjusted_with_policy(
+        &mut self,
+        bankroll_dollars: f64,
+        kelly_fraction: f64,
+        kelly_scale: f64,
+        apply_calibrator: bool,
+        max_bet_pct: f64,
+    ) {
         if apply_calibrator {
             let cal = crate::analysis::calibration::calibrate_yes_probability_pct(
                 self.fair_probability_pct,
@@ -263,7 +515,7 @@ impl KalshiTradeDecision {
                 self.fair_probability_pct = cal.calibrated_pct;
             }
         }
-        self.compute(bankroll_dollars, kelly_fraction);
+        self.compute_with_policy(bankroll_dollars, kelly_fraction, max_bet_pct);
         let scale = kelly_scale.clamp(0.0, 1.0);
         if scale < 1.0 {
             self.fractional_kelly_pct *= scale;
@@ -273,6 +525,7 @@ impl KalshiTradeDecision {
                 self.risk_flags.push(RiskFlag::CorrelatedExposure);
             }
         }
+        self.sanitize_units_and_caps(bankroll_dollars, kelly_fraction, max_bet_pct);
     }
 
     /// Return true if the decision passes all risk checks
@@ -328,16 +581,23 @@ RULES:
 - "contract_side" must be "YES", "NO", or "PASS".
 - "confidence_tier" must be "High", "Medium", "Low", or "None".
 - "data_quality" must be "Live", "Fresh", "Stale", "Inferential", or "Speculative".
-- "risk_flags" can include: SpreadExceedsEdge, InsufficientLiquidity, CorrelatedExposure, ProvisionalSettlement, EarlyCloseRisk, ExtremeProbability, AmbiguousResolution, StaleData, ConcentrationRisk, ModelDisagreement.
+- "risk_flags" can include: SpreadExceedsEdge, InsufficientLiquidity, CorrelatedExposure, ProvisionalSettlement, EarlyCloseRisk, ExtremeProbability, AmbiguousResolution, StaleData, ConcentrationRisk, ModelDisagreement, MarketSettledOrClosed.
+- PRICE UNITS (critical):
+  - market_price_pct = selected-side cost as percent of $1 (55.0 means $0.55 / 55¢). Do NOT write raw cents as if they were percent.
+  - price_to_enter = dollars per contract on [0, 1] (0.55 means 55¢). Never cents (55) and never "0.1¢" style.
+  - fair_probability_pct = probability percent on [0, 100].
+- KELLY POLICY: prefer quarter-Kelly. fractional_kelly_pct is % of bankroll and must stay ≤ 5 unless user policy says otherwise. Never output fractional_kelly near 100% for long-shots.
+- RESOLUTION FIRST: quote the injected settlement rules. For multi-candidate / jungle primaries, only the named candidate resolves YES; mutual exclusivity with siblings applies — do not treat a party-level narrative as the contract.
 - JSON must be valid. No trailing commas. Place it FIRST in the response.
 
 After the JSON, provide a concise readable summary:
-- DECISION: [TAKE/WATCH/PASS] [YES/NO] at [price]
+- DECISION: [TAKE/WATCH/PASS] [YES/NO] at [price in dollars 0–1]
 - PRICE VS FAIR: [market]% vs [fair]%
 - EDGE: [edge points] pts, [EV ROI]% EV ROI
-- SIZE: [raw Kelly]% raw Kelly, [fractional Kelly]% recommended
+- SIZE: [raw Kelly]% raw Kelly, [fractional Kelly]% recommended (capped)
 - WHY: [thesis]
 - RISK CONTROL: [key risk flags and invalidation conditions]
+- RULES CHECK: [one line: what must happen for YES, and any mutual-exclusivity note]
 "#
         )
     }
@@ -419,8 +679,88 @@ mod tests {
 
         assert!((decision.edge_points - 20.0).abs() < 0.01);
         assert!((decision.raw_kelly_pct - 33.33).abs() < 0.05);
-        assert!((decision.fractional_kelly_pct - 8.33).abs() < 0.05);
-        assert!((decision.recommended_stake_dollars - 83.33).abs() < 0.5);
+        // fractional Kelly is quarter-Kelly then hard-capped at max_bet 5% of bankroll
+        assert!((decision.fractional_kelly_pct - 5.0).abs() < 0.05);
+        assert!((decision.recommended_stake_dollars - 50.0).abs() < 0.5);
         assert!(decision.ev_roi_pct > 0.0);
+    }
+
+    #[test]
+    fn coerce_price_accepts_dollars_and_cents() {
+        assert!((coerce_price_to_dollars(0.55) - 0.55).abs() < 1e-9);
+        assert!((coerce_price_to_dollars(55.0) - 0.55).abs() < 1e-9);
+        assert!((coerce_price_to_dollars(0.0) - 0.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn coerce_prob_accepts_unit_interval_and_percent() {
+        assert!((coerce_probability_to_pct(0.62) - 62.0).abs() < 1e-9);
+        assert!((coerce_probability_to_pct(62.0) - 62.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn sanitize_caps_absurd_fractional_kelly_before_take() {
+        let mut decision = KalshiTradeDecision::new("KX-HILTON", "Jungle primary candidate");
+        decision.contract_side = ContractSide::YES;
+        decision.decision = DecisionAction::TAKE;
+        // LLM mixed units: market as 0.1 (dollars → 10¢) and claimed 99.8% fractional Kelly
+        decision.market_price_pct = 0.1;
+        decision.fair_probability_pct = 40.0;
+        decision.price_to_enter = 0.1;
+        decision.raw_kelly_pct = 99.8;
+        decision.fractional_kelly_pct = 99.8;
+        decision.recommended_stake_dollars = 9980.0;
+        decision.sanitize_units_and_caps(10_000.0, 0.25, 0.05);
+
+        assert!((decision.market_price_pct - 10.0).abs() < 0.01);
+        assert!((decision.price_to_enter - 0.1).abs() < 1e-9);
+        assert!(decision.fractional_kelly_pct <= 5.0 + 1e-9);
+        assert!(decision.recommended_stake_dollars <= 500.0 + 1e-6);
+        assert!(decision.risk_flags.contains(&RiskFlag::BankrollLimitExceeded));
+    }
+
+    #[test]
+    fn sanitize_normalizes_price_to_enter_from_cents() {
+        let mut decision = KalshiTradeDecision::new("KX-TEST", "Test");
+        decision.market_price_pct = 55.0;
+        decision.fair_probability_pct = 60.0;
+        decision.price_to_enter = 55.0; // cents by mistake
+        decision.sanitize_units_and_caps(1000.0, 0.25, 0.05);
+        assert!((decision.price_to_enter - 0.55).abs() < 1e-9);
+        assert!((decision.market_price_pct - 55.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn coerce_preserves_sub_one_percent_with_dollar_entry() {
+        // Slotkin-style: market 0.45% written as 0.45, entry $0.005
+        let (pct, enter) = coerce_market_and_entry(0.45, 0.005);
+        assert!((pct - 0.45).abs() < 1e-9, "pct={pct}");
+        assert!((enter - 0.005).abs() < 1e-9);
+    }
+
+    #[test]
+    fn coerce_aligns_matching_dollar_market_and_entry() {
+        let (pct, enter) = coerce_market_and_entry(0.55, 0.55);
+        assert!((pct - 55.0).abs() < 1e-9);
+        assert!((enter - 0.55).abs() < 1e-9);
+    }
+
+    #[test]
+    fn enforce_settlement_gate_kills_take() {
+        let mut d = KalshiTradeDecision::new("KX-DONE", "Done");
+        d.decision = DecisionAction::TAKE;
+        d.contract_side = ContractSide::YES;
+        d.recommended_stake_dollars = 100.0;
+        d.fractional_kelly_pct = 5.0;
+        let gate = crate::chat::market_gate::MarketGate::Settled {
+            reason: "result=Yes".into(),
+            result: Some("Yes".into()),
+        };
+        d.enforce_settlement_gate(&gate);
+        assert_eq!(d.decision, DecisionAction::PASS);
+        assert_eq!(d.contract_side, ContractSide::PASS);
+        assert_eq!(d.recommended_stake_dollars, 0.0);
+        assert!(d.risk_flags.contains(&RiskFlag::MarketSettledOrClosed));
+        assert!(d.thesis.contains("settlement rail"));
     }
 }

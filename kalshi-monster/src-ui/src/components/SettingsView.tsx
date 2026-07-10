@@ -33,6 +33,7 @@ const EMPTY_CONFIG: AppConfig = {
   max_context_players: 50,
   openweathermap_api_key: '',
   api_sports_key: '',
+  brave_api_key: '',
   risk_tolerance: 'moderate',
   preferred_leagues: ['NFL'],
   stat_weighting: 'balanced',
@@ -83,6 +84,7 @@ export function SettingsView() {
   const [kalshiPasswordInput, setKalshiPasswordInput] = useState('');
   const [weatherKeyInput, setWeatherKeyInput] = useState('');
   const [sportsKeyInput, setSportsKeyInput] = useState('');
+  const [braveKeyInput, setBraveKeyInput] = useState('');
   const [discordInput, setDiscordInput] = useState('');
   const [telegramTokenInput, setTelegramTokenInput] = useState('');
   const [leaguesInput, setLeaguesInput] = useState('NFL');
@@ -222,6 +224,7 @@ export function SettingsView() {
         kalshi_password: kalshiPasswordInput.trim() || config.kalshi_password,
         openweathermap_api_key: weatherKeyInput.trim() || config.openweathermap_api_key,
         api_sports_key: sportsKeyInput.trim() || config.api_sports_key,
+        brave_api_key: braveKeyInput.trim() || config.brave_api_key,
         discord_webhook_url: discordInput.trim() || config.discord_webhook_url,
         telegram_bot_token: telegramTokenInput.trim() || config.telegram_bot_token,
         preferred_leagues: leaguesInput
@@ -237,6 +240,7 @@ export function SettingsView() {
       setKalshiPasswordInput('');
       setWeatherKeyInput('');
       setSportsKeyInput('');
+      setBraveKeyInput('');
       setDiscordInput('');
       setTelegramTokenInput('');
       setMessage('Settings saved. Analyst will use the selected provider on the next message.');
@@ -782,6 +786,31 @@ export function SettingsView() {
                 onChange={(e) => setSportsKeyInput(e.target.value)}
                 autoComplete="off"
               />
+            </label>
+            <label>
+              Brave Search API key
+              <input
+                type="password"
+                placeholder={
+                  config.brave_api_key
+                    ? `Set (${maskSecret(config.brave_api_key)})`
+                    : 'Optional — Analyst web evidence'
+                }
+                value={braveKeyInput}
+                onChange={(e) => setBraveKeyInput(e.target.value)}
+                autoComplete="off"
+              />
+              <span className="fieldHint">
+                From{' '}
+                <a
+                  href="https://api-dashboard.search.brave.com/"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  api-dashboard.search.brave.com
+                </a>
+                . Used first for Analyst web grounding; falls back to DuckDuckGo if empty.
+              </span>
             </label>
           </div>
         </div>

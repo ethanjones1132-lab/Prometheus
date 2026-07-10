@@ -33,6 +33,7 @@ const config = {
   max_context_players: 50,
   openweathermap_api_key: 'weather-secret',
   api_sports_key: 'sports-secret',
+  brave_api_key: '',
   risk_tolerance: 'moderate',
   preferred_leagues: ['NFL'],
   stat_weighting: 'balanced',

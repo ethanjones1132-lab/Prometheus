@@ -140,16 +140,26 @@ pub async fn send_message(
 
 
 
-    // Fetch Kalshi market context (Kalshi-first — replaces ESPN/Sleeper as default)
+    // Fetch Kalshi market context + gated web evidence (tape gates first)
     let kalshi_context = {
         let mut kalshi = kalshi.lock().await;
         emit_chat_kalshi_context(&app, &session_id, &kalshi);
-        let mut ctx = crate::chat::kalshi_context::build_kalshi_context(
+        let built = crate::chat::kalshi_context::build_kalshi_context_full(
             &mut kalshi,
             &message,
             None, // portfolio not injected by default in non-streaming path
         )
         .await;
+        let any_open = !built.open_markets.is_empty();
+        let web = crate::chat::web_context::gather_web_evidence(
+            &message,
+            &built.open_markets,
+            any_open,
+            Some(config.brave_api_key.as_str()),
+        )
+        .await;
+        let mut ctx = built.context;
+        ctx.push_str(&web.to_prompt_block());
         crate::chat::fincept_context::append_fincept_context_for_query(
             fincept.inner().as_ref(),
             &mut ctx,
@@ -296,16 +306,26 @@ pub async fn send_message_stream(
         }
     });
 
-    // Fetch live data context — Kalshi + Fincept cross-asset when sidecar is online
+    // Fetch live data context — Kalshi gates + optional web + Fincept
     let kalshi_context = {
         let mut kalshi = kalshi.lock().await;
         emit_chat_kalshi_context(&app, &session_id, &kalshi);
-        let mut ctx = crate::chat::kalshi_context::build_kalshi_context(
+        let built = crate::chat::kalshi_context::build_kalshi_context_full(
             &mut kalshi,
             &message,
             None,
         )
         .await;
+        let any_open = !built.open_markets.is_empty();
+        let web = crate::chat::web_context::gather_web_evidence(
+            &message,
+            &built.open_markets,
+            any_open,
+            Some(config.brave_api_key.as_str()),
+        )
+        .await;
+        let mut ctx = built.context;
+        ctx.push_str(&web.to_prompt_block());
         crate::chat::fincept_context::append_fincept_context_for_query(
             fincept.inner().as_ref(),
             &mut ctx,
@@ -2080,6 +2100,52 @@ pub async fn kalshi_record_paper_decision(
     db_pool: State<'_, Pool<Sqlite>>,
 ) -> Result<String, String> {
     let bankroll = crate::bankroll::load_bankroll_config();
+    // Normalize mixed LLM units (0–1 dollars vs percent/cents) and hard-cap Kelly/stake
+    // before TAKE is persisted or shown as actionable paper size.
+    decision.sanitize_units_and_caps(
+        bankroll.total_bankroll,
+        bankroll.kelly_fraction,
+        bankroll.max_bet_pct,
+    );
+
+    // Hard settlement rail: tape SETTLED/CLOSED (incl. embedded ticker dates) → force PASS.
+    // Re-applied after Kelly recompute so stake cannot reappear.
+    let settlement_gate = {
+        let client = kalshi.lock().await;
+        let mkt = if let Some(m) = client.find_cached_market(&decision.ticker) {
+            Some(m)
+        } else {
+            client.fetch_market(&decision.ticker).await.ok()
+        };
+        if let Some(m) = mkt {
+            crate::chat::market_gate::assess_market_gate_for_ticker(
+                Some(&m.ticker),
+                &m.status,
+                &m.result,
+                m.close_time.as_deref(),
+                m.expiration_time.as_deref(),
+                chrono::Utc::now(),
+            )
+        } else {
+            crate::chat::market_gate::assess_market_gate_for_ticker(
+                Some(&decision.ticker),
+                "unknown",
+                "",
+                None,
+                None,
+                chrono::Utc::now(),
+            )
+        }
+    };
+    if !settlement_gate.allows_take() {
+        tracing::info!(
+            "paper decision forced PASS by settlement gate: {} {:?}",
+            decision.ticker,
+            settlement_gate
+        );
+    }
+    decision.enforce_settlement_gate(&settlement_gate);
+
     let bankroll_summary = match crate::bankroll::get_bankroll_summary_synced(&bankroll, &db_pool).await {
         Ok(summary) => Some(summary),
         Err(e) => {
@@ -2115,12 +2181,15 @@ pub async fn kalshi_record_paper_decision(
         raw_stake,
         &exposures,
     );
-    decision.compute_risk_adjusted(
+    decision.compute_risk_adjusted_with_policy(
         bankroll.total_bankroll,
         bankroll.kelly_fraction,
         adj.kelly_scale,
         true,
+        bankroll.max_bet_pct,
     );
+    // Kelly recompute must not resurrect a TAKE on a settled market.
+    decision.enforce_settlement_gate(&settlement_gate);
 
     if let Some(summary) = &bankroll_summary {
         let (capped_stake, warning) =
@@ -2207,9 +2276,11 @@ pub async fn kalshi_record_paper_decision(
         // of p_model; paper path uses the decision's fair probability as a single
         // model opinion so columns are never left blank with a raw unshrunk number.
         let close_time = chrono::Utc::now().to_rfc3339();
+        // market_price_pct is percent 0–100; price_to_enter is dollars 0–1 after sanitize.
         let p_market_raw = (decision.market_price_pct / 100.0).clamp(0.01, 0.99);
         let p_model_raw = (decision.fair_probability_pct / 100.0).clamp(0.01, 0.99);
-        let yes_ask = (decision.price_to_enter / 100.0).clamp(0.01, 0.99);
+        let yes_ask = crate::chat::decision_schema::coerce_price_to_dollars(decision.price_to_enter)
+            .clamp(0.01, 0.99);
         // Approximate bid as mid-symmetric when only entry price is known.
         let yes_bid = (2.0 * p_market_raw - yes_ask).clamp(0.0, 1.0);
         let quote = crate::edge_engine::Quote {

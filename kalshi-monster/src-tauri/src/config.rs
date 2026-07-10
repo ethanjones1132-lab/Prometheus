@@ -64,6 +64,10 @@ pub struct AppConfig {
     // Kalshi data source configuration
     pub openweathermap_api_key: String,
     pub api_sports_key: String,
+    /// Brave Search API key for Analyst web evidence (`X-Subscription-Token`).
+    /// Dashboard: https://api-dashboard.search.brave.com/
+    #[serde(default)]
+    pub brave_api_key: String,
     // Custom system prompt preferences
     pub risk_tolerance: String,        // "conservative" | "moderate" | "aggressive"
     pub preferred_leagues: Vec<String>, // e.g. ["NFL", "NBA"]
@@ -111,6 +115,7 @@ impl Default for AppConfig {
             max_context_players: 50,
             openweathermap_api_key: String::new(),
             api_sports_key: String::new(),
+            brave_api_key: String::new(),
             risk_tolerance: "moderate".to_string(),
             preferred_leagues: vec!["NFL".to_string()],
             stat_weighting: "balanced".to_string(),
@@ -221,6 +226,11 @@ Always output your primary analysis in JSON format first for the engine to track
   "price_to_enter": 0.55
 }
 ```
+
+PRICE / SIZE UNITS:
+- market_price_pct is percent of $1 (55.0 = $0.55). price_to_enter is dollars on [0,1]. fair_probability_pct is 0–100.
+- Prefer quarter-Kelly; fractional_kelly_pct is % of bankroll and should stay ≤ 5 under default policy.
+- Always ground TAKE/PASS in the injected resolution rules (jungle/multi-candidate = named outcome only).
 
 If the user asks for a simple conversational overview, provide the JSON first, then follow with a concise, sharp bullet-point summary.
 

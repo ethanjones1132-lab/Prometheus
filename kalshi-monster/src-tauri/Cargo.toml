@@ -64,3 +64,5 @@ edge-eval = { path = "../../edge-eval" }
 
 # Shared Monster-apps edge math (also used by the offline backtest CLI)
 monster-edge-core = { path = "../../monster-edge-core" }
+websearch = "0.1.1"
+scraper = "0.18"

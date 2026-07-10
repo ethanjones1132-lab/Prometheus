@@ -9,6 +9,8 @@ vi.mock('../services/kalshi', () => ({
     getForecastCalibrationReport: vi.fn(),
     resolvePendingForecasts: vi.fn(),
     analyzeTopMarketsEdge: vi.fn(),
+    evaluateBreakers: vi.fn(),
+    manualReenableBreaker: vi.fn(),
   },
 }));
 
@@ -17,6 +19,18 @@ vi.mock('../services/tauri', () => ({
     getBridgeStatus: vi.fn(),
   },
 }));
+
+const defaultBreakers = {
+  state: {
+    stake_scaling_active: false,
+    live_trading_disabled: false,
+    paper_mode_forced: false,
+  },
+  live_orders_allowed: false,
+  paper_only: false,
+  stake_multiplier: 1,
+  reasons: ['calibration gate locked'],
+};
 
 describe('CalibrationView', () => {
   beforeEach(() => {
@@ -41,6 +55,7 @@ describe('CalibrationView', () => {
       degraded: false,
       restarts_remaining: 3,
     });
+    vi.mocked(kalshiApi.evaluateBreakers).mockResolvedValue(defaultBreakers);
     vi.mocked(kalshiApi.resolvePendingForecasts).mockResolvedValue(0);
     vi.mocked(kalshiApi.analyzeTopMarketsEdge).mockResolvedValue([
       {

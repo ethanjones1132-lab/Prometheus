@@ -267,7 +267,10 @@ fn build_kalshi_system_prompt(config: &AppConfig) -> String {
     prompt.push_str("- FACT GROUNDING: Only cite spot/futures prices that appear in CROSS-ASSET CONTEXT with the printed last price and timestamp. ");
     prompt.push_str("Do not invent gold/oil/index levels. If a price is missing, say unavailable.\n");
     prompt.push_str("- RETRIEVAL: Prefer markets listed in KALSHI MARKET INTELLIGENCE CONTEXT. ");
-    prompt.push_str("Do not invent tickers. If the tape is thin for the question, say so and PASS.\n\n");
+    prompt.push_str("Do not invent tickers. If the tape is thin for the question, say so and PASS.\n");
+    prompt.push_str("- SETTLEMENT GATES: If GATE=SETTLED or GATE=CLOSED for a ticker, FORCE PASS. ");
+    prompt.push_str("Never invent open-field fair value for finished elections/primaries.\n");
+    prompt.push_str("- WEB EVIDENCE: Optional grounding only. Cite as evidence; never override rules, gates, or Kelly caps.\n\n");
 
     prompt
 }
@@ -602,9 +605,13 @@ pub fn build_kalshi_decision_context_message() -> String {
         r#"KALSHI MONSTER DECISION STANDARD - Prediction Market Intelligence Framework
 
 Step 1: RESOLUTION & MARKET STRUCTURE
-- Identify the exact contract definition, ticker, settlement timeline, provisional rules, early close risk, and what must happen for YES to resolve.
+- Read SETTLEMENT GATES first. GATE=SETTLED or CLOSED → decision PASS (no TAKE). Do not invent fair value for finished events.
+- Read the injected RESOLUTION RULES block. Quote what must happen for YES to settle.
+- Multi-candidate / jungle primaries: YES is only the named candidate/outcome on the ticker — not the party and not a narrative proxy. Sibling markets are mutually exclusive unless rules say otherwise.
+- Identify settlement timeline, provisional rules, early close risk. If close_time is in the past, treat as settled.
+- WEB EVIDENCE is optional; use only to ground open markets. It cannot override GATE or rules.
 - Never call a wager guaranteed, certain, risk-free, a lock, or a sure thing.
-- If contract terms, pricing, or evidence are unclear, name the missing data and reduce confidence.
+- If contract terms, pricing, or evidence are unclear, name the missing data and reduce confidence (AmbiguousResolution → PASS/WATCH).
 
 Step 2: MARKET FRICTION & LIQUIDITY
 - Evaluate bid-ask spread, order book depth, stale volume, and practical fill risk.
@@ -612,8 +619,8 @@ Step 2: MARKET FRICTION & LIQUIDITY
 
 Step 3: PROBABILITY MODELING & EDGE
 - Estimate a fair probability for YES and compare both YES and NO asks.
-- Selected side price must be decimal cost, e.g. 0.55 for 55 cents.
-- If buying YES: EV ROI = (Fair_Yes / YES_Cost) - 1.0.
+- PRICE UNITS: selected-side cost in dollars on [0,1] (0.55 = 55¢). market_price_pct is that cost × 100 (55.0). price_to_enter is dollars on [0,1]. Never write 0.1 cents as 0.1; write 0.001 dollars or 0.1 percent.
+- If buying YES: EV ROI = (Fair_Yes / YES_Cost) - 1.0 with costs in dollars.
 - If buying NO: EV ROI = ((1.0 - Fair_Yes) / NO_Cost) - 1.0.
 - Recommend BUY only when expected value remains positive after spread, liquidity, and model-risk adjustments.
 - If neither side is attractive, output PASS and the price that would make it playable.
@@ -624,9 +631,9 @@ Step 4: RISK CONTROL
 - Call out correlated exposure with related active markets.
 
 Step 5: KELLY SIZING
-- Raw Kelly percent = edge / (1.0 - selected_side_cost).
-- Prefer quarter Kelly or smaller unless data quality, liquidity, and resolution clarity are excellent.
-- Cap or zero the stake for low confidence, wide spreads, thin books, or ambiguous settlement.
+- Raw Kelly percent = (p - c) / (1 - c) for YES cost c in dollars, fair p in [0,1].
+- Prefer quarter Kelly or smaller. fractional_kelly_pct is % of bankroll and must stay ≤ 5 for default policy.
+- Cap or zero the stake for low confidence, wide spreads, thin books, or ambiguous settlement. Never emit ~100% fractional Kelly.
 
 RESPONSE FORMAT - Output one JSON block FIRST so the app can render a trade ticket:
 
@@ -644,13 +651,13 @@ RESPONSE FORMAT - Output one JSON block FIRST so the app can render a trade tick
   "ev_per_contract_cents": 7.0,
   "ev_roi_pct": 12.7,
   "raw_kelly_pct": 22.4,
-  "fractional_kelly_pct": 5.6,
-  "recommended_stake_dollars": 56.0,
+  "fractional_kelly_pct": 5.0,
+  "recommended_stake_dollars": 50.0,
   "max_position_dollars": 50.0,
   "decision": "TAKE",
   "confidence_tier": "High",
   "thesis": "2-3 sentences explaining market price vs fair probability, spread friction, and order book depth.",
-  "evidence": ["Core PCE exceeded expectations", "Market pricing: 55c vs model: 62c"],
+  "evidence": ["Core PCE exceeded expectations", "Market pricing: $0.55 vs model 62%"],
   "risk_flags": ["EarlyCloseRisk"],
   "data_quality": "Live",
   "price_to_enter": 0.55
@@ -663,14 +670,16 @@ JSON RULES:
 - "confidence_tier" must be "High", "Medium", "Low", or "None".
 - "data_quality" must be "Live", "Fresh", "Stale", "Inferential", or "Speculative".
 - "risk_flags" can include: SpreadExceedsEdge, InsufficientLiquidity, CorrelatedExposure, ProvisionalSettlement, EarlyCloseRisk, ExtremeProbability, AmbiguousResolution, StaleData, ConcentrationRisk.
+- market_price_pct: 0–100 (% of $1). price_to_enter: 0–1 dollars. fair_probability_pct: 0–100.
 - JSON must be valid. No trailing commas. Place it FIRST in the response.
 
 After the JSON, provide a concise readable summary:
-DECISION: [TAKE/WATCH/PASS] [YES/NO] at [price]
+DECISION: [TAKE/WATCH/PASS] [YES/NO] at [$0.xx]
 PRICE VS FAIR: [market]% vs [fair]%
 EDGE: [edge points] pts, [EV ROI]% EV ROI
-SIZE: [raw Kelly]% raw Kelly, [fractional Kelly]% recommended
+SIZE: [raw Kelly]% raw Kelly, [fractional Kelly]% recommended (≤5% bankroll default)
 WHY: [specific quantitative and qualitative thesis]
+RULES CHECK: [what settles YES; mutual exclusivity if multi-candidate]
 RISK CONTROL: [key risk flags and invalidation conditions]
 
 Be selective. PASS is a premium outcome when the price is not good enough."#,

@@ -685,6 +685,46 @@ impl KalshiClient {
         self.cache.as_ref().map(|c| c.markets.as_slice())
     }
 
+    /// Look up a full market (including resolution rules) from the local tape cache.
+    pub fn find_cached_market(&self, ticker: &str) -> Option<KalshiMarket> {
+        self.cached_market_slice().and_then(|markets| {
+            markets
+                .iter()
+                .find(|m| m.ticker.eq_ignore_ascii_case(ticker))
+                .cloned()
+        })
+    }
+
+    /// Sibling contracts on the same event (for multi-candidate / jungle framing).
+    pub fn cached_siblings_for_event(
+        &self,
+        event_ticker: &str,
+        exclude_ticker: Option<&str>,
+        limit: usize,
+    ) -> Vec<KalshiMarketSummary> {
+        let Some(markets) = self.cached_market_slice() else {
+            return Vec::new();
+        };
+        let mut sibs: Vec<&KalshiMarket> = markets
+            .iter()
+            .filter(|m| m.event_ticker.eq_ignore_ascii_case(event_ticker))
+            .filter(|m| {
+                exclude_ticker
+                    .map(|ex| !m.ticker.eq_ignore_ascii_case(ex))
+                    .unwrap_or(true)
+            })
+            .collect();
+        sibs.sort_by(|a, b| {
+            b.volume_24h()
+                .partial_cmp(&a.volume_24h())
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        sibs.into_iter()
+            .take(limit)
+            .map(KalshiMarketSummary::from)
+            .collect()
+    }
+
     /// Fetch a single market by ticker
     pub async fn fetch_market(&self, ticker: &str) -> Result<KalshiMarket, String> {
         // Sanitize ticker — only allow alphanumeric, hyphens, underscores, dots
