@@ -24,22 +24,32 @@ Ordered by blocking / plan value. Do not invent calibration outcomes.
 
 ---
 
-## 2026-07-10 — Analyst stream layout + OpenCode empty-content fix
+## 2026-07-10 — Analyst stream: readable full-width + first-token fix
 
-### Shipped
+### Root causes (re-diagnosed)
+
+1. **Thin tower of text:** `overflow-wrap: anywhere` + per-token markdown re-parse broke words to ~1 glyph/line.
+2. **Late first token:** OpenCode streamed only `delta.reasoning_*`; UI waited on content. Frontend also awaited tape status before starting the LLM call.
+
+### Fix
 
 | Item | Change |
 |------|--------|
-| Empty OpenCode replies | `coalesce_content_and_reasoning` — promote `reasoning` → `content` when content empty (`openrouter.rs`) |
-| Stream column width | Assistant/streaming bubbles `width: 100%` / `max-width: 860px` (no shrink-to-fit) |
-| Stream chrome | Toolbar (status + Stop), min-height, caret; thoughts shown as body when no content yet |
-| Formatting | `formatChatText` — newlines, `**bold**`, `` `code` ``, fenced blocks, headings/lists for stream + final |
-| Settings LLM | OpenCode Zen/Go provider + key + models (prior commit `30b93a3`) |
+| Stream CSS | Full-column assistant bubble; plain `<pre class="streamBody">` with `pre-wrap` + normal word-break (no `anywhere`) |
+| Stream tokens | Mirror reasoning deltas onto visible content channel immediately (`openrouter.rs`) |
+| Latency | Do not await `refreshKalshiContextStatus` before `sendMessageStream` |
+| Empty save | Keep `coalesce_content_and_reasoning` for non-stream / edge cases |
 
 ### Verify
 
-- `cargo test chat::openrouter::tests::` coalesce tests
-- vitest ChatView + formatChatText
+- `cargo test chat::openrouter::tests::`
+- vitest ChatView
+
+---
+
+## 2026-07-10 — Analyst stream layout + OpenCode empty-content fix (superseded in part)
+
+Prior attempt used markdown formatter + `overflow-wrap: anywhere` — **reverted for streaming**. Empty-content coalesce kept.
 
 ---
 

@@ -149,7 +149,8 @@ export function useChat() {
       };
 
       try {
-        await refreshKalshiContextStatus();
+        // Do not await tape status before the LLM call — that added first-token latency.
+        void refreshKalshiContextStatus();
 
         const unsubs = await Promise.all([
           listen<{ session_id: string; chunk: string }>('stream-chunk', (ev) => {
@@ -160,7 +161,6 @@ export function useChat() {
           }),
           listen<string>('stream-done', async (ev) => {
             if (ev.payload !== sid) return;
-            // history reload happens after invoke resolves
           }),
           listen<{ session_id: string; error: string }>('stream-error', (ev) => {
             if (ev.payload.session_id === sid) {

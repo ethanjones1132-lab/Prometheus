@@ -4,7 +4,6 @@ import { kalshiApi } from '../services/kalshi';
 import type { ChatMessage } from '../types';
 import type { KalshiCategoryStat } from '../types/kalshi';
 import { extractPaperDecision } from '../utils/paperFromChat';
-import { formatChatText } from '../utils/formatChatText';
 
 const FALLBACK_PROMPTS = [
   {
@@ -322,32 +321,19 @@ export function ChatView({
             <div className="messageBubble assistantBubble streamingBubble">
               <div className="streamingToolbar">
                 <span className="streamingDots" aria-live="polite">
-                  {streamingText || streamingThought ? 'Streaming reply…' : 'Analyzing…'}
+                  {streamingText ? 'Streaming…' : 'Waiting for model…'}
                 </span>
                 <button type="button" className="ghostBtn" onClick={cancelStream}>
                   Stop
                 </button>
               </div>
-              {streamingThought && streamingText && (
-                <details className="reasoning" open>
-                  <summary>Reasoning stream</summary>
-                  <div className="messageContent messageContent--stream">
-                    {formatChatText(streamingThought)}
-                  </div>
-                </details>
-              )}
-              <div className="messageContent messageContent--stream">
-                {streamingText || streamingThought ? (
-                  <>
-                    {formatChatText(streamingText || streamingThought)}
-                    <span className="streamCaret" aria-hidden>
-                      ▍
-                    </span>
-                  </>
-                ) : (
-                  <span className="muted">Waiting for first tokens…</span>
-                )}
-              </div>
+              {/* Plain pre: no markdown re-parse per token (that caused lag + broken wrap). */}
+              <pre className="streamBody">
+                {streamingText || streamingThought || ''}
+                <span className="streamCaret" aria-hidden>
+                  ▍
+                </span>
+              </pre>
             </div>
           )}
           <div ref={messagesEndRef} />
@@ -433,16 +419,16 @@ function MessageBubble({
       {hasSeparateReasoning && (
         <details className="reasoning">
           <summary>Reasoning</summary>
-          <div className="messageContent">{formatChatText(message.reasoning || '')}</div>
+          <pre className="streamBody streamBody--static">{message.reasoning}</pre>
         </details>
       )}
-      <div className="messageContent">
-        {body ? (
-          formatChatText(body)
-        ) : (
+      {body ? (
+        <pre className="streamBody streamBody--static">{body}</pre>
+      ) : (
+        <div className="messageContent">
           <span className="muted">(Empty model response — try another model in Settings.)</span>
-        )}
-      </div>
+        </div>
+      )}
       <div className="messageMeta">
         {message.tokens_used != null && <span className="muted">{message.tokens_used} tokens</span>}
         {canPaper && (

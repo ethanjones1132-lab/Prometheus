@@ -1809,6 +1809,7 @@ button {
   overflow-y: auto;
   display: flex;
   flex-direction: column;
+  align-items: stretch;
   gap: 12px;
   padding: 4px 2px 12px;
 }
@@ -1829,7 +1830,7 @@ button {
   padding: 14px 18px;
   border-radius: 14px;
   font-size: 14px;
-  line-height: 1.6;
+  line-height: 1.55;
 }
 
 .userBubble {
@@ -1842,10 +1843,10 @@ button {
 }
 
 .assistantBubble {
-  /* Full readable column — avoid shrink-to-content (looked "vertically narrow") */
+  /* Stretch to the full messages column (not content-width shrink). */
   align-self: stretch;
-  width: 100%;
-  max-width: min(860px, 100%);
+  width: auto;
+  max-width: none;
   background: rgba(255, 255, 255, 0.04);
   border: 1px solid rgba(255, 255, 255, 0.09);
 }
@@ -1853,12 +1854,8 @@ button {
 .streamingBubble {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  min-height: 140px;
-  border-color: rgba(201, 168, 76, 0.45);
-  background:
-    linear-gradient(160deg, rgba(201, 168, 76, 0.08), rgba(255, 255, 255, 0.03)),
-    rgba(9, 9, 8, 0.55);
+  gap: 8px;
+  border-color: rgba(201, 168, 76, 0.4);
 }
 
 .streamingToolbar {
@@ -1869,83 +1866,43 @@ button {
   flex-shrink: 0;
 }
 
+/* Readable stream/final body: normal wrap, full column width, preserve newlines.
+   Do NOT use overflow-wrap:anywhere / break-all — that makes a 1-char-wide tower. */
+.streamBody {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  word-break: normal;
+  overflow-x: auto;
+  tab-size: 2;
+}
+
+.streamBody--static {
+  /* completed messages */
+}
+
 .messageContent {
   white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  word-break: break-word;
+  overflow-wrap: break-word;
+  word-break: normal;
   min-width: 0;
   width: 100%;
 }
 
-.messageContent--stream {
-  flex: 1 1 auto;
-  min-height: 5.5em;
-  max-height: none;
-}
-
-.chatTextBlock {
-  display: block;
-  white-space: pre-wrap;
-}
-
-.chatHeading {
-  display: block;
-  font-weight: 700;
-  letter-spacing: -0.02em;
-  color: #f5f5f0;
-  margin: 0.35em 0 0.15em;
-}
-
-.chatHeading.h1 {
-  font-size: 1.15em;
-}
-.chatHeading.h2 {
-  font-size: 1.08em;
-}
-.chatHeading.h3 {
-  font-size: 1.02em;
-  color: #c9a84c;
-}
-
-.chatListItem {
-  display: block;
-  padding-left: 0.15em;
-}
-
-.chatBold {
-  font-weight: 700;
-  color: #f5f5f0;
-}
-
-.chatInlineCode {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 0.9em;
-  padding: 0.1em 0.35em;
-  border-radius: 4px;
-  background: rgba(0, 0, 0, 0.35);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-}
-
-.chatCodeBlock {
-  display: block;
-  margin: 0.55em 0;
-  padding: 12px 14px;
-  overflow-x: auto;
-  border-radius: 10px;
-  background: rgba(0, 0, 0, 0.45);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 12px;
-  line-height: 1.45;
-  white-space: pre;
-}
-
 .streamCaret {
-  display: inline-block;
-  margin-left: 1px;
+  display: inline;
   color: #c9a84c;
   animation: streamBlink 1s step-end infinite;
-  font-weight: 400;
 }
 
 @keyframes streamBlink {

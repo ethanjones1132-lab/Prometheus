@@ -149,18 +149,34 @@ async fn process_stream_line(
                 return false;
             };
 
-            if let Some(r_content) = &choice.delta.reasoning_content {
-                full_reasoning.push_str(r_content);
-                let _ = tx.send(format!("__STREAM_THOUGHT__:{}", r_content)).await;
-            } else if let Some(r_content) = &choice.delta.reasoning {
-                full_reasoning.push_str(r_content);
-                let _ = tx.send(format!("__STREAM_THOUGHT__:{}", r_content)).await;
+            // OpenCode Zen free/thinking models often stream ONLY into reasoning_*
+            // and never emit delta.content. Mirror those tokens onto the visible
+            // content channel so first-token latency is not "wait until done".
+            let reasoning_piece = choice
+                .delta
+                .reasoning_content
+                .as_deref()
+                .or(choice.delta.reasoning.as_deref())
+                .filter(|s| !s.is_empty());
+            let content_piece = choice
+                .delta
+                .content
+                .as_deref()
+                .filter(|s| !s.is_empty());
+
+            if let Some(r) = reasoning_piece {
+                full_reasoning.push_str(r);
             }
 
-            if let Some(content) = &choice.delta.content {
-                full_content.push_str(content);
+            if let Some(c) = content_piece {
+                full_content.push_str(c);
                 *chunk_count += 1;
-                let _ = tx.send(content.to_string()).await;
+                let _ = tx.send(c.to_string()).await;
+            } else if let Some(r) = reasoning_piece {
+                // No content in this delta — surface reasoning as the live stream.
+                full_content.push_str(r);
+                *chunk_count += 1;
+                let _ = tx.send(r.to_string()).await;
             }
         }
         Err(e) => {
@@ -774,10 +790,16 @@ pub async fn stream_message(
         tokens_used = Some((full_content.len() / 4) as u64);
     }
 
-    let reasoning_val = if full_reasoning.is_empty() {
+    // full_content already includes mirrored reasoning tokens when the model
+    // never emitted delta.content. Prefer not duplicating reasoning in storage.
+    let reasoning_val = if full_reasoning.is_empty() || full_content.contains(full_reasoning.as_str())
+    {
         None
-    } else {
+    } else if full_content.trim().is_empty() {
         Some(full_reasoning)
+    } else {
+        // Answer in content; keep reasoning only if it is distinct prefix material
+        None
     };
     let (full_content, reasoning_val) =
         coalesce_content_and_reasoning(full_content, reasoning_val);
@@ -786,12 +808,6 @@ pub async fn stream_message(
         let msg = "Model returned an empty streamed response (no content or reasoning). Try another model.";
         let _ = tx.send(format!("__STREAM_ERROR__:{msg}")).await;
         return Err(msg.into());
-    }
-
-    // If we only had reasoning during stream, push the promoted body so the UI
-    // doesn't flash empty before history reload.
-    if chunk_count == 0 {
-        let _ = tx.send(full_content.clone()).await;
     }
 
     Ok(OpenRouterResponse {
