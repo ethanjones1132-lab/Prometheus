@@ -279,13 +279,14 @@ pub async fn send_message(
     // Current user message
     messages.push(ChatMessage::new("user".to_string(), user_message));
 
+    let model_id = config.llm_model_id();
     let request = ChatRequest {
-        model: config.selected_model.clone(),
+        model: model_id.clone(),
         messages,
         max_tokens: Some(4096),
         temperature: Some(0.3),
         stream: false,
-        reasoning: if model_supports_reasoning(&config.selected_model) {
+        reasoning: if model_supports_reasoning(&model_id) {
             Some(OpenRouterRequestReasoning {
                 effort: Some("high".to_string()),
                 exclude: Some(false),
@@ -296,16 +297,25 @@ pub async fn send_message(
         },
     };
 
+    let base = config.llm_base_url();
+    let api_key = config.llm_api_key();
+    if api_key.trim().is_empty() {
+        return Err(format!(
+            "No API key for {} — set it in Settings",
+            config.llm_provider_enum().display_name()
+        ));
+    }
+
     let response = client
-        .post(format!("{}/chat/completions", config.openrouter_base_url))
-        .header("Authorization", format!("Bearer {}", config.openrouter_api_key))
+        .post(format!("{base}/chat/completions"))
+        .header("Authorization", format!("Bearer {api_key}"))
         .header("Content-Type", "application/json")
         .header("HTTP-Referer", "https://kalshi-monster.app")
         .header("X-Title", "Kalshi Monster")
         .json(&request)
         .send()
         .await
-        .map_err(|e| format!("Request failed: {}", e))?;
+        .map_err(|e| format!("Request failed ({base}): {e}"))?;
 
     let status = response.status();
     if !status.is_success() {
@@ -350,7 +360,7 @@ pub async fn send_message(
         content,
         reasoning,
         tokens_used,
-        model: config.selected_model.clone(),
+        model: model_id,
     })
 }
 
@@ -600,13 +610,14 @@ pub async fn stream_message(
     }
     messages.push(ChatMessage::new("user".to_string(), user_message));
 
+    let model_id = config.llm_model_id();
     let request = ChatRequest {
-        model: config.selected_model.clone(),
+        model: model_id.clone(),
         messages,
         max_tokens: Some(4096),
         temperature: Some(0.3),
         stream: true,
-        reasoning: if model_supports_reasoning(&config.selected_model) {
+        reasoning: if model_supports_reasoning(&model_id) {
             Some(OpenRouterRequestReasoning {
                 effort: Some("high".to_string()),
                 exclude: Some(false),
@@ -617,16 +628,31 @@ pub async fn stream_message(
         },
     };
 
+    let base = config.llm_base_url();
+    let api_key = config.llm_api_key();
+    if api_key.trim().is_empty() {
+        let _ = tx
+            .send(format!(
+                "__STREAM_ERROR__:No API key for {} — set it in Settings",
+                config.llm_provider_enum().display_name()
+            ))
+            .await;
+        return Err(format!(
+            "No API key for {}",
+            config.llm_provider_enum().display_name()
+        ));
+    }
+
     let response = client
-        .post(format!("{}/chat/completions", config.openrouter_base_url))
-        .header("Authorization", format!("Bearer {}", config.openrouter_api_key))
+        .post(format!("{base}/chat/completions"))
+        .header("Authorization", format!("Bearer {api_key}"))
         .header("Content-Type", "application/json")
         .header("HTTP-Referer", "https://kalshi-monster.app")
         .header("X-Title", "Kalshi Monster")
         .json(&request)
         .send()
         .await
-        .map_err(|e| format!("Request failed: {}", e))?;
+        .map_err(|e| format!("Request failed ({base}): {e}"))?;
 
     let status = response.status();
     if !status.is_success() {
@@ -705,7 +731,7 @@ pub async fn stream_message(
         content: full_content,
         reasoning: reasoning_val,
         tokens_used,
-        model: config.selected_model.clone(),
+        model: model_id,
     })
 }
 
@@ -746,13 +772,14 @@ pub async fn send_message_with_context(
 
     messages.push(ChatMessage::new("user".to_string(), user_message));
 
+    let model_id = config.llm_model_id();
     let request = ChatRequest {
-        model: config.selected_model.clone(),
+        model: model_id.clone(),
         messages,
         max_tokens: Some(4096),
         temperature: Some(0.3),
         stream: false,
-        reasoning: if model_supports_reasoning(&config.selected_model) {
+        reasoning: if model_supports_reasoning(&model_id) {
             Some(OpenRouterRequestReasoning {
                 effort: Some("high".to_string()),
                 exclude: Some(false),
@@ -763,16 +790,25 @@ pub async fn send_message_with_context(
         },
     };
 
+    let base = config.llm_base_url();
+    let api_key = config.llm_api_key();
+    if api_key.trim().is_empty() {
+        return Err(format!(
+            "No API key for {}",
+            config.llm_provider_enum().display_name()
+        ));
+    }
+
     let response = client
-        .post(format!("{}/chat/completions", config.openrouter_base_url))
-        .header("Authorization", format!("Bearer {}", config.openrouter_api_key))
+        .post(format!("{base}/chat/completions"))
+        .header("Authorization", format!("Bearer {api_key}"))
         .header("Content-Type", "application/json")
         .header("HTTP-Referer", "https://kalshi-monster.app")
         .header("X-Title", "Kalshi Monster")
         .json(&request)
         .send()
         .await
-        .map_err(|e| format!("Request failed: {}", e))?;
+        .map_err(|e| format!("Request failed ({base}): {e}"))?;
 
     let status = response.status();
     if !status.is_success() {
@@ -798,7 +834,7 @@ pub async fn send_message_with_context(
         content,
         reasoning: None,
         tokens_used,
-        model: config.selected_model.clone(),
+        model: model_id,
     })
 }
 

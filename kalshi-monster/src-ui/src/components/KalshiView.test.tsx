@@ -28,6 +28,8 @@ vi.mock('../services/tauri', () => ({
   configApi: {
     get: vi.fn().mockResolvedValue({
       openrouter_api_key: '',
+      llm_provider: 'openrouter',
+      opencode_api_key: '',
       openrouter_base_url: 'https://openrouter.ai/api/v1',
       selected_model: 'model',
       system_prompt: '',

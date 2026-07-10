@@ -228,6 +228,9 @@ export function ChatView({
             <span className={`statusPill ${tapeCold ? 'warn' : 'ok'}`}>
               {tapeCold ? `Tape limited (${tapeCount})` : `Tape ready · ${tapeCount} markets`}
             </span>
+            <span className="statusPill muted" title="Configured in Settings → Analyst LLM">
+              Model from Settings
+            </span>
           </div>
         </header>
 

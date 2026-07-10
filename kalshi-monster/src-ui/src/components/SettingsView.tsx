@@ -26,6 +26,8 @@ const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings = {
 const EMPTY_CONFIG: AppConfig = {
   openrouter_api_key: '',
   openrouter_base_url: 'https://openrouter.ai/api/v1',
+  llm_provider: 'openrouter',
+  opencode_api_key: '',
   selected_model: 'nvidia/nemotron-3-super-120b-a12b:free',
   system_prompt: '',
   max_context_players: 50,
@@ -49,6 +51,24 @@ const EMPTY_CONFIG: AppConfig = {
   bot_daily_picks_time: '08:00',
 };
 
+const LLM_PROVIDERS: Array<{ id: string; label: string; hint: string }> = [
+  {
+    id: 'openrouter',
+    label: 'OpenRouter',
+    hint: 'Existing OpenRouter key + model catalog.',
+  },
+  {
+    id: 'opencode_zen',
+    label: 'OpenCode Zen',
+    hint: 'Pay-per-use gateway — key from https://opencode.ai/auth',
+  },
+  {
+    id: 'opencode_go',
+    label: 'OpenCode Go',
+    hint: 'Subscription open models — same OpenCode key with Go plan active.',
+  },
+];
+
 function maskSecret(value: string): string {
   if (!value) return '';
   if (value.length <= 8) return '••••••••';
@@ -59,6 +79,7 @@ export function SettingsView() {
   const [config, setConfig] = useState<AppConfig>(EMPTY_CONFIG);
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [apiKeyInput, setApiKeyInput] = useState('');
+  const [opencodeKeyInput, setOpencodeKeyInput] = useState('');
   const [kalshiPasswordInput, setKalshiPasswordInput] = useState('');
   const [weatherKeyInput, setWeatherKeyInput] = useState('');
   const [sportsKeyInput, setSportsKeyInput] = useState('');
@@ -86,18 +107,25 @@ export function SettingsView() {
     setLoading(true);
     setError(null);
     try {
-      const [cfg, modelList, posture, notifSettings] = await Promise.all([
-        configApi.get(),
-        configApi.getAvailableModels(),
+      const cfg = await configApi.get();
+      const provider = cfg.llm_provider || 'openrouter';
+      const [modelList, posture, notifSettings] = await Promise.all([
+        configApi.getAvailableModels(provider),
         configApi.getSecurityPosture().catch(() => null),
         notificationApi.getSettings().catch(() => DEFAULT_NOTIFICATION_SETTINGS),
       ]);
-      setConfig(cfg);
+      setConfig({
+        ...EMPTY_CONFIG,
+        ...cfg,
+        llm_provider: provider,
+        opencode_api_key: cfg.opencode_api_key ?? '',
+      });
       setModels(modelList);
       setSecurityPosture(posture);
       setNotificationSettings(notifSettings);
       setLeaguesInput(cfg.preferred_leagues.join(', '));
       setApiKeyInput('');
+      setOpencodeKeyInput('');
       setKalshiPasswordInput('');
       setWeatherKeyInput('');
       setSportsKeyInput('');
@@ -109,6 +137,18 @@ export function SettingsView() {
       setLoading(false);
     }
   }, []);
+
+  const reloadModelsForProvider = async (provider: string) => {
+    try {
+      const modelList = await configApi.getAvailableModels(provider);
+      setModels(modelList);
+      if (modelList.length > 0 && !modelList.some((m) => m.id === config.selected_model)) {
+        setConfig((c) => ({ ...c, selected_model: modelList[0].id, llm_provider: provider }));
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
 
   const loadBankroll = useCallback(async () => {
     setBankrollLoading(true);
@@ -177,6 +217,8 @@ export function SettingsView() {
       const next: AppConfig = {
         ...config,
         openrouter_api_key: apiKeyInput.trim() || config.openrouter_api_key,
+        opencode_api_key: opencodeKeyInput.trim() || config.opencode_api_key,
+        llm_provider: config.llm_provider || 'openrouter',
         kalshi_password: kalshiPasswordInput.trim() || config.kalshi_password,
         openweathermap_api_key: weatherKeyInput.trim() || config.openweathermap_api_key,
         api_sports_key: sportsKeyInput.trim() || config.api_sports_key,
@@ -191,12 +233,13 @@ export function SettingsView() {
       await notificationApi.saveSettings(notificationSettings);
       setConfig(next);
       setApiKeyInput('');
+      setOpencodeKeyInput('');
       setKalshiPasswordInput('');
       setWeatherKeyInput('');
       setSportsKeyInput('');
       setDiscordInput('');
       setTelegramTokenInput('');
-      setMessage('Settings saved.');
+      setMessage('Settings saved. Analyst will use the selected provider on the next message.');
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -209,16 +252,26 @@ export function SettingsView() {
     setMessage(null);
     setError(null);
     try {
-      if (apiKeyInput.trim()) {
-        await configApi.save({ ...config, openrouter_api_key: apiKeyInput.trim() });
-      }
+      const draft: AppConfig = {
+        ...config,
+        openrouter_api_key: apiKeyInput.trim() || config.openrouter_api_key,
+        opencode_api_key: opencodeKeyInput.trim() || config.opencode_api_key,
+      };
+      await configApi.save(draft);
+      setConfig(draft);
       const status = await configApi.checkApiStatus();
       setApiStatus(status);
+      const label =
+        draft.llm_provider === 'opencode_zen'
+          ? 'OpenCode Zen'
+          : draft.llm_provider === 'opencode_go'
+            ? 'OpenCode Go'
+            : 'OpenRouter';
       if (status.connected) {
         setMessage(
           status.model_available
-            ? 'OpenRouter connected — model available.'
-            : 'OpenRouter connected — selected model may be unavailable.',
+            ? `${label} connected — model available.`
+            : `${label} connected — selected model may be unavailable on that gateway.`,
         );
       } else {
         setError(status.error ?? 'Connection failed.');
@@ -229,6 +282,9 @@ export function SettingsView() {
       setTesting(false);
     }
   };
+
+  const provider = config.llm_provider || 'openrouter';
+  const isOpenCode = provider === 'opencode_zen' || provider === 'opencode_go';
 
   if (loading) {
     return (
@@ -246,8 +302,8 @@ export function SettingsView() {
         <div>
           <h2>Settings</h2>
           <p className="muted">
-            OpenRouter, model selection, risk controls, and notification hooks. Secret values stay masked in this view
-            and are redacted from diagnostics.
+            LLM provider (OpenRouter / OpenCode Zen / OpenCode Go), model selection for Analyst, risk controls, and
+            notification hooks. Secrets stay masked here and are redacted from diagnostics.
           </p>
         </div>
         <div className="panelToolbar">
@@ -497,34 +553,91 @@ export function SettingsView() {
 
       <div className="settingsGrid">
         <div className="card">
-          <h3>OpenRouter</h3>
+          <h3>Analyst LLM</h3>
+          <p className="muted" style={{ marginTop: 0 }}>
+            Choose who serves Analyst chat. OpenCode Zen and Go share one API key from{' '}
+            <a href="https://opencode.ai/auth" target="_blank" rel="noreferrer">
+              opencode.ai/auth
+            </a>
+            . Go requires an active Go subscription; Zen is pay-per-use (plus free models).
+          </p>
           <div className="formGrid">
             <label>
-              API key
-              <input
-                type="password"
-                placeholder={config.openrouter_api_key ? maskSecret(config.openrouter_api_key) : 'sk-or-v1-…'}
-                value={apiKeyInput}
-                onChange={(e) => setApiKeyInput(e.target.value)}
-                autoComplete="off"
-              />
-            </label>
-            <label>
-              Base URL
-              <input
-                value={config.openrouter_base_url}
-                onChange={(e) => setConfig({ ...config, openrouter_base_url: e.target.value })}
-              />
-            </label>
-            <label>
-              Model
+              Provider
               <select
-                value={config.selected_model}
+                value={provider}
+                onChange={(e) => {
+                  const next = e.target.value;
+                  setConfig({ ...config, llm_provider: next });
+                  void reloadModelsForProvider(next);
+                }}
+              >
+                {LLM_PROVIDERS.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <p className="muted" style={{ gridColumn: '1 / -1', margin: 0 }}>
+              {LLM_PROVIDERS.find((p) => p.id === provider)?.hint}
+            </p>
+
+            {provider === 'openrouter' && (
+              <>
+                <label>
+                  OpenRouter API key
+                  <input
+                    type="password"
+                    placeholder={
+                      config.openrouter_api_key ? maskSecret(config.openrouter_api_key) : 'sk-or-v1-…'
+                    }
+                    value={apiKeyInput}
+                    onChange={(e) => setApiKeyInput(e.target.value)}
+                    autoComplete="off"
+                  />
+                </label>
+                <label>
+                  OpenRouter base URL
+                  <input
+                    value={config.openrouter_base_url}
+                    onChange={(e) => setConfig({ ...config, openrouter_base_url: e.target.value })}
+                  />
+                </label>
+              </>
+            )}
+
+            {isOpenCode && (
+              <label style={{ gridColumn: '1 / -1' }}>
+                OpenCode API key (Zen / Go)
+                <input
+                  type="password"
+                  placeholder={
+                    config.opencode_api_key
+                      ? maskSecret(config.opencode_api_key)
+                      : 'Paste key from opencode.ai/auth'
+                  }
+                  value={opencodeKeyInput}
+                  onChange={(e) => setOpencodeKeyInput(e.target.value)}
+                  autoComplete="off"
+                />
+              </label>
+            )}
+
+            <label style={{ gridColumn: '1 / -1' }}>
+              Model (used by Analyst)
+              <select
+                value={
+                  models.some((m) => m.id === config.selected_model)
+                    ? config.selected_model
+                    : models[0]?.id ?? config.selected_model
+                }
                 onChange={(e) => setConfig({ ...config, selected_model: e.target.value })}
               >
                 {models.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.name} ({m.provider}) — {m.cost}
+                  <option key={`${m.provider}-${m.id}`} value={m.id}>
+                    {m.name} — {m.cost}
+                    {m.description ? ` · ${m.description.slice(0, 60)}` : ''}
                   </option>
                 ))}
               </select>

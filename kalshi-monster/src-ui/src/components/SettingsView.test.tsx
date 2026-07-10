@@ -25,6 +25,8 @@ vi.mock('../services/tauri', () => ({
 
 const config = {
   openrouter_api_key: 'sk-or-v1-secret-value',
+  llm_provider: 'openrouter',
+  opencode_api_key: '',
   openrouter_base_url: 'https://openrouter.ai/api/v1',
   selected_model: 'model',
   system_prompt: '',

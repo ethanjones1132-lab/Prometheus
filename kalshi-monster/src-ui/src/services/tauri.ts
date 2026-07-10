@@ -31,7 +31,8 @@ export const configApi = {
 
   getSecurityPosture: () => invoke<SecurityPosture>('get_security_posture'),
 
-  getAvailableModels: () => invoke<ModelInfo[]>('get_available_models'),
+  getAvailableModels: (provider?: string | null) =>
+    invoke<ModelInfo[]>('get_available_models', { provider: provider ?? null }),
 };
 
 // ── Chat ────────────────────────────────────────────────────────

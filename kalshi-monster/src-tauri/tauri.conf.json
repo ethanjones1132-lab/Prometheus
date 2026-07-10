@@ -39,7 +39,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; connect-src ipc: http://ipc.localhost https://api.elections.kalshi.com https://trading-api.kalshi.com https://demo-api.kalshi.co https://openrouter.ai; img-src 'self' asset: http://asset.localhost data:; style-src 'self' 'unsafe-inline'; script-src 'self'"
+      "csp": "default-src 'self'; connect-src ipc: http://ipc.localhost https://api.elections.kalshi.com https://trading-api.kalshi.com https://demo-api.kalshi.co https://openrouter.ai https://opencode.ai; img-src 'self' asset: http://asset.localhost data:; style-src 'self' 'unsafe-inline'; script-src 'self'"
     },
     "withGlobalTauri": false
   }

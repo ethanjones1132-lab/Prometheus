@@ -88,8 +88,13 @@ pub async fn get_security_posture(
 }
 
 #[tauri::command]
-pub async fn get_available_models() -> Result<Vec<config::ModelInfo>, String> {
-    Ok(config::available_models())
+pub async fn get_available_models(
+    provider: Option<String>,
+) -> Result<Vec<config::ModelInfo>, String> {
+    Ok(match provider {
+        Some(p) if !p.trim().is_empty() => config::available_models_for_provider(&p),
+        _ => config::available_models(),
+    })
 }
 
 // ── Chat Commands ──

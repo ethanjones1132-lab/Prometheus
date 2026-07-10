@@ -153,9 +153,15 @@ export interface PredictionRecord {
   notes?: string;
 }
 
+export type LlmProvider = 'openrouter' | 'opencode_zen' | 'opencode_go';
+
 export interface AppConfig {
   openrouter_api_key: string;
   openrouter_base_url: string;
+  /** Analyst gateway: openrouter | opencode_zen | opencode_go */
+  llm_provider: LlmProvider | string;
+  /** OpenCode Zen/Go key from https://opencode.ai/auth (shared for Zen + Go) */
+  opencode_api_key: string;
   selected_model: string;
   system_prompt: string;
   max_context_players: number;
