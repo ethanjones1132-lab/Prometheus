@@ -120,7 +120,10 @@ pub fn run() {
         Some(Arc::new(db_pool.clone())),
     );
     if let Some(cache) = kalshi_persisted {
-        kalshi_client_inner.hydrate_cache(cache);
+        // hydrate_cache is async (shared RwLock .write().await) — must run on rt.
+        rt.block_on(async {
+            kalshi_client_inner.hydrate_cache(cache).await;
+        });
     }
     let kalshi_client = Arc::new(Mutex::new(kalshi_client_inner));
     let api_client = Arc::new(Mutex::new(
@@ -321,6 +324,7 @@ pub fn run() {
             commands::kalshi_get_dashboard_bootstrap,
             commands::kalshi_get_cache_state,
             commands::kalshi_get_category_stats,
+            commands::kalshi_get_chat_context_status,
             commands::kalshi_get_portfolio,
             commands::kalshi_refresh,
             commands::kalshi_get_predictions,
@@ -330,6 +334,10 @@ pub fn run() {
             commands::export_kalshi_predictions_csv,
             commands::kalshi_compute_stake_adjustment,
             commands::kalshi_get_calibration_status,
+            commands::kalshi_analyze_market_edge,
+            commands::kalshi_analyze_top_markets_edge,
+            commands::kalshi_resolve_pending_forecasts,
+            commands::kalshi_get_forecast_calibration_report,
             commands::kalshi_snapshot_prices,
             commands::kalshi_get_price_history,
             commands::kalshi_record_paper_decision,

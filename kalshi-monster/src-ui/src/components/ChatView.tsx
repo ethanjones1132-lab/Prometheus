@@ -25,7 +25,7 @@ function extractTickerFromPrompt(prompt: string): { ticker: string; title: strin
 }
 
 export function ChatView({ initialPrompt, onPromptConsumed }: ChatViewProps = {}) {
-  const { messages, isStreaming, error, sendMessage, initSession } = useChat();
+  const { messages, isStreaming, error, sendMessage, initSession, kalshiContextStatus } = useChat();
   const [input, setInput] = useState('');
   const [activeContext, setActiveContext] = useState<{ ticker: string; title: string } | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -85,10 +85,26 @@ export function ChatView({ initialPrompt, onPromptConsumed }: ChatViewProps = {}
         </div>
       )}
 
-      {/* Degraded Context Banner */}
-      {activeContext && messages.length === 0 && !isStreaming && (
+      {/* Degraded Kalshi tape (KB-2a) */}
+      {kalshiContextStatus?.degraded && (
         <div style={styles.degradedBanner} role="alert">
-          ⚠️ Market tape may be cold. If the response lacks market data, switch to <strong>Markets</strong> and refresh the catalog first.
+          <strong>⚠️ Limited Kalshi market context</strong>
+          {kalshiContextStatus.reasons.length > 0 ? (
+            <ul style={styles.degradedList}>
+              {kalshiContextStatus.reasons.map((reason) => (
+                <li key={reason}>{reason}</li>
+              ))}
+            </ul>
+          ) : (
+            <span> Market tape has {kalshiContextStatus.tape_market_count} markets — refresh the catalog on Markets.</span>
+          )}
+        </div>
+      )}
+
+      {/* Legacy hint when a ticker is pinned but tape looks cold before first message */}
+      {activeContext && messages.length === 0 && !isStreaming && kalshiContextStatus?.degraded && (
+        <div style={styles.contextHintOnly}>
+          Pinned market: responses may omit live tape until you refresh the catalog.
         </div>
       )}
 
@@ -355,5 +371,14 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: '6px',
     fontSize: '12px',
     color: '#e3b341',
+  },
+  degradedList: {
+    margin: '6px 0 0',
+    paddingLeft: '18px',
+  },
+  contextHintOnly: {
+    margin: '4px 16px 0',
+    fontSize: '11px',
+    color: '#8b949e',
   },
 };

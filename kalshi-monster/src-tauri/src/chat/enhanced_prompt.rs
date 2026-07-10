@@ -121,14 +121,16 @@ pub async fn build_ultimate_prompt(
 }
 
 /// Detects if the user is asking about sports markets.
+/// Tightened to explicit leagues, sports, positions, and stat/mechanics terms so
+/// non-sports prediction markets do not trigger irrelevant sports data injection.
 fn is_sports_market_query(query: &str) -> bool {
     let lower = query.to_lowercase();
     let sports_keywords = [
         "sports", "nba", "nfl", "mlb", "nhl", "ufc", "golf", "tennis",
-        "player", "quarterback", "qb", "running back", "rb", "wide receiver", "wr",
-        "passing", "rushing", "receiving", "yards", "touchdown",
         "basketball", "baseball", "football", "hockey",
-        "playoff", "championship",
+        "quarterback", "qb", "running back", "rb", "wide receiver", "wr",
+        "passing", "rushing", "receiving", "yards", "touchdown",
+        "tip-off", "kickoff", "overtime", "halftime",
     ];
     sports_keywords.iter().any(|kw| lower.contains(kw))
 }
@@ -281,9 +283,10 @@ mod tests {
     #[test]
     fn test_is_sports_market_query() {
         assert!(is_sports_market_query("Analyze NBA playoff markets"));
-        assert!(is_sports_market_query("What about player props?"));
+        assert!(is_sports_market_query("What about NFL passing props?"));
         assert!(!is_sports_market_query("Federal Reserve decision analysis"));
         assert!(!is_sports_market_query("Crypto market outlook"));
+        assert!(!is_sports_market_query("Which team will win the championship series?"));
     }
 
     #[test]

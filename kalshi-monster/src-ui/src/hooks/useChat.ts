@@ -1,20 +1,50 @@
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
+import { listen } from '@tauri-apps/api/event';
 import { chatApi } from '../services/tauri';
+import { kalshiApi, type KalshiChatContextStatus } from '../services/kalshi';
 import type { ChatMessage } from '../types';
 
 export function useChat() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [kalshiContextStatus, setKalshiContextStatus] = useState<KalshiChatContextStatus | null>(null);
   const sessionIdRef = useRef<string | null>(null);
+
+  const refreshKalshiContextStatus = useCallback(async () => {
+    try {
+      const status = await kalshiApi.getChatContextStatus();
+      setKalshiContextStatus(status);
+    } catch {
+      // Non-fatal — banner may stay stale until next send or IPC event
+    }
+  }, []);
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    void listen<{ session_id: string; status: KalshiChatContextStatus }>(
+      'chat-kalshi-context',
+      (event) => {
+        if (event.payload.session_id === sessionIdRef.current) {
+          setKalshiContextStatus(event.payload.status);
+        }
+      },
+    ).then((fn) => {
+      unlisten = fn;
+    });
+    return () => {
+      unlisten?.();
+    };
+  }, []);
 
   const initSession = useCallback(async () => {
     const session = await chatApi.newSession();
     sessionIdRef.current = session.id;
     setMessages([]);
     setError(null);
+    await refreshKalshiContextStatus();
     return session.id;
-  }, []);
+  }, [refreshKalshiContextStatus]);
 
   const sendMessage = useCallback(
     async (content: string, stream = false) => {
@@ -34,9 +64,9 @@ export function useChat() {
       setError(null);
 
       try {
+        await refreshKalshiContextStatus();
         if (stream) {
           await chatApi.sendMessageStream(content, sessionId);
-          // Streaming path emits chunks via Tauri events; fall back to polling history.
           const history = await chatApi.getHistory(sessionId);
           setMessages(history);
         } else {
@@ -58,7 +88,7 @@ export function useChat() {
         setIsStreaming(false);
       }
     },
-    [initSession],
+    [initSession, refreshKalshiContextStatus],
   );
 
   return {
@@ -68,5 +98,6 @@ export function useChat() {
     sendMessage,
     initSession,
     sessionId: sessionIdRef.current,
+    kalshiContextStatus,
   };
 }

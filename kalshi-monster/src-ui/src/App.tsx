@@ -1,18 +1,20 @@
 import './index.css';
 import { useState } from 'react';
+import { CalibrationView } from './components/CalibrationView';
 import { ChatView } from './components/ChatView';
 import { KalshiPredictionsPanel } from './components/KalshiPredictionsPanel';
 import { KalshiView } from './components/KalshiView';
 import { SettingsView } from './components/SettingsView';
 import { WorldMarketsView } from './components/WorldMarketsView';
 
-type Tab = 'markets' | 'world' | 'chat' | 'predictions' | 'settings';
+type Tab = 'markets' | 'world' | 'chat' | 'predictions' | 'calibration' | 'settings';
 
 const tabs: Array<{ id: Tab; label: string }> = [
   { id: 'markets', label: 'Command desk' },
   { id: 'world', label: 'World markets' },
   { id: 'chat', label: 'Analyst' },
   { id: 'predictions', label: 'Paper portfolio' },
+  { id: 'calibration', label: 'Calibration' },
   { id: 'settings', label: 'Settings' },
 ];
 
@@ -73,6 +75,7 @@ export default function App() {
             <KalshiPredictionsPanel />
           </section>
         )}
+        {activeTab === 'calibration' && <CalibrationView />}
         {activeTab === 'settings' && <SettingsView />}
       </main>
     </div>

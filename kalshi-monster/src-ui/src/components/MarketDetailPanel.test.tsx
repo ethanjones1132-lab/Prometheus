@@ -11,6 +11,7 @@ vi.mock('../services/kalshi', () => ({
     getCalibrationStatus: vi.fn(),
     getPriceHistory: vi.fn(),
     recordPaperDecision: vi.fn(),
+    analyzeMarketEdge: vi.fn(),
   },
 }));
 
@@ -110,6 +111,21 @@ describe('MarketDetailPanel', () => {
       snapshots: [],
     });
     vi.mocked(kalshiApi.recordPaperDecision).mockResolvedValue('paper-123');
+    vi.mocked(kalshiApi.analyzeMarketEdge).mockResolvedValue({
+      forecast_id: 42,
+      market_ticker: market.ticker,
+      p_market: 0.6,
+      p_model: 0.65,
+      p_final: 0.62,
+      confidence: 0.4,
+      verdict: 'pass',
+      verdict_reasons: ['edge below threshold'],
+      edge_net_yes: 0.01,
+      edge_net_no: -0.02,
+      signals_received: 5,
+      signals_opining: 1,
+      sidecar_elapsed_ms: 20,
+    });
   });
 
   test('shows market mechanics, risk flags, and explicit decision actions', async () => {
@@ -121,6 +137,16 @@ describe('MarketDetailPanel', () => {
     expect(screen.getByRole('button', { name: 'Record YES' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Watch' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Pass' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Run edge engine' })).toBeInTheDocument();
+  });
+
+  test('runs edge engine and surfaces ledger summary', async () => {
+    render(<MarketDetailPanel market={market} onClose={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Run edge engine' }));
+    await waitFor(() => {
+      expect(kalshiApi.analyzeMarketEdge).toHaveBeenCalledWith('KX-CPI-JUN');
+    });
+    expect(await screen.findByText(/Ledger #42/i)).toBeInTheDocument();
   });
 
   test('records a paper decision once fair value creates positive edge', async () => {

@@ -21,3 +21,19 @@ Rules for anything added here:
 Phase 2 extraction spike (plan §13.2, timeboxed 2 days): determine whether
 the v4 embedded-Python modules lift cleanly, or fall back to the v1.x
 pure-Python tree.
+
+## Implemented now (2026-07-09)
+
+| Agent | Module | Data source | Notes |
+|-------|--------|-------------|-------|
+| **technical** | `technical.py` | yfinance via `engines/market_data.py` | Lognormal binary `P(S_T>K)` from realized vol + optional micro-momentum μ. Opines only when underlying+strike+horizon are known. |
+| **contract_tape** | `contract_tape.py` | `context.contract_mids` from Rust (Kalshi) | Momentum + mild longshot-bias adjustment on the contract's own mid path. `probability=None` without a real series. |
+
+### Explicitly not implemented (no honest data path yet)
+
+- **macro** — needs EconDB / official release series (not installed)
+- **news / sentiment** — need news feeds and/or LLM keys
+- **valuation / fundamentals** — need fundamentals DB
+- Risk / portfolio / explainability shape sizing & reporting in Rust, not `p_model`
+
+Orchestrator: `orchestrator.py` → `POST /api/v1/agents/market-opinion`.

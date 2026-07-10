@@ -4,6 +4,67 @@ Tracks execution of `docs/fincept-integration-plan.md` (v2.1). Newest entry firs
 
 ---
 
+## 2026-07-09 — Agents + edge ledger + KB-1 root cause
+
+### Shipped
+
+| Item | Change |
+|------|--------|
+| **technical agent** | `fincept-sidecar/agents/technical.py` — lognormal binary `P(S_T>K)` from yfinance realized vol (`engines/market_data.py`) |
+| **contract_tape agent** | `fincept-sidecar/agents/contract_tape.py` — mid-series momentum + mild longshot bias from Rust/context mids |
+| Orchestrator + HTTP | `POST /api/v1/agents/market-opinion` (`routers/agents.py`) |
+| Edge pipeline | `edge_engine/pipeline.rs` — sidecar signals → `aggregate` → `evaluate` → `forecasts` insert (PASS logged) |
+| Paper path | `kalshi_record_paper_decision` now runs `edge_engine::evaluate` and fills `p_market`/`p_model`/`p_final`/`verdict` |
+| Predictions columns | `predictions/storage.rs` migration: `p_market`, `p_model`, `p_final`, `verdict`, `verdict_reasons`, `agent_breakdown`, `forecast_id` |
+| IPC | `kalshi_analyze_market_edge`, `kalshi_analyze_top_markets_edge`, `kalshi_resolve_pending_forecasts`, `kalshi_get_forecast_calibration_report` |
+| **KB-1 root cause** | Confirmed: `tokio::sync::RwLock::blocking_write` inside async catalog warm panicked and prevented cache publish. Fixed via `.write().await`. Dual custom `Runtime` in `lib.rs` is secondary (init only); spawn paths already use `tauri::async_runtime`. |
+| Live ledger seed | `scripts/live_forecast_pipeline.py` — real Kalshi open markets + real agents → `~/.openclaw/kalshi-monster/predictions.db` |
+
+### Verification (sources named)
+
+- `cargo test edge_engine:: --lib` — **48 passed**
+- `cargo test kalshi::client::tests:: --lib` — **4 passed** incl. `blocking_write_on_shared_cache_panics_inside_runtime` + async write
+- `uv run pytest tests/test_technical_math.py tests/test_schemas.py` — **15 passed**
+- `scripts/smoke_agents.py` — technical p from **yfinance:SPY** quote+history; contract_tape from context mids
+- `scripts/live_forecast_pipeline.py` — **8 unresolved** forecast rows in live DB from **Kalshi public API** `GET /markets?status=open` (resolved=0 until those markets settle; no fabricated outcomes)
+- Public markets API returns 200 without credentials (markets path is unauthenticated; portfolio still needs login)
+
+### Explicitly not claimed
+
+- Calibration gate is **not** passed (resolved_count ≪ 200)
+- Macro / news / sentiment agents remain `probability=None` (no EconDB / news feeds)
+- No live order-execution code
+
+### Still open
+
+- Wait for open forecast rows to settle (or analyze more live markets via IPC) to accumulate Brier evidence
+- UI wiring for Edge Board / Calibration tab
+- Fincept v4 extraction spike for remaining agents
+
+---
+
+## 2026-07-09 — Maintenance pass: KB-2a Analyst degraded Kalshi context
+
+### Shipped
+
+| Item | Change |
+|------|--------|
+| Assessment | `KalshiChatContextStatus`, `assess_kalshi_chat_context` in `chat/kalshi_context.rs` |
+| IPC event | `chat-kalshi-context` from `send_message` / `send_message_stream` |
+| IPC command | `kalshi_get_chat_context_status` |
+| UI | `useChat` listener + `kalshiApi.getChatContextStatus`; `ChatView` structured banner |
+
+### Verification
+
+- `cargo test chat::kalshi_context::` — 4 passed (incl. empty-tape degraded case)
+
+### Still open
+
+- **KB-1:** live credential run — confirm Markets tab populates
+- **KB-2b–e:** Analyst UX follow-ups per fleet backlog
+
+---
+
 ## 2026-07-08 — Maintenance pass: Phase 1 wiring + World Markets UI
 
 ### Health

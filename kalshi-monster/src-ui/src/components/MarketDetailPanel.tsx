@@ -57,6 +57,8 @@ export function MarketDetailPanel({ market, onClose, onAnalyzeMarket }: Props) {
   const [history, setHistory] = useState<KalshiPriceHistory | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [edgeBusy, setEdgeBusy] = useState(false);
+  const [edgeSummary, setEdgeSummary] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [config, setConfig] = useState<AppConfig | null>(null);
   const [bankrollConfig, setBankrollConfig] = useState<BankrollConfig | null>(null);
@@ -242,6 +244,25 @@ export function MarketDetailPanel({ market, onClose, onAnalyzeMarket }: Props) {
     }
   };
 
+  const runEdgeEngine = async () => {
+    setEdgeBusy(true);
+    setEdgeSummary(null);
+    setMessage(null);
+    try {
+      const r = await kalshiApi.analyzeMarketEdge(market.ticker);
+      const model =
+        r.p_model == null ? 'n/a' : `${(r.p_model * 100).toFixed(1)}%`;
+      setEdgeSummary(
+        `Ledger #${r.forecast_id}: p_mkt ${(r.p_market * 100).toFixed(1)}% · p_model ${model} · p_final ${(r.p_final * 100).toFixed(1)}% · ${r.verdict} (${r.signals_opining}/${r.signals_received} agents)`,
+      );
+      setMessage(`Edge engine logged forecast #${r.forecast_id} (${r.verdict}). See Calibration tab.`);
+    } catch (e) {
+      setMessage(e instanceof Error ? e.message : String(e));
+    } finally {
+      setEdgeBusy(false);
+    }
+  };
+
   return (
     <div className="modalBackdrop" onClick={onClose}>
       <div className="modalPanel" onClick={(e) => e.stopPropagation()}>
@@ -251,6 +272,9 @@ export function MarketDetailPanel({ market, onClose, onAnalyzeMarket }: Props) {
             <h3>{market.title}</h3>
             <span className="muted">{market.category} - spread {(market.spread * 100).toFixed(1)}c</span>
           </div>
+          <button type="button" className="primaryBtn" onClick={() => void runEdgeEngine()} disabled={edgeBusy}>
+            {edgeBusy ? 'Running edge…' : 'Run edge engine'}
+          </button>
           {onAnalyzeMarket && (
             <button type="button" className="primaryBtn" onClick={() => onAnalyzeMarket(buildAnalystPrompt())}>
               Analyze with AI
@@ -260,6 +284,11 @@ export function MarketDetailPanel({ market, onClose, onAnalyzeMarket }: Props) {
             Close
           </button>
         </header>
+        {edgeSummary && (
+          <p className="muted" style={{ margin: '0 1rem 0.5rem' }}>
+            {edgeSummary}
+          </p>
+        )}
 
         <section className="modalSection">
           <h4>Price history</h4>

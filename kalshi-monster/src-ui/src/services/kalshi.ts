@@ -7,6 +7,8 @@ import type {
   KalshiPriceHistory,
   KalshiTradeDecision,
   CalibrationStatus,
+  EdgeAnalysisResult,
+  ForecastCalibrationReport,
   PaperAccount,
   PaperAnalytics,
   PaperPosition,
@@ -22,6 +24,12 @@ export interface KalshiGradingSummary {
   losses: number;
   total_pnl: number;
   fetched_at: string;
+}
+
+export interface KalshiChatContextStatus {
+  degraded: boolean;
+  tape_market_count: number;
+  reasons: string[];
 }
 
 export const kalshiApi = {
@@ -42,6 +50,9 @@ export const kalshiApi = {
 
   getCategoryStats: () =>
     invoke<KalshiCategoryStat[]>('kalshi_get_category_stats'),
+
+  getChatContextStatus: () =>
+    invoke<KalshiChatContextStatus>('kalshi_get_chat_context_status'),
 
   refresh: () => invoke<number>('kalshi_refresh'),
 
@@ -66,6 +77,20 @@ export const kalshiApi = {
     invoke<CalibrationStatus>('kalshi_get_calibration_status', {
       rawProbabilityPct,
     }),
+
+  /** Sidecar agents + edge_engine → forecast ledger row (incl. PASS). */
+  analyzeMarketEdge: (ticker: string) =>
+    invoke<EdgeAnalysisResult>('kalshi_analyze_market_edge', { ticker }),
+
+  analyzeTopMarketsEdge: (limit?: number) =>
+    invoke<EdgeAnalysisResult[]>('kalshi_analyze_top_markets_edge', {
+      limit: limit ?? 10,
+    }),
+
+  resolvePendingForecasts: () => invoke<number>('kalshi_resolve_pending_forecasts'),
+
+  getForecastCalibrationReport: () =>
+    invoke<ForecastCalibrationReport>('kalshi_get_forecast_calibration_report'),
 
   getPriceHistory: (ticker: string, limit?: number) =>
     invoke<KalshiPriceHistory>('kalshi_get_price_history', { ticker, limit: limit ?? 200 }),

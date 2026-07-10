@@ -519,9 +519,15 @@ impl KalshiClient {
         }
     }
 
-    fn apply_cache(&mut self, cache: KalshiCache) {
+    /// Publish cache to the shared reader + local handle.
+    ///
+    /// Must be async: `blocking_write`/`blocking_read` on a Tokio `RwLock`
+    /// panic when called from inside a runtime (KB-1 root cause). Catalog
+    /// warm paths (`ensure_quick_cache`, `fetch_all_markets`) run on
+    /// `tauri::async_runtime`, so only `.write().await` is safe.
+    async fn apply_cache(&mut self, cache: KalshiCache) {
         {
-            let mut shared = self.shared_cache.blocking_write();
+            let mut shared = self.shared_cache.write().await;
             *shared = Some(cache.clone());
         }
         self.cache = Some(cache);
@@ -542,23 +548,23 @@ impl KalshiClient {
     }
 
     /// Restore cache from SQLite at startup (no disk write).
-    pub fn hydrate_cache(&mut self, cache: KalshiCache) {
+    pub async fn hydrate_cache(&mut self, cache: KalshiCache) {
         tracing::info!(
             "Kalshi cache rehydrated from SQLite: {} markets (full_catalog={})",
             cache.markets.len(),
             cache.full_catalog
         );
         self.cache_from_persisted = true;
-        self.apply_cache(cache);
+        self.apply_cache(cache).await;
     }
 
-    fn store_cache(&mut self, markets: Vec<KalshiMarket>, full_catalog: bool) {
+    async fn store_cache(&mut self, markets: Vec<KalshiMarket>, full_catalog: bool) {
         let cache = KalshiCache {
             markets,
             fetched_at: Self::now_secs(),
             full_catalog,
         };
-        self.apply_cache(cache);
+        self.apply_cache(cache).await;
         self.cache_from_persisted = false;
         self.schedule_persist();
     }
@@ -622,7 +628,7 @@ impl KalshiClient {
         } else {
             self.clear_fetch_error();
         }
-        self.store_cache(markets, false);
+        self.store_cache(markets, false).await;
         Ok(())
     }
 
@@ -671,7 +677,7 @@ impl KalshiClient {
         } else {
             self.clear_fetch_error();
         }
-        self.store_cache(all_markets.clone(), true);
+        self.store_cache(all_markets.clone(), true).await;
         Ok(all_markets)
     }
 
@@ -894,8 +900,17 @@ impl KalshiClient {
     }
 
     /// Return a snapshot of the shared cache (for read-only commands that don't hold the client lock).
+    /// Uses `try_read` so callers never block the async runtime (KB-1).
     pub fn shared_cache_snapshot(&self) -> Option<KalshiCache> {
-        self.shared_cache.blocking_read().clone()
+        self.shared_cache
+            .try_read()
+            .ok()
+            .and_then(|guard| guard.clone())
+    }
+
+    /// Async shared-cache snapshot when the caller is already on the Tokio reactor.
+    pub async fn shared_cache_snapshot_async(&self) -> Option<KalshiCache> {
+        self.shared_cache.read().await.clone()
     }
 
     /// Check whether a full-catalog fetch is currently in progress.
@@ -953,13 +968,40 @@ mod tests {
         assert_eq!(markets[0].series_ticker.as_deref(), Some("KXNEWPOPE"));
     }
 
-    #[test]
-    fn cached_tape_market_count_reflects_cache_len() {
+    #[tokio::test]
+    async fn cached_tape_market_count_reflects_cache_len() {
         let shared = Arc::new(RwLock::new(None));
         let mut client = KalshiClient::new(KalshiConfig::default(), shared, None);
         assert_eq!(client.cached_tape_market_count(), 0);
-        client.store_cache(vec![KalshiMarket::default(), KalshiMarket::default()], false);
+        client
+            .store_cache(vec![KalshiMarket::default(), KalshiMarket::default()], false)
+            .await;
         assert_eq!(client.cached_tape_market_count(), 2);
+    }
+
+    /// KB-1: documenting the failure mode that emptied the Markets tape.
+    /// `blocking_write` on a Tokio RwLock panics when invoked from inside a
+    /// runtime — which is exactly how `ensure_quick_cache` / `store_cache`
+    /// used to publish the catalog after a successful HTTP fetch.
+    #[tokio::test]
+    #[should_panic(expected = "Cannot block the current thread from within a runtime")]
+    async fn blocking_write_on_shared_cache_panics_inside_runtime() {
+        let lock: Arc<RwLock<Option<KalshiCache>>> = Arc::new(RwLock::new(None));
+        let _ = lock.blocking_write();
+    }
+
+    #[tokio::test]
+    async fn async_write_on_shared_cache_works_inside_runtime() {
+        let lock: Arc<RwLock<Option<KalshiCache>>> = Arc::new(RwLock::new(None));
+        {
+            let mut g = lock.write().await;
+            *g = Some(KalshiCache {
+                markets: vec![KalshiMarket::default()],
+                fetched_at: 1,
+                full_catalog: false,
+            });
+        }
+        assert_eq!(lock.read().await.as_ref().map(|c| c.markets.len()), Some(1));
     }
 }
 

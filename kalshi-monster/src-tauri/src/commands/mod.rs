@@ -18,6 +18,21 @@ use tokio::sync::{Mutex, mpsc};
 type KalshiState = Arc<Mutex<crate::kalshi::KalshiClient>>;
 type SharedCacheState = Arc<tokio::sync::RwLock<Option<crate::kalshi::KalshiCache>>>;
 
+fn emit_chat_kalshi_context(
+    app: &tauri::AppHandle<tauri::Wry>,
+    session_id: &str,
+    client: &crate::kalshi::KalshiClient,
+) {
+    let status = crate::chat::kalshi_context::assess_kalshi_chat_context(client);
+    let _ = app.emit(
+        "chat-kalshi-context",
+        serde_json::json!({
+            "session_id": session_id,
+            "status": status,
+        }),
+    );
+}
+
 #[derive(Debug, serde::Serialize)]
 pub struct KalshiDashboardBootstrap {
     pub markets: Vec<crate::kalshi::KalshiMarketSummary>,
@@ -89,6 +104,7 @@ pub async fn send_message(
     kalshi: State<'_, KalshiState>,
     fincept: State<'_, Arc<crate::fincept_bridge::FinceptBridge>>,
     db_pool: State<'_, Pool<Sqlite>>,
+    app: tauri::AppHandle<tauri::Wry>,
 ) -> Result<OpenRouterResponse, String> {
     let config = state.lock().await.clone();
 
@@ -122,6 +138,7 @@ pub async fn send_message(
     // Fetch Kalshi market context (Kalshi-first — replaces ESPN/Sleeper as default)
     let kalshi_context = {
         let mut kalshi = kalshi.lock().await;
+        emit_chat_kalshi_context(&app, &session_id, &kalshi);
         let mut ctx = crate::chat::kalshi_context::build_kalshi_context(
             &mut kalshi,
             &message,
@@ -272,6 +289,7 @@ pub async fn send_message_stream(
     // Fetch live data context — Kalshi + Fincept cross-asset when sidecar is online
     let kalshi_context = {
         let mut kalshi = kalshi.lock().await;
+        emit_chat_kalshi_context(&app, &session_id, &kalshi);
         let mut ctx = crate::chat::kalshi_context::build_kalshi_context(
             &mut kalshi,
             &message,
@@ -1674,6 +1692,15 @@ pub async fn kalshi_get_category_stats(
     Ok(client.category_stats())
 }
 
+/// Analyst chat: whether Kalshi tape is ready for context injection (KB-2a).
+#[tauri::command]
+pub async fn kalshi_get_chat_context_status(
+    kalshi: State<'_, KalshiState>,
+) -> Result<crate::chat::kalshi_context::KalshiChatContextStatus, String> {
+    let client = kalshi.lock().await;
+    Ok(crate::chat::kalshi_context::assess_kalshi_chat_context(&client))
+}
+
 /// Get authenticated portfolio balance and positions.
 /// Requires kalshi_email + kalshi_password to be configured.
 #[tauri::command]
@@ -1842,6 +1869,169 @@ pub async fn kalshi_get_calibration_status(
     ))
 }
 
+async fn analyze_market_edge_inner(
+    ticker: &str,
+    client: &crate::kalshi::KalshiClient,
+    bridge: &crate::fincept_bridge::FinceptBridge,
+    db_pool: &Pool<Sqlite>,
+) -> Result<crate::edge_engine::pipeline::EdgeAnalysisResult, String> {
+    let market = client.fetch_market(ticker).await?;
+    let history = crate::kalshi::price_tracker::get_price_history(db_pool, ticker, 50)
+        .await
+        .unwrap_or(crate::kalshi::KalshiPriceHistory {
+            ticker: ticker.to_string(),
+            snapshots: vec![],
+            opening_yes_prob: None,
+            current_yes_prob: None,
+            prob_change: None,
+            spread_change: None,
+        });
+    // Snapshots store yes_prob_pct 0–100; agents expect 0–1 mids.
+    let contract_mids: Vec<f64> = history
+        .snapshots
+        .iter()
+        .map(|s| (s.yes_prob_pct / 100.0).clamp(0.01, 0.99))
+        .collect();
+
+    let category = market
+        .category
+        .clone()
+        .unwrap_or_else(|| market.infer_category().to_string());
+    let close_time = market
+        .close_time
+        .clone()
+        .unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
+
+    let input = crate::edge_engine::pipeline::AnalyzeMarketInput {
+        market_ticker: market.ticker.clone(),
+        title: market.title.clone(),
+        resolution_rules: market.rules_primary.clone(),
+        close_time,
+        category,
+        yes_bid: market.yes_bid(),
+        yes_ask: market.yes_ask(),
+        contract_mids,
+        underlying_ticker: None,
+        strike: None,
+        flags: vec![],
+    };
+
+    crate::edge_engine::pipeline::analyze_and_log_forecast(
+        db_pool,
+        bridge,
+        input,
+        &crate::edge_engine::EdgeConfig::default(),
+    )
+    .await
+}
+
+/// Run sidecar agents + edge_engine on one market; write a forecast ledger row
+/// (including PASS). Primary path for real p_model accumulation.
+#[tauri::command]
+pub async fn kalshi_analyze_market_edge(
+    ticker: String,
+    kalshi: State<'_, KalshiState>,
+    bridge: State<'_, Arc<crate::fincept_bridge::FinceptBridge>>,
+    db_pool: State<'_, Pool<Sqlite>>,
+) -> Result<crate::edge_engine::pipeline::EdgeAnalysisResult, String> {
+    let client = kalshi.lock().await;
+    analyze_market_edge_inner(&ticker, &client, bridge.as_ref(), &db_pool).await
+}
+
+/// Analyze the top-N open markets by volume (from tape) and log forecasts.
+/// Does **not** invent outcomes — only writes pending rows for live markets.
+#[tauri::command]
+pub async fn kalshi_analyze_top_markets_edge(
+    limit: Option<usize>,
+    kalshi: State<'_, KalshiState>,
+    bridge: State<'_, Arc<crate::fincept_bridge::FinceptBridge>>,
+    db_pool: State<'_, Pool<Sqlite>>,
+) -> Result<Vec<crate::edge_engine::pipeline::EdgeAnalysisResult>, String> {
+    let n = limit.unwrap_or(10).min(25);
+    let mut client = kalshi.lock().await;
+    let top = client.get_top_markets(n).await?;
+    let mut out = Vec::new();
+    for summary in top {
+        match analyze_market_edge_inner(
+            &summary.ticker,
+            &client,
+            bridge.as_ref(),
+            &db_pool,
+        )
+        .await
+        {
+            Ok(r) => out.push(r),
+            Err(e) => {
+                tracing::warn!("edge analyze {}: {e}", summary.ticker);
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// Poll Kalshi for settlement of unresolved forecast rows; compute Brier scores.
+#[tauri::command]
+pub async fn kalshi_resolve_pending_forecasts(
+    kalshi: State<'_, KalshiState>,
+    db_pool: State<'_, Pool<Sqlite>>,
+) -> Result<u32, String> {
+    let client = kalshi.lock().await;
+    crate::kalshi::grading::resolve_pending_forecasts(&db_pool, &client).await
+}
+
+/// Calibration gate report from the **forecast** ledger (real rows only).
+#[derive(Debug, serde::Serialize)]
+pub struct ForecastCalibrationReport {
+    pub resolved_count: i64,
+    pub unresolved_count: i64,
+    pub brier_market: Option<f64>,
+    pub brier_final: Option<f64>,
+    pub brier_model: Option<f64>,
+    pub brier_market_on_model_rows: Option<f64>,
+    pub n_model: usize,
+    pub gate_passed: bool,
+    pub gate_reasons: Vec<String>,
+    pub paper_pnl: Option<f64>,
+}
+
+#[tauri::command]
+pub async fn kalshi_get_forecast_calibration_report(
+    db_pool: State<'_, Pool<Sqlite>>,
+) -> Result<ForecastCalibrationReport, String> {
+    let resolved = crate::kalshi::forecast::resolved_forecasts_for_calibration(&db_pool).await?;
+    let resolved_count = crate::kalshi::forecast::resolved_count(&db_pool).await?;
+    let unresolved_count = crate::kalshi::forecast::unresolved_forecasts(&db_pool)
+        .await?
+        .len() as i64;
+
+    let summary = crate::edge_engine::calibration::brier_summary(&resolved);
+    let paper_pnl = crate::paper::get_analytics(&db_pool, None)
+        .await
+        .ok()
+        .map(|a| a.realized_pnl);
+
+    let gate = crate::edge_engine::calibration::evaluate_gate(
+        &resolved,
+        paper_pnl.unwrap_or(0.0),
+        &crate::edge_engine::calibration::GateConfig::default(),
+    );
+
+    Ok(ForecastCalibrationReport {
+        resolved_count,
+        unresolved_count,
+        brier_market: summary.as_ref().map(|s| s.brier_market),
+        brier_final: summary.as_ref().map(|s| s.brier_final),
+        brier_model: summary.as_ref().and_then(|s| s.brier_model),
+        brier_market_on_model_rows: summary
+            .as_ref()
+            .and_then(|s| s.brier_market_on_model_rows),
+        n_model: summary.as_ref().map(|s| s.n_model).unwrap_or(0),
+        gate_passed: gate.passed,
+        gate_reasons: gate.conditions,
+        paper_pnl,
+    })
+}
+
 /// Snapshot current Kalshi market prices into local history.
 #[tauri::command]
 pub async fn kalshi_snapshot_prices(
@@ -1997,38 +2187,93 @@ pub async fn kalshi_record_paper_decision(
     let t = tracker.lock().await;
         t.save_prediction(record).await?;
 
-        // Write forecast ledger row — every opinion (including PASS) gets a row.
-        // This is the data all later phases (calibration, edge engine) depend on.
-        let verdict = match decision.contract_side {
-            crate::chat::decision_schema::ContractSide::YES => "trade_yes",
-            crate::chat::decision_schema::ContractSide::NO => "trade_no",
-            crate::chat::decision_schema::ContractSide::PASS => "pass",
+        // Forecast ledger via edge_engine: shrink LLM fair-prob toward market mid,
+        // apply fee-aware verdict. Agent pipeline (sidecar) is the preferred source
+        // of p_model; paper path uses the decision's fair probability as a single
+        // model opinion so columns are never left blank with a raw unshrunk number.
+        let close_time = chrono::Utc::now().to_rfc3339();
+        let p_market_raw = (decision.market_price_pct / 100.0).clamp(0.01, 0.99);
+        let p_model_raw = (decision.fair_probability_pct / 100.0).clamp(0.01, 0.99);
+        let yes_ask = (decision.price_to_enter / 100.0).clamp(0.01, 0.99);
+        // Approximate bid as mid-symmetric when only entry price is known.
+        let yes_bid = (2.0 * p_market_raw - yes_ask).clamp(0.0, 1.0);
+        let quote = crate::edge_engine::Quote {
+            yes_bid,
+            yes_ask,
         };
-        let verdict_reasons = serde_json::to_string(&adj.warnings)
+        let opinion = crate::edge_engine::ModelOpinion {
+            p_model: p_model_raw,
+            confidence: match decision.confidence_tier {
+                crate::chat::decision_schema::ConfidenceTier::High => 0.75,
+                crate::chat::decision_schema::ConfidenceTier::Medium => 0.50,
+                crate::chat::decision_schema::ConfidenceTier::Low => 0.30,
+                crate::chat::decision_schema::ConfidenceTier::None => 0.0,
+            },
+            contributions: vec![crate::edge_engine::AgentContribution {
+                agent: "llm_decision".into(),
+                probability: p_model_raw,
+                confidence: 0.5,
+                weight_normalized: 1.0,
+            }],
+        };
+        let mut flags: Vec<String> = adj.warnings.clone();
+        if decision.contract_side == crate::chat::decision_schema::ContractSide::PASS {
+            flags.push("user_or_model_pass".into());
+        }
+        let edge = crate::edge_engine::evaluate(
+            &opinion,
+            quote,
+            &flags,
+            &crate::edge_engine::EdgeConfig::default(),
+        );
+        let verdict = match edge.verdict {
+            crate::edge_engine::Verdict::TradeYes => "trade_yes",
+            crate::edge_engine::Verdict::TradeNo => "trade_no",
+            crate::edge_engine::Verdict::Pass => "pass",
+        };
+        let verdict_reasons = serde_json::to_string(&edge.reasons)
             .unwrap_or_else(|_| "[]".to_string());
-        let close_time = chrono::Utc::now().to_rfc3339(); // KalshiTradeDecision doesn't carry close_time
-        let p_market = decision.market_price_pct / 100.0; // stored as pct, ledger uses 0-1
-        let p_model: Option<f64> = None; // no agent pipeline yet (Phase 2)
-        let p_final = decision.fair_probability_pct / 100.0;
         let stake_suggested = if decision.recommended_stake_dollars > 0.0 {
             Some(decision.recommended_stake_dollars)
         } else {
             None
         };
-        if let Err(e) = crate::kalshi::forecast::insert_forecast(
-                    &db_pool,
-                    &decision.ticker,
-                    &now.clone(),
-                    &close_time,
-            p_market,
-            p_model,
-            p_final,
+        let breakdown = serde_json::to_string(&opinion.contributions).ok();
+        let forecast_id = match crate::kalshi::forecast::insert_forecast(
+            &db_pool,
+            &decision.ticker,
+            &now,
+            &close_time,
+            edge.p_market,
+            Some(edge.p_model),
+            edge.p_final,
             verdict,
             &verdict_reasons,
             stake_suggested,
-            None, // agent_breakdown: none until Phase 2
-        ).await {
-            tracing::warn!("forecast ledger write failed for {}: {e}", decision.ticker);
+            breakdown.as_deref(),
+        )
+        .await
+        {
+            Ok(id) => Some(id),
+            Err(e) => {
+                tracing::warn!("forecast ledger write failed for {}: {e}", decision.ticker);
+                None
+            }
+        };
+        if let Err(e) = crate::predictions::storage::update_prediction_edge_fields(
+            &db_pool,
+            &prediction_id,
+            edge.p_market,
+            Some(edge.p_model),
+            edge.p_final,
+            verdict,
+            &verdict_reasons,
+            breakdown.as_deref(),
+            forecast_id,
+        )
+        .await
+        {
+            tracing::warn!("prediction edge fields update failed: {e}");
         }
 
         if decision.contract_side != crate::chat::decision_schema::ContractSide::PASS {

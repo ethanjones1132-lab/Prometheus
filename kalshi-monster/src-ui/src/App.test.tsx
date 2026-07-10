@@ -30,6 +30,14 @@ vi.mock('./components/SettingsView', () => ({
   SettingsView: () => <main>Settings surface</main>,
 }));
 
+vi.mock('./components/CalibrationView', () => ({
+  CalibrationView: () => <main aria-label="Calibration surface">Calibration surface</main>,
+}));
+
+vi.mock('./components/WorldMarketsView', () => ({
+  WorldMarketsView: () => <main>World markets surface</main>,
+}));
+
 describe('App shell', () => {
   test('opens to the Kalshi command desk and keeps prop tooling out of primary navigation', () => {
     render(<App />);
@@ -37,6 +45,14 @@ describe('App shell', () => {
     expect(screen.getByLabelText('Kalshi markets surface')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Command desk' })).toHaveClass('active');
     expect(screen.queryByRole('button', { name: /prop board/i })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Calibration' })).toBeInTheDocument();
+  });
+
+  test('opens the Calibration tab', () => {
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: 'Calibration' }));
+    expect(screen.getByLabelText('Calibration surface')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Calibration' })).toHaveClass('active');
   });
 
   test('hands a selected market analysis prompt to the analyst workspace', () => {

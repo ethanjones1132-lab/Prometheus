@@ -30,6 +30,38 @@ export interface KalshiCategoryStat {
   volume_24h: number;
 }
 
+/** Output of edge_engine::pipeline::analyze_and_log_forecast (IPC). */
+export interface EdgeAnalysisResult {
+  forecast_id: number;
+  market_ticker: string;
+  p_market: number;
+  p_model: number | null;
+  p_final: number;
+  confidence: number;
+  verdict: string;
+  verdict_reasons: string[];
+  agent_breakdown?: unknown;
+  edge_net_yes: number;
+  edge_net_no: number;
+  signals_received: number;
+  signals_opining: number;
+  sidecar_elapsed_ms?: number | null;
+}
+
+/** Forecast-ledger calibration gate report (Phase 3). */
+export interface ForecastCalibrationReport {
+  resolved_count: number;
+  unresolved_count: number;
+  brier_market: number | null;
+  brier_final: number | null;
+  brier_model: number | null;
+  brier_market_on_model_rows: number | null;
+  n_model: number;
+  gate_passed: boolean;
+  gate_reasons: string[];
+  paper_pnl: number | null;
+}
+
 export interface MLPhase3DashboardSummary {
   trainable_non_sports_categories: number;
   non_sports_sidecar_target: number;

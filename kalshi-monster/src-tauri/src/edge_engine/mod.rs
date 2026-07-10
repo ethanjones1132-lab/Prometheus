@@ -30,6 +30,7 @@ use std::collections::HashMap;
 
 pub mod breakers;
 pub mod calibration;
+pub mod pipeline;
 
 // ---------------------------------------------------------------------------
 // Configuration

@@ -1,6 +1,13 @@
 # Kalshi Monster — Priority Roadmap
 
-Last updated: 2026-07-09 (Phase 3 core: calibration math + §6.4 circuit breakers)
+Last updated: 2026-07-09 (agents + edge ledger + KB-1 root cause fix)
+
+## Maintenance notes (2026-07-09) — agents, forecast ledger wiring, KB-1 confirmed
+
+- **KB-1 root cause confirmed + fixed:** `shared_cache.blocking_write()` / `blocking_read()` on Tokio `RwLock` from inside `tauri::async_runtime` (after successful HTTP fetch in `ensure_quick_cache`/`store_cache`) panics with "Cannot block the current thread from within a runtime" — markets never landed in cache. Replaced with `.write().await` / `try_read`. Tests lock the panic and the async path. Public Kalshi `/markets` returns data **without** credentials; portfolio still needs login.
+- **Agents (real data):** `technical` (yfinance) + `contract_tape` (Kalshi mids in context); orchestrator + `POST /api/v1/agents/market-opinion`.
+- **Ledger:** `edge_engine::pipeline` + paper path fill `p_market`/`p_model`/`p_final`/`verdict`; predictions table migrated to mirror; IPC for analyze/resolve/calibration report.
+- **Live evidence:** 8 open forecast rows written via `scripts/live_forecast_pipeline.py` from live Kalshi API — **0 resolved** (honest; gate not claimable).
 
 ## Maintenance notes (2026-07-09, cron) — Phase 3 calibration core + §6.4 breakers
 
@@ -52,14 +59,20 @@ KB-2b–e are UX slices, so this pass shipped the plan's Phase 3 mathematical co
 - **`KalshiView`:** empty-tape error prefers the concrete fetch error string from `data_quality_notes`.
 - **Tests:** `data_quality_notes_include_stale_and_fetch_hints` asserts fetch-error note; `cargo check` + `tsc` clean.
 
+## Maintenance notes (2026-07-09, cron KB-2a) — structured degraded context IPC
+
+- **`KalshiChatContextStatus` + `assess_kalshi_chat_context`** (`chat/kalshi_context.rs`): `degraded`, `tape_market_count`, `reasons` when tape empty or fetch failed.
+- **Tauri event `chat-kalshi-context`:** emitted from `send_message` and `send_message_stream` before `build_kalshi_context` (`emit_chat_kalshi_context`).
+- **Command `kalshi_get_chat_context_status`:** Analyst can poll tape readiness without sending a message.
+- **UI:** `useChat` listens for `chat-kalshi-context` (session-scoped) + polls on init/send; `ChatView` shows structured amber banner with backend `reasons`.
+- **Tests:** `assess_chat_context_degraded_when_tape_empty` passes (4/4 `kalshi_context` tests).
+
 ## Maintenance notes (2026-07-09, overnight cron KB-2a) — Analyst market context UX
 
 - **ChatView:** `extractTickerFromPrompt` helper parses ticker from "Analyze Kalshi market <TICKER>: <title>" prompt string.
 - **Context chip:** When arriving from Markets → "Analyze with AI", shows a blue chip with 🔍 ticker + title + dismiss button, plus a hint that "AI sees live Kalshi market data."
-- **Degraded context banner:** When `activeContext` is set but no messages yet (cold session from Analyze), shows an amber `role="alert"` banner: "Market tape may be cold. Switch to Markets and refresh."
 - Quick prompts remain generic placeholders; contextual follow-ups deferred to KB-2c.
-- All 130 lib tests pass; all 21 vitest pass; `tsc` clean; `cargo check` clean.
-- **KB-2a remaining:** Surface backend context-failure signals (when `build_kalshi_context` returns empty / no markets in cache) — needs a Tauri IPC field from chat response.
+- **KB-2a (legacy heuristic banner):** superseded by structured backend status above.
 
 ## Maintenance notes (2026-07-08, cron KB-1) — tape populate reliability
 - `schedule_persist` uses `tauri::async_runtime::spawn` instead of bare `tokio::spawn` so SQLite cache writes run on the Tauri reactor.
@@ -77,8 +90,8 @@ KB-2b–e are UX slices, so this pass shipped the plan's Phase 3 mathematical co
 
 | ID | Issue | Status |
 |----|--------|--------|
-| **KB-1** | Markets not populating in UI; suspected tokio/async spawn | 🟡 Partial (tape count + warm errors; verify live creds) |
-| **KB-2** | Analyst tab (`ChatView`) — major UX/context work | 🟡 Partial (KB-2a: context chip + degraded banner done; KB-2b-e open) |
+| **KB-1** | Markets not populating in UI; suspected tokio/async spawn | 🟢 Root cause fixed: blocking RwLock write in async catalog path (verify UI once after rebuild) |
+| **KB-2** | Analyst tab (`ChatView`) — major UX/context work | 🟡 Partial (KB-2a done: chip + `chat-kalshi-context` + poll command; KB-2b-e open) |
 
 **Cron rule:** One KB-* slice per pass; **KB-1 before KB-2** until markets populate with valid credentials.
 
@@ -445,4 +458,41 @@ Quick status: **P0 done · P1 done · P2 done · P3 1 pending**
 P0–P2 are complete. 
 
 1. Volatility-adjusted Kelly from historical Brier (auto-shrinkage) — ✅ Done (2026-06-24; `volatility_adjusted_kelly` fn + `compute_historical_brier` + `refresh_historical_brier` command + UI trigger wired; strategy now uses real data for shrinkage when graded history accumulates in predictions.db)
-2. Multi-category ML classifiers (politics/econ/weather) — ⬜ In progress (2026-06-25; sidecar train/infer
+2. Multi-category ML classifiers (politics/econ/weather) — ⬜ In progress (2026-06-25; sidecar train/infer wired; UI readiness in Settings; fully active once politics/econ/weather each accumulate 10+ graded rows)
+
+Off-roadmap fix shipped 2026-06-22: notification settings now persist to `~/.openclaw/kalshi-monster/notification_settings.json` (`notification::load_settings`/`save_settings`); previously `save_notification_settings` only logged and `get_notification_settings` always returned defaults.
+
+---
+
+## Dashboard performance (deferred)
+
+**Phase 1 (shipped 2026-06-17):** flat `GET /markets` quick cache (replaces nested `/events` for dashboard load). See `kalshi/client.rs` — `fetch_markets_flat_pages`, `ensure_quick_cache`.
+
+### Phase 2 — Decouple cache reads from long fetches ✅ Done (2026-06-26)
+
+- Extract `Arc<RwLock<KalshiCache>>` + `fetch_in_progress` guard so UI reads never block on 20-page full warm ✅
+- Background full-catalog warm writes cache without holding the outer `KalshiClient` mutex across HTTP pagination ✅
+- Add `kalshi_get_cache_state` Tauri command (read-only, no client lock) ✅
+- Optionally slim cache to `KalshiMarketSummary` instead of full `KalshiMarket`
+- **Target:** warm revisit under 300ms; category switch under 500ms
+
+### Phase 3 — Frontend critical-path trim (shipped 2026-06-23)
+
+- Keep `KalshiView` mounted across tab switches (avoid cold reload)
+- Combined IPC: `kalshi_get_dashboard_bootstrap` → `{ markets, categories, cache_full }` ✅ Shipped
+- Show partial-cache indicator when `full_catalog == false` ✅ Shipped (cacheLabel/partialCatalog in KalshiView)
+- Defer `KalshiPredictionsPanel` load; debounce `computeStakeAdjustment` in market detail ✅ Shipped (predictions deferred via `marketsReady`; stake debounce 300ms in MarketDetailPanel)
+- Calibration status inline display in MarketDetailPanel ✅ Shipped
+
+### Phase 4 — Startup prefetch and persistence (optional)
+
+- Prefetch quick cache at app startup (before user opens dashboard) ✅ Shipped (2026-06-26)
+- Delay full warm until quick cache exists + idle window (or explicit Refresh only) ✅ (quick prefetch + 8s delayed full warm)
+- Persist summary cache to SQLite for instant next-launch paint ✅ Shipped (2026-06-26; `kalshi_market_cache` + startup rehydrate)
+
+---
+
+## Environment notes
+
+- Canonical WSL repo (`~/.openclaw/agents/coderclaw/workspace/kalshi-monster`) was unreachable as of 2026-06-17
+- `edge-eval` and `monster-edge-core` live at `C:\\Users\\ethan\\kalshi-build\\` (sibling paths)

@@ -11,7 +11,7 @@ import time
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from .routers import health, market
+from .routers import agents, health, market
 
 # Paths that intentionally bypass auth: none. Any local process can reach a
 # localhost port, so every request must carry the per-launch bearer token
@@ -48,6 +48,7 @@ def create_app(token: str) -> FastAPI:
 
     app.include_router(health.router, prefix="/api/v1")
     app.include_router(market.router, prefix="/api/v1/market")
+    app.include_router(agents.router, prefix="/api/v1/agents")
     return app
 
 

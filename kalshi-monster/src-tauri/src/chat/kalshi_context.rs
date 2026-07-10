@@ -108,6 +108,35 @@ pub struct OrderbookSnapshot {
     pub total_liquidity: f64,
 }
 
+/// Backend signal for Analyst UI when live Kalshi tape is missing or stale.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KalshiChatContextStatus {
+    pub degraded: bool,
+    pub tape_market_count: usize,
+    pub reasons: Vec<String>,
+}
+
+/// Assess whether chat can inject meaningful Kalshi market context (KB-2a).
+pub fn assess_kalshi_chat_context(client: &KalshiClient) -> KalshiChatContextStatus {
+    let tape_market_count = client.cached_tape_market_count();
+    let mut reasons = Vec::new();
+    if tape_market_count == 0 {
+        reasons.push(
+            "Kalshi market tape is empty — open Markets and refresh before relying on analysis."
+                .to_string(),
+        );
+        if let Some(err) = client.last_fetch_error() {
+            reasons.push(format!("Last catalog fetch error: {err}"));
+        }
+    }
+    let degraded = !reasons.is_empty();
+    KalshiChatContextStatus {
+        degraded,
+        tape_market_count,
+        reasons,
+    }
+}
+
 /// Build a rich Kalshi context string for the AI prompt.
 /// This is the primary context builder for the chat pipeline.
 pub async fn build_kalshi_context(
@@ -119,8 +148,7 @@ pub async fn build_kalshi_context(
 
     ctx.push_str("# KALSHI MARKET INTELLIGENCE CONTEXT\n\n");
 
-    // Determine what the user is asking about by analyzing the query
-    let is_sports_query = is_sports_market_query(user_message);
+    // Determine whether the user referenced a specific Kalshi ticker.
     let _is_specific_ticker = extract_ticker_from_query(user_message).is_some();
 
     // Top volume markets (always included)
@@ -203,16 +231,10 @@ pub async fn build_kalshi_context(
         ctx.push('\n');
     }
 
-    // Sports context only if explicitly requested
-    if is_sports_query {
-        ctx.push_str("## SPORTS MARKET CONTEXT\n");
-        ctx.push_str("Sports data is available through the Sports API submodule when needed. ");
-        ctx.push_str("The user has explicitly asked about sports markets. Relevant sports context can be injected separately.\n\n");
-    } else {
-        ctx.push_str("## SPORTS DATA POLICY\n");
-        ctx.push_str("Sports data (ESPN, Sleeper) is NOT injected by default. ");
-        ctx.push_str("If the user needs sports-specific analysis, they must explicitly request it.\n\n");
-    }
+    // Sports-specific context is intentionally kept out of the Kalshi market snapshot.
+    // The chat pipeline injects sports data only when the user explicitly asks for it
+    // (see openrouter::build_sports_context). This keeps non-sports prediction-market
+    // prompts focused on the retrieved Kalshi tape.
 
     ctx.push_str("## TRADING SAFETY REMINDERS\n");
     ctx.push_str("- This is an analysis tool. No orders are placed automatically.\n");
@@ -223,17 +245,21 @@ pub async fn build_kalshi_context(
     ctx
 }
 
-/// Determine if the user is asking about sports markets
+/// Determine if the user is asking about sports markets.
+/// Kept for test coverage; live chat sports detection lives in the openrouter pipeline.
+#[cfg(test)]
 fn is_sports_market_query(query: &str) -> bool {
     let lower = query.to_lowercase();
+    // Tightened to explicit leagues, sports, positions, and stat/mechanics terms.
+    // Generic words like "team", "game", "score", "championship", or "series" are
+    // intentionally excluded so non-sports prediction markets (politics, economics,
+    // weather, finance) do not trigger irrelevant sports data injection.
     let sports_keywords = [
         "sports", "nba", "nfl", "mlb", "nhl", "ufc", "golf", "tennis",
-        "player", "team", "game", "match", "score", "injury",
-        "quarterback", "qb", "running back", "rb", "wide receiver", "wr",
-        "passing", "rushing", "receiving", "yards", "points", "touchdown",
         "basketball", "baseball", "football", "hockey",
+        "quarterback", "qb", "running back", "rb", "wide receiver", "wr",
+        "passing", "rushing", "receiving", "yards", "touchdown",
         "tip-off", "kickoff", "overtime", "halftime",
-        "playoff", "championship", "series",
     ];
     sports_keywords.iter().any(|kw| lower.contains(kw))
 }
@@ -273,10 +299,11 @@ mod tests {
     fn test_is_sports_market_query() {
         assert!(is_sports_market_query("What do you think about NFL markets?"));
         assert!(is_sports_market_query("Analyze the NBA playoff props"));
-        assert!(is_sports_market_query("Player prop for Mahomes"));
+        assert!(is_sports_market_query("Passing yards prop for Mahomes"));
         assert!(!is_sports_market_query("What is the Fed rate outlook?"));
         assert!(!is_sports_market_query("Analyze crypto markets"));
         assert!(!is_sports_market_query("Political election predictions"));
+        assert!(!is_sports_market_query("Which team will win the championship series?"));
     }
 
     #[test]
@@ -291,5 +318,18 @@ mod tests {
         // This test proves that sports data is not injected for non-sports queries
         let query = "Analyze the Federal Reserve decision market";
         assert!(!is_sports_market_query(query));
+    }
+
+    #[test]
+    fn assess_chat_context_degraded_when_tape_empty() {
+        use std::sync::Arc;
+        use tokio::sync::RwLock;
+        use crate::kalshi::KalshiConfig;
+        let shared = Arc::new(RwLock::new(None));
+        let client = KalshiClient::new(KalshiConfig::default(), shared, None);
+        let status = assess_kalshi_chat_context(&client);
+        assert!(status.degraded);
+        assert_eq!(status.tape_market_count, 0);
+        assert!(!status.reasons.is_empty());
     }
 }

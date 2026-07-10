@@ -150,17 +150,75 @@ async fn migrate_predictions_columns(pool: &Pool<Sqlite>) -> Result<(), String> 
         .await
         .map_err(|e| format!("PRAGMA table_info failed: {}", e))?;
 
-    let has_full_decision = rows
+    let existing: std::collections::HashSet<String> = rows
         .iter()
-        .any(|r| r.get::<String, _>("name") == "full_decision_json");
+        .map(|r| r.get::<String, _>("name"))
+        .collect();
 
-    if !has_full_decision {
-        sqlx::query("ALTER TABLE predictions ADD COLUMN full_decision_json TEXT")
+    // Phase 0 delta (fincept-integration-progress): shrinkage-pipeline columns.
+    // Canonical calibration ledger remains `forecasts`; these mirror edge fields
+    // onto prediction rows written from paper/LLM decisions.
+    let additions: &[(&str, &str)] = &[
+        ("full_decision_json", "TEXT"),
+        ("p_market", "REAL"),
+        ("p_model", "REAL"),
+        ("p_final", "REAL"),
+        ("verdict", "TEXT"),
+        ("verdict_reasons", "TEXT"),
+        ("agent_breakdown", "TEXT"),
+        ("forecast_id", "INTEGER"),
+    ];
+
+    for (name, ty) in additions {
+        if existing.contains(*name) {
+            continue;
+        }
+        let sql = format!("ALTER TABLE predictions ADD COLUMN {name} {ty}");
+        sqlx::query(&sql)
             .execute(pool)
             .await
-            .map_err(|e| format!("ALTER TABLE full_decision_json failed: {}", e))?;
+            .map_err(|e| format!("ALTER TABLE {name} failed: {e}"))?;
     }
 
+    Ok(())
+}
+
+/// Attach edge-engine outputs to an existing prediction row (paper/LLM path).
+pub async fn update_prediction_edge_fields(
+    pool: &Pool<Sqlite>,
+    prediction_id: &str,
+    p_market: f64,
+    p_model: Option<f64>,
+    p_final: f64,
+    verdict: &str,
+    verdict_reasons: &str,
+    agent_breakdown: Option<&str>,
+    forecast_id: Option<i64>,
+) -> Result<(), String> {
+    sqlx::query(
+        r#"
+        UPDATE predictions
+        SET p_market = ?1,
+            p_model = ?2,
+            p_final = ?3,
+            verdict = ?4,
+            verdict_reasons = ?5,
+            agent_breakdown = ?6,
+            forecast_id = ?7
+        WHERE id = ?8
+        "#,
+    )
+    .bind(p_market)
+    .bind(p_model)
+    .bind(p_final)
+    .bind(verdict)
+    .bind(verdict_reasons)
+    .bind(agent_breakdown)
+    .bind(forecast_id)
+    .bind(prediction_id)
+    .execute(pool)
+    .await
+    .map_err(|e| format!("update prediction edge fields: {e}"))?;
     Ok(())
 }
 

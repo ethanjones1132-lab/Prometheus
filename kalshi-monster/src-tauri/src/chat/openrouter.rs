@@ -378,50 +378,49 @@ impl OpenRouterResponse {
 // ═══════════════════════════════════════════════════════════════
 
 /// Detects if the user is asking about sports markets.
+/// Tightened to explicit leagues, sports, positions, and stat/mechanics terms so
+/// non-sports prediction markets do not trigger irrelevant sports data injection.
 fn is_sports_market_query(query: &str) -> bool {
     let lower = query.to_lowercase();
     let sports_keywords = [
         "sports", "nba", "nfl", "mlb", "nhl", "ufc", "golf", "tennis",
-        "player", "quarterback", "qb", "running back", "rb", "wide receiver", "wr",
-        "passing", "rushing", "receiving", "yards", "touchdown",
         "basketball", "baseball", "football", "hockey",
-        "playoff", "championship",
+        "quarterback", "qb", "running back", "rb", "wide receiver", "wr",
+        "passing", "rushing", "receiving", "yards", "touchdown",
+        "tip-off", "kickoff", "overtime", "halftime",
     ];
     sports_keywords.iter().any(|kw| lower.contains(kw))
 }
 
-/// Builds sports context ONLY when the user explicitly requests it.
-/// This replaces the old behavior where sports data was injected by default.
+/// Builds sports context ONLY when the user explicitly requests a specific league/sport.
+/// This replaces the old behavior where sports data was injected by default and the
+/// fallback dumped NFL-centric data for any vague sports keyword.
 async fn build_sports_context(user_message: &str, max_context_players: usize) -> String {
     use crate::football::live_data;
     use crate::football::data;
 
+    // Only inject sports data when we can identify the specific league the user is asking about.
+    // Vague sports keywords without a league are not enough to justify injecting a large,
+    // league-specific data packet into a Kalshi-first prediction market prompt.
+    let Some(league) = live_data::detect_league_from_query(user_message) else {
+        return String::new();
+    };
+
     let mut ctx = String::with_capacity(4096);
 
-    // Detect the league from the user message
-    if let Some(league) = live_data::detect_league_from_query(user_message) {
-        let sport_prompt = data::build_multi_sport_system_prompt(league);
-        if !sport_prompt.is_empty() {
-            ctx.push_str("## SPORTS MARKET CONTEXT (USER REQUESTED)\n");
-            ctx.push_str(&sport_prompt);
-            ctx.push('\n');
-        }
+    let sport_prompt = data::build_multi_sport_system_prompt(league);
+    if !sport_prompt.is_empty() {
+        ctx.push_str("## SPORTS MARKET CONTEXT (USER REQUESTED)\n");
+        ctx.push_str(&sport_prompt);
+        ctx.push('\n');
+    }
 
-        // Add live data context for the detected league
-        let live = live_data::build_live_data_context(user_message, max_context_players).await;
-        if !live.is_empty() {
-            ctx.push_str("## LIVE SPORTS DATA\n");
-            ctx.push_str(&live);
-            ctx.push('\n');
-        }
-    } else {
-        // Default: provide general sports market overview if no specific league
-        let live = live_data::build_live_data_context(user_message, max_context_players).await;
-        if !live.is_empty() {
-            ctx.push_str("## LIVE SPORTS DATA (USER REQUESTED)\n");
-            ctx.push_str(&live);
-            ctx.push('\n');
-        }
+    // Add live data context for the detected league
+    let live = live_data::build_live_data_context(user_message, max_context_players).await;
+    if !live.is_empty() {
+        ctx.push_str("## LIVE SPORTS DATA\n");
+        ctx.push_str(&live);
+        ctx.push('\n');
     }
 
     ctx
