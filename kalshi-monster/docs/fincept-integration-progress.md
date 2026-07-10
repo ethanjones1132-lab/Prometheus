@@ -2,6 +2,82 @@
 
 Tracks execution of `docs/fincept-integration-plan.md` (v2.1). Newest entry first.
 
+**This file is the working source of truth for “what’s next.”** Prefer it over the reverse-chronology in `PRIORITIES.md` when choosing work. Historical maintenance notes remain below; only the **Current next steps** block is kept reconciled.
+
+---
+
+## Current next steps (reconciled 2026-07-10, post steps 1–2)
+
+Ordered by blocking / plan value. Do not invent calibration outcomes.
+
+| # | Item | Why | Notes / acceptance |
+|---|------|-----|--------------------|
+| **1** | ~~**KB-1 live verify**~~ | Done (catalog path) | See 2026-07-10 entry below. **Desktop UI paint** still a one-time human rebuild check. |
+| **2** | **Calibration flywheel (ongoing)** | Gate needs *resolved* rows | Ledger has pending forecasts; keep analyze + resolve as markets settle. Gate still LOCKED (resolved=0). |
+| **3** | **KB-2b–e Analyst UX** | Fleet backlog after KB-2a | See `docs/fleet-backlog-2026-07-08.md`: layout/sessions (2b), paper hook from chat (2c), streaming polish, contextual prompts. |
+| **4** | **Phase 3 productization** | Math exists; ops path incomplete | Reliability diagram in UI; λ re-fit job from ledger; **breaker state persistence** + evaluate before any future order path (no live orders until gate). |
+| **5** | **Phase 1 leftovers** | Sidecar ops / data breadth | Settings UI for bridge start/status; expand tracker toward plan Appendix A; `externalBin` packaging later. |
+| **6** | **More agents (honest data only)** | p_model coverage | Fincept v4 extraction spike (§13.2) *or* native agents when data exists (macro/EconDB, news). Until then keep `probability=None`. |
+| **7** | **AGPL isolation hygiene** | Plan §3 Rule 1 | Split `fincept-sidecar` to its own public repo before any Fincept-derived code lands. |
+
+**Hard constraints (unchanged):** no fabricated ledger rows; no live order-execution until the gate passes for real; AGPL boundary stays process/HTTP only.
+
+---
+
+## 2026-07-10 — Steps 1–2: KB-1 live verify + calibration flywheel
+
+### Step 1 — KB-1 live verify
+
+| Check | Source | Result |
+|-------|--------|--------|
+| Public catalog (app quick-cache shape) | `GET {PRIMARY}/markets?status=open&mve_filter=exclude` × 2 pages × 100 — script `scripts/kb1_calibration_verify.py` | **200 open markets** |
+| Unit: blocking_write panics in runtime | `cargo test kalshi::client::tests:: --lib` | **4/4 passed** (incl. should_panic + async write + cache count) |
+| Code fix present | `kalshi/client.rs` `apply_cache` → `.write().await` | In tree (commit `e9e1a78`) |
+| Desktop Command desk paint | Tauri UI process | **Not automated here** — rebuild app once to confirm React tape |
+
+**Verdict:** Catalog path **PASS**. Root-cause fix **PASS** (tests). Full GUI confirmation left as a one-click rebuild for the user.
+
+### Step 2 — Calibration flywheel
+
+| Action | Source | Result |
+|--------|--------|--------|
+| Analyze non-MVE markets with mid | Kalshi `mve_filter=exclude` + agents orchestrator | **+15** forecast rows written to `~/.openclaw/kalshi-monster/predictions.db` |
+| Resolve pending | Kalshi `GET /markets/{ticker}` → `result` | **0** settled among 23 pending (all still open) |
+| Ledger totals | SQLite `forecasts` table | **resolved=0**, **unresolved=23**, **8 with p_model** (pending) |
+| Brier(p_final) vs Brier(p_market) | N/A until outcomes | **N/A** (honest) |
+| Gate | `evaluate_gate` thresholds | **LOCKED** (0 ≪ 200 resolved) |
+
+**Not done (by design):** no synthetic resolutions, no look-ahead backfill of settled markets with fresh mids.
+
+### Scripts
+
+- `scripts/kb1_calibration_verify.py` — combined KB-1 catalog probe + flywheel
+- `scripts/live_forecast_pipeline.py` — earlier seed path
+
+### Next after this entry
+
+**#3 KB-2b–e** is the next product slice once flywheel is on a periodic resolve schedule (Calibration tab **Resolve settled** or re-run the script).
+
+---
+
+## 2026-07-10 — Calibration UI + commit
+
+### Shipped
+
+| Item | Change |
+|------|--------|
+| **Calibration tab** | `CalibrationView.tsx` — gate status, Brier summary, paper P&L, analyze top N, resolve pending |
+| **Market detail** | **Run edge engine** → `kalshi_analyze_market_edge` + ledger summary |
+| Types / API | `EdgeAnalysisResult`, `ForecastCalibrationReport` in `types/kalshi.ts` + `kalshiApi` |
+| Tests | App tab nav, CalibrationView load/analyze, MarketDetailPanel edge button |
+| Git | `e9e1a78` — agents, edge pipeline, KB-1 fix, Calibration UI |
+
+### Still open (carried into Current next steps)
+
+- KB-1 UI verification after rebuild
+- Resolved-forecast accumulation (honest settle only)
+- KB-2b–e; Phase 3 breaker/λ UI; more agents; Settings bridge hooks
+
 ---
 
 ## 2026-07-09 — Agents + edge ledger + KB-1 root cause
@@ -35,11 +111,9 @@ Tracks execution of `docs/fincept-integration-plan.md` (v2.1). Newest entry firs
 - Macro / news / sentiment agents remain `probability=None` (no EconDB / news feeds)
 - No live order-execution code
 
-### Still open
+### Still open → superseded
 
-- Wait for open forecast rows to settle (or analyze more live markets via IPC) to accumulate Brier evidence
-- UI wiring for Edge Board / Calibration tab
-- Fincept v4 extraction spike for remaining agents
+See **Current next steps** (2026-07-10). Calibration tab + edge IPC shipped in the following entry.
 
 ---
 
@@ -58,10 +132,9 @@ Tracks execution of `docs/fincept-integration-plan.md` (v2.1). Newest entry firs
 
 - `cargo test chat::kalshi_context::` — 4 passed (incl. empty-tape degraded case)
 
-### Still open
+### Still open → superseded
 
-- **KB-1:** live credential run — confirm Markets tab populates
-- **KB-2b–e:** Analyst UX follow-ups per fleet backlog
+KB-1 verify + KB-2b–e live under **Current next steps**.
 
 ---
 

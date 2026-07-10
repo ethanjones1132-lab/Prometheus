@@ -1,6 +1,9 @@
 # Kalshi Monster — Priority Roadmap
 
-Last updated: 2026-07-09 (agents + edge ledger + KB-1 root cause fix)
+Last updated: 2026-07-10
+
+**Next-work source of truth:** `docs/fincept-integration-progress.md` → **Current next steps**.  
+This file is a reverse-chronology maintenance log; do not treat scattered “Next:” bullets below as current if they conflict with the progress doc.
 
 ## Maintenance notes (2026-07-09) — agents, forecast ledger wiring, KB-1 confirmed
 
