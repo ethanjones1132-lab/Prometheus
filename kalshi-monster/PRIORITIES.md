@@ -2,7 +2,12 @@
 
 Last updated: 2026-07-10
 
-**Next-work source of truth:** `docs/fincept-integration-progress.md` → **Current next steps**.  
+## Maintenance notes (2026-07-10, cron) — Phase 3 breaker persistence
+
+- SQLite `breaker_state` + `evaluate_and_persist_breakers`; Tauri IPC + Calibration tab §6.4 panel.
+- See `docs/fincept-integration-progress.md` for current next steps.
+
+**Next-work source of truth:** `docs/fincept-integration-progress.md` → **Current next steps**.
 This file is a reverse-chronology maintenance log; do not treat scattered “Next:” bullets below as current if they conflict with the progress doc.
 
 ## Maintenance notes (2026-07-10) — Analyst completeness + retrieval
