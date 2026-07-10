@@ -5,12 +5,17 @@ Last updated: 2026-07-10
 **Next-work source of truth:** `docs/fincept-integration-progress.md` → **Current next steps**.  
 This file is a reverse-chronology maintenance log; do not treat scattered “Next:” bullets below as current if they conflict with the progress doc.
 
+## Maintenance notes (2026-07-10) — Analyst completeness + retrieval
+
+- **Early stop:** raised completion budget to 16k + auto-continue until decision JSON/summary (chat log cut mid-thought).
+- **Retrieval:** query-filtered markets (8), gated Fincept spots, ML only for sports; gold labeled as futures with as_of.
+- **Stream UX:** full-width plain stream body; first tokens from reasoning channel mirrored to content.
+- **Next:** calibration flywheel; Phase 3 productization.
+
 ## Maintenance notes (2026-07-10) — Analyst stream polish + OpenCode
 
-- **Empty Analyst replies:** OpenCode Zen free models stream into `reasoning` only; promote to `content` on save; UI shows reasoning as body when content empty (`024e77e` + follow-up stream layout).
-- **Stream UX:** full-width assistant column, streaming toolbar, caret, lightweight markdown formatting (`formatChatText`).
+- **Empty Analyst replies:** OpenCode Zen free models stream into `reasoning` only; promote to `content` on save.
 - **LLM providers:** OpenRouter / OpenCode Zen / OpenCode Go in Settings (`30b93a3`).
-- **Next:** calibration resolve flywheel; Phase 3 productization (progress doc #4).
 
 ## Maintenance notes (2026-07-09) — agents, forecast ledger wiring, KB-1 confirmed
 

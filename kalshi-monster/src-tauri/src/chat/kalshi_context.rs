@@ -138,7 +138,7 @@ pub fn assess_kalshi_chat_context(client: &KalshiClient) -> KalshiChatContextSta
 }
 
 /// Build a rich Kalshi context string for the AI prompt.
-/// This is the primary context builder for the chat pipeline.
+/// Query-aware: prefer ticker detail + keyword-matched markets over dumping the whole tape.
 pub async fn build_kalshi_context(
     client: &mut KalshiClient,
     user_message: &str,
@@ -147,31 +147,56 @@ pub async fn build_kalshi_context(
     let mut ctx = String::with_capacity(8192);
 
     ctx.push_str("# KALSHI MARKET INTELLIGENCE CONTEXT\n\n");
+    ctx.push_str(
+        "Use ONLY markets listed below (plus any SELECTED MARKET DETAIL). \
+         Do not invent tickers or prices. Prefer fewer markets with complete analysis.\n\n",
+    );
 
-    // Determine whether the user referenced a specific Kalshi ticker.
-    let _is_specific_ticker = extract_ticker_from_query(user_message).is_some();
+    let keywords = retrieval_keywords(user_message);
+    let specific = extract_ticker_from_query(user_message);
 
-    // Top volume markets (always included)
-    match client.get_top_markets(20).await {
+    // Top / retrieved markets (bounded)
+    match client.get_top_markets(40).await {
         Ok(markets) => {
-            ctx.push_str("## TOP VOLUME MARKETS (Last 24h)\n");
-            for m in markets.iter().take(10) {
-                ctx.push_str(&format!("- [{}] {} — Cat: {}, Yes: {:.1}%, Spread: {:.0}c, Volume: ${:.0}\n",
-                    m.ticker, m.title, m.category, m.yes_prob_pct, m.spread * 100.0, m.volume_24h));
+            let selected = select_markets_for_query(&markets, &keywords, specific.as_deref(), 8);
+            ctx.push_str("## RETRIEVED MARKETS (query-filtered from live tape)\n");
+            if selected.is_empty() {
+                ctx.push_str("(no matching markets — report tape miss; do not invent contracts)\n");
+            } else {
+                for m in &selected {
+                    ctx.push_str(&format!(
+                        "- [{}] {} — Cat: {}, Yes: {:.1}%, Spread: {:.0}c, Vol24h: ${:.0}, Liq: ${:.0}\n",
+                        m.ticker,
+                        m.title,
+                        m.category,
+                        m.yes_prob_pct,
+                        m.spread * 100.0,
+                        m.volume_24h,
+                        m.liquidity
+                    ));
+                }
             }
             ctx.push('\n');
         }
         Err(_) => {
-            ctx.push_str("## TOP VOLUME MARKETS\n(unavailable)\n\n");
+            ctx.push_str("## RETRIEVED MARKETS\n(unavailable — refresh Command desk)\n\n");
         }
     }
 
-    // Category stats (always included)
+    // Compact category overview (top 6 by count)
     match fetch_category_stats(client).await {
-        Ok(stats) => {
-            ctx.push_str("## CATEGORY OVERVIEW\n");
-            for s in stats {
-                ctx.push_str(&format!("- {}: {} markets, ${:.0} 24h volume\n", s.name, s.market_count, s.total_volume_24h));
+        Ok(mut stats) => {
+            stats.sort_by(|a, b| {
+                b.total_volume_24h
+                    .partial_cmp(&a.total_volume_24h)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            ctx.push_str("## CATEGORY OVERVIEW (top by volume)\n");
+            for s in stats.into_iter().take(6) {
+                ctx.push_str(&format!(
+                    "- {}: {} markets, ${:.0} 24h volume\n",
+                    s.name, s.market_count, s.total_volume_24h
+                ));
             }
             ctx.push('\n');
         }
@@ -277,6 +302,78 @@ fn extract_ticker_from_query(query: &str) -> Option<String> {
     None
 }
 
+fn retrieval_keywords(query: &str) -> Vec<String> {
+    let stop: std::collections::HashSet<&str> = [
+        "the", "a", "an", "and", "or", "of", "to", "for", "on", "in", "is", "are", "what",
+        "which", "most", "today", "with", "vs", "versus", "me", "my", "your", "this", "that",
+        "from", "into", "about", "show", "give", "find", "analyze", "analysis", "market",
+        "markets", "kalshi", "price", "prices", "any", "have", "has", "do", "does", "how",
+    ]
+    .into_iter()
+    .collect();
+    query
+        .split(|c: char| !c.is_alphanumeric() && c != '-')
+        .map(|w| w.to_lowercase())
+        .filter(|w| w.len() >= 3 && !stop.contains(w.as_str()))
+        .take(12)
+        .collect()
+}
+
+fn select_markets_for_query(
+    markets: &[crate::kalshi::KalshiMarketSummary],
+    keywords: &[String],
+    ticker: Option<&str>,
+    limit: usize,
+) -> Vec<crate::kalshi::KalshiMarketSummary> {
+    let mut scored: Vec<(i32, &crate::kalshi::KalshiMarketSummary)> = markets
+        .iter()
+        .map(|m| {
+            let hay = format!(
+                "{} {} {}",
+                m.ticker.to_lowercase(),
+                m.title.to_lowercase(),
+                m.category.to_lowercase()
+            );
+            let mut score = 0i32;
+            if let Some(t) = ticker {
+                if m.ticker.eq_ignore_ascii_case(t) {
+                    score += 1000;
+                }
+            }
+            for kw in keywords {
+                if hay.contains(kw) {
+                    score += 10;
+                }
+            }
+            // Mild volume prior so empty-keyword queries still get liquid names
+            score += (m.volume_24h.log10().max(0.0) as i32).min(8);
+            (score, m)
+        })
+        .collect();
+    scored.sort_by(|a, b| b.0.cmp(&a.0));
+    // If nothing keyword-matched, fall back to pure top volume
+    let any_kw = scored.iter().any(|(s, _)| *s >= 10);
+    scored
+        .into_iter()
+        .filter(|(s, _)| if any_kw { *s >= 10 || ticker.is_some() } else { true })
+        .take(limit)
+        .map(|(_, m)| m.clone())
+        .collect()
+}
+
+/// Whether the user query warrants cross-asset (Fincept) spot levels.
+pub fn needs_cross_asset_context(query: &str) -> bool {
+    let q = query.to_lowercase();
+    [
+        "gold", "silver", "oil", "crude", "spy", "qqq", "s&p", "spx", "nasdaq", "vix",
+        "bitcoin", "btc", "eth", "crypto", "yield", "treasury", "fed", "cpi", "inflation",
+        "fx", "forex", "dollar", "eur", "macro", "commodity", "commodities", "rates",
+        "equity", "equities", "stock", "index",
+    ]
+    .iter()
+    .any(|k| q.contains(k))
+}
+
 /// Fetch top markets by category
 async fn fetch_category_stats(client: &mut KalshiClient) -> Result<Vec<CategorySnapshot>, String> {
     let stats = client.category_stats();
@@ -311,6 +408,14 @@ mod tests {
         assert_eq!(extract_ticker_from_query("Analyze KX-FED-25DEC"), Some("KX-FED-25DEC".to_string()));
         assert_eq!(extract_ticker_from_query("What about kx-nba-2025?"), Some("KX-NBA-2025".to_string()));
         assert_eq!(extract_ticker_from_query("No ticker here"), None);
+    }
+
+    #[test]
+    fn cross_asset_gate_macro_vs_politics() {
+        assert!(needs_cross_asset_context("What is gold doing vs CPI markets?"));
+        assert!(!needs_cross_asset_context(
+            "What are the most mispriced political markets on Kalshi today?"
+        ));
     }
 
     #[test]

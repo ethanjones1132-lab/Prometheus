@@ -150,7 +150,12 @@ pub async fn send_message(
             None, // portfolio not injected by default in non-streaming path
         )
         .await;
-        crate::chat::fincept_context::append_fincept_context(fincept.inner().as_ref(), &mut ctx).await;
+        crate::chat::fincept_context::append_fincept_context_for_query(
+            fincept.inner().as_ref(),
+            &mut ctx,
+            &message,
+        )
+        .await;
         ctx
     };
 
@@ -301,7 +306,12 @@ pub async fn send_message_stream(
             None,
         )
         .await;
-        crate::chat::fincept_context::append_fincept_context(fincept.inner().as_ref(), &mut ctx).await;
+        crate::chat::fincept_context::append_fincept_context_for_query(
+            fincept.inner().as_ref(),
+            &mut ctx,
+            &message,
+        )
+        .await;
         ctx
     };
 

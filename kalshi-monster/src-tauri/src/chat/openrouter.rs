@@ -15,6 +15,12 @@ use tokio::sync::mpsc;
 // Supports both streaming and non-streaming modes.
 // ═══════════════════════════════════════════════════════════════
 
+/// Completion budget. Thinking/free models often burn most of a small
+/// budget on monologue; 4k caused mid-sentence cutoffs in production logs.
+const DEFAULT_MAX_COMPLETION_TOKENS: u32 = 16_384;
+/// Auto-continue when the model stops without a deliverable decision.
+const MAX_AUTO_CONTINUATIONS: u32 = 2;
+
 #[derive(Debug, Serialize, Default)]
 struct OpenRouterRequestReasoning {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -123,6 +129,40 @@ fn should_send_reasoning_request(config: &AppConfig, model: &str) -> bool {
     ) && model_supports_reasoning(model)
 }
 
+/// True when the model never produced a trade decision deliverable.
+/// Used to trigger auto-continue after max_tokens / free-model early stops.
+pub fn response_looks_incomplete(text: &str) -> bool {
+    let t = text.trim();
+    if t.is_empty() {
+        return true;
+    }
+    let lower = t.to_lowercase();
+    let has_json_decision = lower.contains("\"decision\"")
+        && (lower.contains("\"take\"")
+            || lower.contains("\"pass\"")
+            || lower.contains("\"watch\"")
+            || t.contains("TAKE")
+            || t.contains("PASS")
+            || t.contains("WATCH"));
+    let has_summary = lower.contains("decision:")
+        || lower.contains("**decision**")
+        || lower.contains("decision —")
+        || lower.contains("decision -");
+    if has_json_decision || has_summary {
+        return false;
+    }
+    // Long monologue without a decision, or cut mid-token/sentence
+    let last = t.chars().last().unwrap_or(' ');
+    last.is_alphanumeric() || last == ',' || last == ':' || t.ends_with("...") || t.len() > 1500
+}
+
+fn continue_user_prompt() -> &'static str {
+    "Continue EXACTLY where you left off. Do not restart the analysis. \
+     Finish any open thought, then output the required JSON decision block \
+     (with decision TAKE/WATCH/PASS) and the DECISION summary. \
+     Prefer completing the deliverable over more internal monologue."
+}
+
 async fn process_stream_line(
     line: &str,
     tx: &mpsc::Sender<String>,
@@ -221,7 +261,13 @@ fn build_kalshi_system_prompt(config: &AppConfig) -> String {
     prompt.push_str("- Default to PASS when the edge is unclear, the spread is too wide, or data quality is poor. ");
     prompt.push_str("A clean no-trade is often the best trade.\n");
     prompt.push_str("- Sports analysis is a subdomain of Kalshi markets, not the primary domain. ");
-    prompt.push_str("Only provide sports-focused detail when the user explicitly asks for it.\n\n");
+    prompt.push_str("Only provide sports-focused detail when the user explicitly asks for it.\n");
+    prompt.push_str("- COMPLETENESS: Always finish with the JSON decision block and DECISION summary. ");
+    prompt.push_str("If context is large, analyze fewer markets thoroughly rather than stalling mid-thought.\n");
+    prompt.push_str("- FACT GROUNDING: Only cite spot/futures prices that appear in CROSS-ASSET CONTEXT with the printed last price and timestamp. ");
+    prompt.push_str("Do not invent gold/oil/index levels. If a price is missing, say unavailable.\n");
+    prompt.push_str("- RETRIEVAL: Prefer markets listed in KALSHI MARKET INTELLIGENCE CONTEXT. ");
+    prompt.push_str("Do not invent tickers. If the tape is thin for the question, say so and PASS.\n\n");
 
     prompt
 }
@@ -284,149 +330,198 @@ pub async fn send_message(
         }
     }
 
-    // ML Model Predictions — fetch from DB and inject as system context
-    if let Some(pool) = db_pool {
-        let ml_preds = ml_predictor::get_stored_ml_predictions(pool, 15).await.unwrap_or_default();
-        if !ml_preds.is_empty() {
-            let ml_status = ml_predictor::get_model_status(pool, None).await.ok();
-            let header_detail = ml_status
-                .as_ref()
-                .map(ml_predictor::format_ml_training_header)
-                .unwrap_or_else(|| "N/A samples, CV accuracy: N/A".to_string());
-            let mut ml_ctx = format!("## ML MODEL PREDICTIONS ({})\n\n", header_detail);
-            ml_ctx.push_str("The following are machine-learning generated predictions from your trained model.\n");
-            ml_ctx.push_str("Consider these alongside your own analysis — they may confirm or challenge your lean.\n\n");
-            for pred in &ml_preds {
-                let emoji = if pred.ml_win_probability >= 0.55 { "✅" } else if pred.ml_win_probability >= 0.45 { "⚠️" } else { "❌" };
-                let lean = if pred.ml_win_probability >= 0.5 { "Lean OVER" } else { "Lean UNDER" };
-                let line_change_str = if pred.line_change.abs() > 0.01 {
-                    format!(" | Line change: {:+.1}", pred.line_change)
-                } else {
-                    String::new()
-                };
-                ml_ctx.push_str(&format!(
-                    "  {} {} — {} {} | Line: {:.1} | ML Win Prob: {:.1}% ({}){}\n",
-                    emoji, pred.player_name, pred.ml_prediction, pred.stat_category,
-                    pred.line, pred.ml_win_probability * 100.0, lean, line_change_str
-                ));
-            }
-            messages.push(ChatMessage::new("system".to_string(), ml_ctx));
+    // ML predictions only for sports queries (reduces context overload)
+    if is_sports_market_query(&user_message) {
+        if let Some(pool) = db_pool {
+            inject_ml_context(&mut messages, pool).await;
         }
     }
 
     // Previous conversation history, trimmed to keep the prompt bounded
     let mut history = session_messages.to_vec();
-    if history.len() > 20 {
-        history = history.split_off(history.len() - 20);
+    if history.len() > 12 {
+        history = history.split_off(history.len() - 12);
     }
     for msg in history {
         messages.push(msg);
     }
 
     // Current user message
-    messages.push(ChatMessage::new("user".to_string(), user_message));
+    messages.push(ChatMessage::new("user".to_string(), user_message.clone()));
 
     let model_id = config.llm_model_id();
-    let request = ChatRequest {
-        model: model_id.clone(),
-        messages,
-        max_tokens: Some(4096),
-        temperature: Some(0.3),
-        stream: false,
-        reasoning: if should_send_reasoning_request(config, &model_id) {
-            Some(OpenRouterRequestReasoning {
-                effort: Some("high".to_string()),
-                exclude: Some(false),
-                ..Default::default()
-            })
-        } else {
-            None
-        },
-    };
+    let mut assembled = String::new();
+    let mut last_tokens: Option<u64> = None;
+    let mut cont = 0u32;
+    loop {
+        let mut req_messages = messages.clone();
+        if cont > 0 {
+            req_messages.push(ChatMessage::new("assistant".to_string(), assembled.clone()));
+            req_messages.push(ChatMessage::new(
+                "user".to_string(),
+                continue_user_prompt().to_string(),
+            ));
+        }
+        let request = ChatRequest {
+            model: model_id.clone(),
+            messages: req_messages,
+            max_tokens: Some(DEFAULT_MAX_COMPLETION_TOKENS),
+            temperature: Some(0.3),
+            stream: false,
+            reasoning: if should_send_reasoning_request(config, &model_id) {
+                Some(OpenRouterRequestReasoning {
+                    effort: Some("high".to_string()),
+                    exclude: Some(false),
+                    ..Default::default()
+                })
+            } else {
+                None
+            },
+        };
 
-    let base = config.llm_base_url();
-    let api_key = config.llm_api_key();
-    if api_key.trim().is_empty() {
-        return Err(format!(
-            "No API key for {} — set it in Settings",
-            config.llm_provider_enum().display_name()
-        ));
-    }
+        let base = config.llm_base_url();
+        let api_key = config.llm_api_key();
+        if api_key.trim().is_empty() {
+            return Err(format!(
+                "No API key for {} — set it in Settings",
+                config.llm_provider_enum().display_name()
+            ));
+        }
 
-    let response = client
-        .post(format!("{base}/chat/completions"))
-        .header("Authorization", format!("Bearer {api_key}"))
-        .header("Content-Type", "application/json")
-        .header("HTTP-Referer", "https://kalshi-monster.app")
-        .header("X-Title", "Kalshi Monster")
-        .json(&request)
-        .send()
-        .await
-        .map_err(|e| format!("Request failed ({base}): {e}"))?;
-
-    let status = response.status();
-    if !status.is_success() {
-        let error_body = response
-            .text()
+        let response = client
+            .post(format!("{base}/chat/completions"))
+            .header("Authorization", format!("Bearer {api_key}"))
+            .header("Content-Type", "application/json")
+            .header("HTTP-Referer", "https://kalshi-monster.app")
+            .header("X-Title", "Kalshi Monster")
+            .json(&request)
+            .send()
             .await
-            .unwrap_or_else(|_| "Unknown error".to_string());
-        return Err(format!("API error ({}): {}", status, error_body));
+            .map_err(|e| format!("Request failed ({base}): {e}"))?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let error_body = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "Unknown error".to_string());
+            return Err(format!("API error ({}): {}", status, error_body));
+        }
+
+        let json: Value = response
+            .json()
+            .await
+            .map_err(|e| format!("Failed to parse response: {}", e))?;
+
+        let content = extract_message_content(&json);
+        let reasoning = extract_message_reasoning(&json);
+        let (content, _) = coalesce_content_and_reasoning(content, reasoning);
+        if content.trim().is_empty() && cont == 0 {
+            return Err(
+                "Model returned an empty response (no content or reasoning). Try another model or provider."
+                    .into(),
+            );
+        }
+        if cont == 0 {
+            assembled = content;
+        } else if !content.trim().is_empty() {
+            assembled.push_str("\n\n");
+            assembled.push_str(&content);
+        }
+
+        last_tokens = json
+            .get("usage")
+            .and_then(|u| u.get("total_tokens"))
+            .and_then(|t| t.as_u64())
+            .or(last_tokens);
+
+        if !response_looks_incomplete(&assembled) || cont >= MAX_AUTO_CONTINUATIONS {
+            break;
+        }
+        tracing::info!(
+            "LLM response incomplete (len={}); auto-continue {}/{}",
+            assembled.len(),
+            cont + 1,
+            MAX_AUTO_CONTINUATIONS
+        );
+        cont += 1;
     }
 
-    let json: Value = response
-        .json()
-        .await
-        .map_err(|e| format!("Failed to parse response: {}", e))?;
+    Ok(OpenRouterResponse {
+        content: assembled,
+        reasoning: None,
+        tokens_used: last_tokens,
+        model: model_id,
+    })
+}
 
-    // content may be string or (rarely) null while reasoning holds the text
-    let content = json
-        .get("choices")
+fn extract_message_content(json: &Value) -> String {
+    json.get("choices")
         .and_then(|c| c.get(0))
         .and_then(|c| c.get("message"))
         .and_then(|m| m.get("content"))
         .and_then(|c| {
-            c.as_str()
-                .map(|s| s.to_string())
-                .or_else(|| c.as_array().map(|parts| {
+            c.as_str().map(|s| s.to_string()).or_else(|| {
+                c.as_array().map(|parts| {
                     parts
                         .iter()
                         .filter_map(|p| p.get("text").and_then(|t| t.as_str()))
                         .collect::<Vec<_>>()
                         .join("")
-                }))
+                })
+            })
         })
-        .unwrap_or_default();
+        .unwrap_or_default()
+}
 
-    let reasoning = json
-        .get("choices")
+fn extract_message_reasoning(json: &Value) -> Option<String> {
+    json.get("choices")
         .and_then(|c| c.get(0))
         .and_then(|c| c.get("message"))
-        .and_then(|m| {
-            m.get("reasoning")
-                .or_else(|| m.get("reasoning_content"))
-        })
+        .and_then(|m| m.get("reasoning").or_else(|| m.get("reasoning_content")))
         .and_then(|r| r.as_str())
-        .map(|r| r.to_string());
+        .map(|r| r.to_string())
+}
 
-    let (content, reasoning) = coalesce_content_and_reasoning(content, reasoning);
-    if content.trim().is_empty() {
-        return Err(
-            "Model returned an empty response (no content or reasoning). Try another model or provider."
-                .into(),
-        );
+async fn inject_ml_context(messages: &mut Vec<ChatMessage>, pool: &Pool<Sqlite>) {
+    let ml_preds = ml_predictor::get_stored_ml_predictions(pool, 10)
+        .await
+        .unwrap_or_default();
+    if ml_preds.is_empty() {
+        return;
     }
-
-    let usage = json.get("usage");
-    let tokens_used = usage
-        .and_then(|u| u.get("total_tokens"))
-        .and_then(|t| t.as_u64());
-
-    Ok(OpenRouterResponse {
-        content,
-        reasoning,
-        tokens_used,
-        model: model_id,
-    })
+    let ml_status = ml_predictor::get_model_status(pool, None).await.ok();
+    let header_detail = ml_status
+        .as_ref()
+        .map(ml_predictor::format_ml_training_header)
+        .unwrap_or_else(|| "N/A samples, CV accuracy: N/A".to_string());
+    let mut ml_ctx = format!("## ML MODEL PREDICTIONS ({})\n\n", header_detail);
+    ml_ctx.push_str("Sports-query only. Consider alongside your analysis.\n\n");
+    for pred in &ml_preds {
+        let emoji = if pred.ml_win_probability >= 0.55 {
+            "✅"
+        } else if pred.ml_win_probability >= 0.45 {
+            "⚠️"
+        } else {
+            "❌"
+        };
+        let lean = if pred.ml_win_probability >= 0.5 {
+            "Lean OVER"
+        } else {
+            "Lean UNDER"
+        };
+        ml_ctx.push_str(&format!(
+            "  {} {} — {} {} | Line: {:.1} | ML Win Prob: {:.1}% ({})\n",
+            emoji,
+            pred.player_name,
+            pred.ml_prediction,
+            pred.stat_category,
+            pred.line,
+            pred.ml_win_probability * 100.0,
+            lean
+        ));
+    }
+    messages.push(ChatMessage::new("system".to_string(), ml_ctx));
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -641,34 +736,15 @@ pub async fn stream_message(
         }
     }
 
-    // ML Model Predictions
-    if let Some(pool) = db_pool {
-        let ml_preds = ml_predictor::get_stored_ml_predictions(pool, 15).await.unwrap_or_default();
-        if !ml_preds.is_empty() {
-            let ml_status = ml_predictor::get_model_status(pool, None).await.ok();
-            let header_detail = ml_status
-                .as_ref()
-                .map(ml_predictor::format_ml_training_header)
-                .unwrap_or_else(|| "N/A samples, CV accuracy: N/A".to_string());
-            let mut ml_ctx = format!("## ML MODEL PREDICTIONS ({})\n\n", header_detail);
-            ml_ctx.push_str("The following are machine-learning generated predictions from your trained model.\n");
-            ml_ctx.push_str("Consider these alongside your own analysis — they may confirm or challenge your lean.\n\n");
-            for pred in &ml_preds {
-                let emoji = if pred.ml_win_probability >= 0.55 { "✅" } else if pred.ml_win_probability >= 0.45 { "⚠️" } else { "❌" };
-                let lean = if pred.ml_win_probability >= 0.5 { "Lean OVER" } else { "Lean UNDER" };
-                ml_ctx.push_str(&format!(
-                    "  {} {} — {} {} | Line: {:.1} | ML Win Prob: {:.1}% ({})\n",
-                    emoji, pred.player_name, pred.ml_prediction, pred.stat_category,
-                    pred.line, pred.ml_win_probability * 100.0, lean
-                ));
-            }
-            messages.push(ChatMessage::new("system".to_string(), ml_ctx));
+    if is_sports_market_query(&user_message) {
+        if let Some(pool) = db_pool {
+            inject_ml_context(&mut messages, pool).await;
         }
     }
 
     let mut history = session_messages.to_vec();
-    if history.len() > 20 {
-        history = history.split_off(history.len() - 20);
+    if history.len() > 12 {
+        history = history.split_off(history.len() - 12);
     }
     for msg in history {
         messages.push(msg);
@@ -676,23 +752,6 @@ pub async fn stream_message(
     messages.push(ChatMessage::new("user".to_string(), user_message));
 
     let model_id = config.llm_model_id();
-    let request = ChatRequest {
-        model: model_id.clone(),
-        messages,
-        max_tokens: Some(4096),
-        temperature: Some(0.3),
-        stream: true,
-        reasoning: if should_send_reasoning_request(config, &model_id) {
-            Some(OpenRouterRequestReasoning {
-                effort: Some("high".to_string()),
-                exclude: Some(false),
-                ..Default::default()
-            })
-        } else {
-            None
-        },
-    };
-
     let base = config.llm_base_url();
     let api_key = config.llm_api_key();
     if api_key.trim().is_empty() {
@@ -708,111 +767,157 @@ pub async fn stream_message(
         ));
     }
 
-    let response = client
-        .post(format!("{base}/chat/completions"))
-        .header("Authorization", format!("Bearer {api_key}"))
-        .header("Content-Type", "application/json")
-        .header("HTTP-Referer", "https://kalshi-monster.app")
-        .header("X-Title", "Kalshi Monster")
-        .json(&request)
-        .send()
-        .await
-        .map_err(|e| format!("Request failed ({base}): {e}"))?;
-
-    let status = response.status();
-    if !status.is_success() {
-        let error_body = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
-        let _ = tx.send(format!("__STREAM_ERROR__:API error ({}): {}", status, error_body)).await;
-        return Err(format!("API error ({}): {}", status, error_body));
-    }
-
-    let mut stream = response.bytes_stream();
-    let mut full_content = String::new();
-    let mut full_reasoning = String::new();
+    let mut assembled = String::new();
     let mut tokens_used: Option<u64> = None;
-    let mut chunk_count: usize = 0;
-    let mut raw_data = String::new();
-    let mut line_buffer: Vec<u8> = Vec::new();
-    let mut done_received = false;
+    let mut cont = 0u32;
 
-    'stream_loop: while let Some(chunk_result) = stream.next().await {
-        let bytes = match chunk_result {
-            Ok(b) => b,
-            Err(e) => {
-                if !full_content.is_empty() || !full_reasoning.is_empty() {
-                    tracing::warn!("Stream read error after partial content; preserving streamed response: {}", e);
+    loop {
+        let mut req_messages = messages.clone();
+        if cont > 0 {
+            req_messages.push(ChatMessage::new("assistant".to_string(), assembled.clone()));
+            req_messages.push(ChatMessage::new(
+                "user".to_string(),
+                continue_user_prompt().to_string(),
+            ));
+            let notice = "\n\n---\n*(continuing incomplete response…)*\n\n";
+            assembled.push_str(notice);
+            let _ = tx.send(notice.to_string()).await;
+        }
+
+        let request = ChatRequest {
+            model: model_id.clone(),
+            messages: req_messages,
+            max_tokens: Some(DEFAULT_MAX_COMPLETION_TOKENS),
+            temperature: Some(0.3),
+            stream: true,
+            reasoning: if should_send_reasoning_request(config, &model_id) {
+                Some(OpenRouterRequestReasoning {
+                    effort: Some("high".to_string()),
+                    exclude: Some(false),
+                    ..Default::default()
+                })
+            } else {
+                None
+            },
+        };
+
+        let response = client
+            .post(format!("{base}/chat/completions"))
+            .header("Authorization", format!("Bearer {api_key}"))
+            .header("Content-Type", "application/json")
+            .header("HTTP-Referer", "https://kalshi-monster.app")
+            .header("X-Title", "Kalshi Monster")
+            .json(&request)
+            .send()
+            .await
+            .map_err(|e| format!("Request failed ({base}): {e}"))?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let error_body = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+            let _ = tx
+                .send(format!("__STREAM_ERROR__:API error ({status}): {error_body}"))
+                .await;
+            return Err(format!("API error ({status}): {error_body}"));
+        }
+
+        let mut stream = response.bytes_stream();
+        let mut full_content = String::new();
+        let mut full_reasoning = String::new();
+        let mut chunk_count: usize = 0;
+        let mut line_buffer: Vec<u8> = Vec::new();
+        let mut done_received = false;
+
+        'stream_loop: while let Some(chunk_result) = stream.next().await {
+            let bytes = match chunk_result {
+                Ok(b) => b,
+                Err(e) => {
+                    if !full_content.is_empty() || !full_reasoning.is_empty() {
+                        tracing::warn!(
+                            "Stream read error after partial content; preserving: {e}"
+                        );
+                        break 'stream_loop;
+                    }
+                    let _ = tx.send(format!("__STREAM_ERROR__:Stream error: {e}")).await;
+                    return Err(format!("Stream error: {e}"));
+                }
+            };
+            line_buffer.extend_from_slice(&bytes);
+
+            while let Some(newline_index) = line_buffer.iter().position(|byte| *byte == b'\n') {
+                let line_bytes: Vec<u8> = line_buffer.drain(..=newline_index).collect();
+                let line = String::from_utf8_lossy(&line_bytes);
+                let line = line.trim_end_matches(&['\r', '\n'][..]);
+                if process_stream_line(
+                    line,
+                    &tx,
+                    &mut full_content,
+                    &mut full_reasoning,
+                    &mut chunk_count,
+                )
+                .await
+                {
+                    done_received = true;
                     break 'stream_loop;
                 }
-                let _ = tx.send(format!("__STREAM_ERROR__:Stream error: {}", e)).await;
-                return Err(format!("Stream error: {}", e));
             }
-        };
-        let text = String::from_utf8_lossy(&bytes);
-        raw_data.push_str(&text);
-        line_buffer.extend_from_slice(&bytes);
+        }
 
-        while let Some(newline_index) = line_buffer.iter().position(|byte| *byte == b'\n') {
-            let line_bytes: Vec<u8> = line_buffer.drain(..=newline_index).collect();
-            let line = String::from_utf8_lossy(&line_bytes);
+        if !done_received && !line_buffer.is_empty() {
+            let line = String::from_utf8_lossy(&line_buffer);
             let line = line.trim_end_matches(&['\r', '\n'][..]);
-            if process_stream_line(
+            let _ = process_stream_line(
                 line,
                 &tx,
                 &mut full_content,
                 &mut full_reasoning,
                 &mut chunk_count,
             )
-            .await
-            {
-                done_received = true;
-                break 'stream_loop;
+            .await;
+        }
+
+        let reasoning_val = if full_reasoning.is_empty()
+            || full_content.contains(full_reasoning.as_str())
+        {
+            None
+        } else if full_content.trim().is_empty() {
+            Some(full_reasoning)
+        } else {
+            None
+        };
+        let (piece, _) = coalesce_content_and_reasoning(full_content, reasoning_val);
+        if cont == 0 {
+            assembled = piece;
+        } else if !piece.trim().is_empty() {
+            // piece was already streamed live; keep assembled in sync
+            if !assembled.ends_with(&piece) {
+                assembled.push_str(&piece);
             }
         }
-    }
 
-    if !done_received && !line_buffer.is_empty() {
-        let line = String::from_utf8_lossy(&line_buffer);
-        let line = line.trim_end_matches(&['\r', '\n'][..]);
-        if process_stream_line(
-            line,
-            &tx,
-            &mut full_content,
-            &mut full_reasoning,
-            &mut chunk_count,
-        )
-        .await
-        {
-            // done
+        tokens_used = Some(assembled.len() as u64 / 4);
+
+        if assembled.trim().is_empty() {
+            let msg = "Model returned an empty streamed response. Try another model.";
+            let _ = tx.send(format!("__STREAM_ERROR__:{msg}")).await;
+            return Err(msg.into());
         }
-    }
 
-    if tokens_used.is_none() {
-        tokens_used = Some((full_content.len() / 4) as u64);
-    }
-
-    // full_content already includes mirrored reasoning tokens when the model
-    // never emitted delta.content. Prefer not duplicating reasoning in storage.
-    let reasoning_val = if full_reasoning.is_empty() || full_content.contains(full_reasoning.as_str())
-    {
-        None
-    } else if full_content.trim().is_empty() {
-        Some(full_reasoning)
-    } else {
-        // Answer in content; keep reasoning only if it is distinct prefix material
-        None
-    };
-    let (full_content, reasoning_val) =
-        coalesce_content_and_reasoning(full_content, reasoning_val);
-
-    if full_content.trim().is_empty() {
-        let msg = "Model returned an empty streamed response (no content or reasoning). Try another model.";
-        let _ = tx.send(format!("__STREAM_ERROR__:{msg}")).await;
-        return Err(msg.into());
+        if !response_looks_incomplete(&assembled) || cont >= MAX_AUTO_CONTINUATIONS {
+            break;
+        }
+        tracing::info!(
+            "stream incomplete (len={}); auto-continue {}/{}",
+            assembled.len(),
+            cont + 1,
+            MAX_AUTO_CONTINUATIONS
+        );
+        cont += 1;
     }
 
     Ok(OpenRouterResponse {
-        content: full_content,
-        reasoning: reasoning_val,
+        content: assembled,
+        reasoning: None,
         tokens_used,
         model: model_id,
     })
@@ -859,7 +964,7 @@ pub async fn send_message_with_context(
     let request = ChatRequest {
         model: model_id.clone(),
         messages,
-        max_tokens: Some(4096),
+        max_tokens: Some(DEFAULT_MAX_COMPLETION_TOKENS),
         temperature: Some(0.3),
         stream: false,
         reasoning: if should_send_reasoning_request(config, &model_id) {
@@ -901,21 +1006,8 @@ pub async fn send_message_with_context(
 
     let json: Value = response.json().await.map_err(|e| format!("Failed to parse response: {}", e))?;
 
-    let content = json
-        .get("choices")
-        .and_then(|c| c.get(0))
-        .and_then(|c| c.get("message"))
-        .and_then(|m| m.get("content"))
-        .and_then(|c| c.as_str())
-        .unwrap_or("")
-        .to_string();
-    let reasoning = json
-        .get("choices")
-        .and_then(|c| c.get(0))
-        .and_then(|c| c.get("message"))
-        .and_then(|m| m.get("reasoning").or_else(|| m.get("reasoning_content")))
-        .and_then(|r| r.as_str())
-        .map(|r| r.to_string());
+    let content = extract_message_content(&json);
+    let reasoning = extract_message_reasoning(&json);
     let (content, reasoning) = coalesce_content_and_reasoning(content, reasoning);
     if content.trim().is_empty() {
         return Err("Model returned an empty response (no content or reasoning).".into());
@@ -957,5 +1049,20 @@ mod tests {
         let (c, r) = coalesce_content_and_reasoning("   ".into(), Some("  ".into()));
         assert_eq!(c.trim(), "");
         assert!(r.is_some());
+    }
+
+    #[test]
+    fn incomplete_without_decision() {
+        assert!(response_looks_incomplete(
+            "Let's look at Harris's market. I need to stress test"
+        ));
+        assert!(response_looks_incomplete(""));
+    }
+
+    #[test]
+    fn complete_with_json_decision() {
+        let t = r#"{"ticker":"KX","decision":"PASS","contract_side":"PASS"}
+DECISION: PASS"#;
+        assert!(!response_looks_incomplete(t));
     }
 }

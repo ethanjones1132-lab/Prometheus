@@ -6,7 +6,38 @@ Tracks execution of `docs/fincept-integration-plan.md` (v2.1). Newest entry firs
 
 ---
 
-## Current next steps (reconciled 2026-07-10, post Analyst stream polish)
+## Current next steps (reconciled 2026-07-10, post completion + retrieval fixes)
+
+---
+
+## 2026-07-10 — Analyst completeness + retrieval (from chat-log review)
+
+### Issues found in session logs
+
+| Issue | Evidence |
+|-------|----------|
+| **Stopped early** | Latest reply `content_len=14115` ends mid-sentence (“I need to stress test”) with **no** JSON `decision` / DECISION summary |
+| **Context overload** | Always injected top markets + all categories + Fincept snapshot + ML props |
+| **Bad gold level** | Model free-associated spots; Fincept gold was unlabeled futures without gate |
+
+### Fixes
+
+| Fix | Detail |
+|-----|--------|
+| `max_tokens` | **16384** (was 4096) |
+| Auto-continue | Up to 2 continuations when `response_looks_incomplete` (no decision JSON/summary) |
+| Retrieval | Query keyword filter over tape; max 8 markets; top-6 categories by volume |
+| Fincept | Only when `needs_cross_asset_context(query)`; label GC=F as gold **futures**; as_of + sanity notes |
+| ML props | Sports queries only |
+| System prompt | Completeness + fact-grounding + no invented tickers/prices |
+
+### Tests
+
+`cargo test chat::` — 20 passed
+
+---
+
+## Current next steps (prior block continues)
 
 Ordered by blocking / plan value. Do not invent calibration outcomes.
 
