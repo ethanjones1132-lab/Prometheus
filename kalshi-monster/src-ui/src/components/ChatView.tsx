@@ -4,6 +4,7 @@ import { kalshiApi } from '../services/kalshi';
 import type { ChatMessage } from '../types';
 import type { KalshiCategoryStat } from '../types/kalshi';
 import { extractPaperDecision } from '../utils/paperFromChat';
+import { formatChatText } from '../utils/formatChatText';
 
 const FALLBACK_PROMPTS = [
   {
@@ -319,24 +320,34 @@ export function ChatView({
 
           {isStreaming && (
             <div className="messageBubble assistantBubble streamingBubble">
+              <div className="streamingToolbar">
+                <span className="streamingDots" aria-live="polite">
+                  {streamingText || streamingThought ? 'Streaming reply…' : 'Analyzing…'}
+                </span>
+                <button type="button" className="ghostBtn" onClick={cancelStream}>
+                  Stop
+                </button>
+              </div>
               {streamingThought && streamingText && (
                 <details className="reasoning" open>
                   <summary>Reasoning stream</summary>
-                  <p>{streamingThought}</p>
+                  <div className="messageContent messageContent--stream">
+                    {formatChatText(streamingThought)}
+                  </div>
                 </details>
               )}
-              <div className="messageContent">
-                {streamingText ||
-                  streamingThought ||
-                  (
-                    <span className="streamingDots" aria-label="Streaming">
-                      Analyzing…
+              <div className="messageContent messageContent--stream">
+                {streamingText || streamingThought ? (
+                  <>
+                    {formatChatText(streamingText || streamingThought)}
+                    <span className="streamCaret" aria-hidden>
+                      ▍
                     </span>
-                  )}
+                  </>
+                ) : (
+                  <span className="muted">Waiting for first tokens…</span>
+                )}
               </div>
-              <button type="button" className="ghostBtn" onClick={cancelStream}>
-                Stop
-              </button>
             </div>
           )}
           <div ref={messagesEndRef} />
@@ -422,11 +433,13 @@ function MessageBubble({
       {hasSeparateReasoning && (
         <details className="reasoning">
           <summary>Reasoning</summary>
-          <p>{message.reasoning}</p>
+          <div className="messageContent">{formatChatText(message.reasoning || '')}</div>
         </details>
       )}
       <div className="messageContent">
-        {body || (
+        {body ? (
+          formatChatText(body)
+        ) : (
           <span className="muted">(Empty model response — try another model in Settings.)</span>
         )}
       </div>

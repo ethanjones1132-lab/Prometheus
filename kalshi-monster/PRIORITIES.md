@@ -5,6 +5,13 @@ Last updated: 2026-07-10
 **Next-work source of truth:** `docs/fincept-integration-progress.md` → **Current next steps**.  
 This file is a reverse-chronology maintenance log; do not treat scattered “Next:” bullets below as current if they conflict with the progress doc.
 
+## Maintenance notes (2026-07-10) — Analyst stream polish + OpenCode
+
+- **Empty Analyst replies:** OpenCode Zen free models stream into `reasoning` only; promote to `content` on save; UI shows reasoning as body when content empty (`024e77e` + follow-up stream layout).
+- **Stream UX:** full-width assistant column, streaming toolbar, caret, lightweight markdown formatting (`formatChatText`).
+- **LLM providers:** OpenRouter / OpenCode Zen / OpenCode Go in Settings (`30b93a3`).
+- **Next:** calibration resolve flywheel; Phase 3 productization (progress doc #4).
+
 ## Maintenance notes (2026-07-09) — agents, forecast ledger wiring, KB-1 confirmed
 
 - **KB-1 root cause confirmed + fixed:** `shared_cache.blocking_write()` / `blocking_read()` on Tokio `RwLock` from inside `tauri::async_runtime` (after successful HTTP fetch in `ensure_quick_cache`/`store_cache`) panics with "Cannot block the current thread from within a runtime" — markets never landed in cache. Replaced with `.write().await` / `try_read`. Tests lock the panic and the async path. Public Kalshi `/markets` returns data **without** credentials; portfolio still needs login.

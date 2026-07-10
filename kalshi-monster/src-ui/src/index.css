@@ -1825,33 +1825,133 @@ button {
 }
 
 .messageBubble {
-  max-width: min(780px, 92%);
-  padding: 12px 16px;
+  box-sizing: border-box;
+  padding: 14px 18px;
   border-radius: 14px;
   font-size: 14px;
-  line-height: 1.55;
+  line-height: 1.6;
 }
 
 .userBubble {
   align-self: flex-end;
+  width: fit-content;
+  max-width: min(640px, 92%);
   background: linear-gradient(145deg, rgba(201, 168, 76, 0.28), rgba(201, 168, 76, 0.12));
   border: 1px solid rgba(201, 168, 76, 0.35);
   color: #f5f5f0;
 }
 
 .assistantBubble {
-  align-self: flex-start;
+  /* Full readable column — avoid shrink-to-content (looked "vertically narrow") */
+  align-self: stretch;
+  width: 100%;
+  max-width: min(860px, 100%);
   background: rgba(255, 255, 255, 0.04);
   border: 1px solid rgba(255, 255, 255, 0.09);
 }
 
 .streamingBubble {
-  border-color: rgba(201, 168, 76, 0.35);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 140px;
+  border-color: rgba(201, 168, 76, 0.45);
+  background:
+    linear-gradient(160deg, rgba(201, 168, 76, 0.08), rgba(255, 255, 255, 0.03)),
+    rgba(9, 9, 8, 0.55);
+}
+
+.streamingToolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-shrink: 0;
 }
 
 .messageContent {
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
   word-break: break-word;
+  min-width: 0;
+  width: 100%;
+}
+
+.messageContent--stream {
+  flex: 1 1 auto;
+  min-height: 5.5em;
+  max-height: none;
+}
+
+.chatTextBlock {
+  display: block;
+  white-space: pre-wrap;
+}
+
+.chatHeading {
+  display: block;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: #f5f5f0;
+  margin: 0.35em 0 0.15em;
+}
+
+.chatHeading.h1 {
+  font-size: 1.15em;
+}
+.chatHeading.h2 {
+  font-size: 1.08em;
+}
+.chatHeading.h3 {
+  font-size: 1.02em;
+  color: #c9a84c;
+}
+
+.chatListItem {
+  display: block;
+  padding-left: 0.15em;
+}
+
+.chatBold {
+  font-weight: 700;
+  color: #f5f5f0;
+}
+
+.chatInlineCode {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.9em;
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.chatCodeBlock {
+  display: block;
+  margin: 0.55em 0;
+  padding: 12px 14px;
+  overflow-x: auto;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre;
+}
+
+.streamCaret {
+  display: inline-block;
+  margin-left: 1px;
+  color: #c9a84c;
+  animation: streamBlink 1s step-end infinite;
+  font-weight: 400;
+}
+
+@keyframes streamBlink {
+  50% {
+    opacity: 0;
+  }
 }
 
 .messageMeta {

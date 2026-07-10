@@ -6,21 +6,40 @@ Tracks execution of `docs/fincept-integration-plan.md` (v2.1). Newest entry firs
 
 ---
 
-## Current next steps (reconciled 2026-07-10, post steps 1–2)
+## Current next steps (reconciled 2026-07-10, post Analyst stream polish)
 
 Ordered by blocking / plan value. Do not invent calibration outcomes.
 
 | # | Item | Why | Notes / acceptance |
 |---|------|-----|--------------------|
-| **1** | ~~**KB-1 live verify**~~ | Done (catalog path) | See 2026-07-10 entry below. **Desktop UI paint** still a one-time human rebuild check. |
-| **2** | **Calibration flywheel (ongoing)** | Gate needs *resolved* rows | Ledger has pending forecasts; keep analyze + resolve as markets settle. Gate still LOCKED (resolved=0). |
-| **3** | ~~**KB-2b–e Analyst UX**~~ | Shipped 2026-07-10 | Sessions rail, design tokens, streaming + stop/retry, live prompts, paper-from-chat, markets CTA when tape cold. Polish/rename session name optional later. |
-| **4** | **Phase 3 productization** | Math exists; ops path incomplete | Reliability diagram in UI; λ re-fit job from ledger; **breaker state persistence** + evaluate before any future order path (no live orders until gate). |
-| **5** | **Phase 1 leftovers** | Sidecar ops / data breadth | Settings UI for bridge start/status; expand tracker toward plan Appendix A; `externalBin` packaging later. |
-| **6** | **More agents (honest data only)** | p_model coverage | Fincept v4 extraction spike (§13.2) *or* native agents when data exists (macro/EconDB, news). Until then keep `probability=None`. |
-| **7** | **AGPL isolation hygiene** | Plan §3 Rule 1 | Split `fincept-sidecar` to its own public repo before any Fincept-derived code lands. |
+| **1** | ~~**KB-1 live verify**~~ | Done (catalog path) | Code + public API verified; release binary rebuilt. |
+| **2** | **Calibration flywheel (ongoing)** | Gate needs *resolved* rows | Pending forecasts in ledger; resolve as Kalshi settles. Gate LOCKED until ≥200 resolved + Brier + paper P&L. |
+| **3** | ~~**KB-2 Analyst UX**~~ | Shipped | Sessions, stream, paper, OpenCode providers, empty-reasoning promote, **stream layout/format polish**. |
+| **4** | **Phase 3 productization** | Math exists; ops path incomplete | Reliability diagram UI; λ re-fit; breaker state persistence (no live orders until gate). |
+| **5** | **Phase 1 leftovers** | Sidecar ops / data breadth | Settings UI for bridge start/status; expand tracker; `externalBin` packaging. |
+| **6** | **More agents (honest data only)** | p_model coverage | Fincept spike or native agents only with real data. |
+| **7** | **AGPL isolation hygiene** | Plan §3 Rule 1 | Split `fincept-sidecar` public repo before Fincept-derived code. |
 
 **Hard constraints (unchanged):** no fabricated ledger rows; no live order-execution until the gate passes for real; AGPL boundary stays process/HTTP only.
+
+---
+
+## 2026-07-10 — Analyst stream layout + OpenCode empty-content fix
+
+### Shipped
+
+| Item | Change |
+|------|--------|
+| Empty OpenCode replies | `coalesce_content_and_reasoning` — promote `reasoning` → `content` when content empty (`openrouter.rs`) |
+| Stream column width | Assistant/streaming bubbles `width: 100%` / `max-width: 860px` (no shrink-to-fit) |
+| Stream chrome | Toolbar (status + Stop), min-height, caret; thoughts shown as body when no content yet |
+| Formatting | `formatChatText` — newlines, `**bold**`, `` `code` ``, fenced blocks, headings/lists for stream + final |
+| Settings LLM | OpenCode Zen/Go provider + key + models (prior commit `30b93a3`) |
+
+### Verify
+
+- `cargo test chat::openrouter::tests::` coalesce tests
+- vitest ChatView + formatChatText
 
 ---
 
