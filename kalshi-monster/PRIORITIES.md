@@ -2,6 +2,12 @@
 
 Last updated: 2026-07-10
 
+## Maintenance notes (2026-07-10, cron) — Analyst settlement gates + web evidence
+
+- Committed interrupted WIP: `market_gate`, `web_context`, decision enforcement, `brave_api_key`, `paperFromChat` tests.
+- Health: `cargo check`, `tsc`, 195 lib tests, 37 vitest green.
+- **Next (per progress doc):** reliability diagram on Calibration tab; `live_orders_allowed` on order path.
+
 ## Maintenance notes (2026-07-10, cron) — Phase 3 breaker persistence
 
 - SQLite `breaker_state` + `evaluate_and_persist_breakers`; Tauri IPC + Calibration tab §6.4 panel.

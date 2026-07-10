@@ -20,6 +20,17 @@ Tracks execution of `docs/fincept-integration-plan.md` (v2.1). Newest entry firs
 
 ---
 
+## 2026-07-10 — Analyst tape gates + gated web evidence (cron)
+
+- **`chat/market_gate.rs`:** Deterministic OPEN / CLOSED / SETTLED from tape fields + ticker date parsing; forces PASS on terminal markets.
+- **`chat/web_context.rs`:** DuckDuckGo (or Brave when keyed) snippets only when primary market gate is OPEN — no web on settled contracts.
+- **`decision_schema` / `kalshi_context`:** GATE lines in context + post-parse enforcement on analyst JSON decisions.
+- **Settings:** `brave_api_key` in config + UI for web provider.
+- **`paperFromChat`:** Stronger stake/verdict extraction + tests.
+- **Tests:** Calibration vitest mocks `evaluateBreakers`; `cargo test` 195 lib + vitest 37 green.
+
+---
+
 ## 2026-07-10 — Phase 3 breaker persistence + Calibration UI (cron)
 
 - **`edge_engine/persistence.rs`:** `breaker_state` table; load/save latches; `evaluate_and_persist_breakers` from paper drawdown/daily loss + forecast rolling degradation.
