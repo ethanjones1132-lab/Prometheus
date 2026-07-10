@@ -319,14 +319,20 @@ export function ChatView({
 
           {isStreaming && (
             <div className="messageBubble assistantBubble streamingBubble">
-              {streamingThought && (
+              {streamingThought && streamingText && (
                 <details className="reasoning" open>
                   <summary>Reasoning stream</summary>
                   <p>{streamingThought}</p>
                 </details>
               )}
               <div className="messageContent">
-                {streamingText || <span className="streamingDots" aria-label="Streaming">Analyzing…</span>}
+                {streamingText ||
+                  streamingThought ||
+                  (
+                    <span className="streamingDots" aria-label="Streaming">
+                      Analyzing…
+                    </span>
+                  )}
               </div>
               <button type="button" className="ghostBtn" onClick={cancelStream}>
                 Stop
@@ -405,17 +411,25 @@ function MessageBubble({
   paperBusy?: boolean;
 }) {
   const isUser = message.role === 'user';
-  const canPaper = !isUser && onRecordPaper && extractPaperDecision(message.content) != null;
+  // Some models (OpenCode free/thinking) return only reasoning — never hide that.
+  const body = (message.content || '').trim() || (message.reasoning || '').trim();
+  const hasSeparateReasoning =
+    Boolean(message.reasoning?.trim()) && Boolean(message.content?.trim());
+  const canPaper = !isUser && onRecordPaper && extractPaperDecision(body) != null;
 
   return (
     <div className={`messageBubble ${isUser ? 'userBubble' : 'assistantBubble'}`}>
-      {message.reasoning && (
+      {hasSeparateReasoning && (
         <details className="reasoning">
           <summary>Reasoning</summary>
           <p>{message.reasoning}</p>
         </details>
       )}
-      <div className="messageContent">{message.content}</div>
+      <div className="messageContent">
+        {body || (
+          <span className="muted">(Empty model response — try another model in Settings.)</span>
+        )}
+      </div>
       <div className="messageMeta">
         {message.tokens_used != null && <span className="muted">{message.tokens_used} tokens</span>}
         {canPaper && (

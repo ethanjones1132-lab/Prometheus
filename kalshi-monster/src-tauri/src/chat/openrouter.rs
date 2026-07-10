@@ -92,6 +92,37 @@ fn model_supports_reasoning(model: &str) -> bool {
         || m.contains("gemini-2.5")
 }
 
+/// Some gateways (OpenCode Zen free/thinking models) stream only into
+/// `delta.reasoning` / `reasoning_content` and leave `delta.content` empty.
+/// Without this, Analyst stores an empty assistant bubble that looks blank.
+fn coalesce_content_and_reasoning(
+    content: String,
+    reasoning: Option<String>,
+) -> (String, Option<String>) {
+    if !content.trim().is_empty() {
+        return (content, reasoning);
+    }
+    match reasoning {
+        Some(r) if !r.trim().is_empty() => {
+            tracing::info!(
+                "LLM returned empty content with {} chars of reasoning — promoting reasoning to content",
+                r.len()
+            );
+            (r, None)
+        }
+        other => (content, other),
+    }
+}
+
+/// OpenRouter-only `reasoning` request extension; other gateways may ignore or
+/// mishandle it. Keep content-path clean for OpenCode Zen/Go.
+fn should_send_reasoning_request(config: &AppConfig, model: &str) -> bool {
+    matches!(
+        config.llm_provider_enum(),
+        crate::config::LlmProvider::Openrouter
+    ) && model_supports_reasoning(model)
+}
+
 async fn process_stream_line(
     line: &str,
     tx: &mpsc::Sender<String>,
@@ -286,7 +317,7 @@ pub async fn send_message(
         max_tokens: Some(4096),
         temperature: Some(0.3),
         stream: false,
-        reasoning: if model_supports_reasoning(&model_id) {
+        reasoning: if should_send_reasoning_request(config, &model_id) {
             Some(OpenRouterRequestReasoning {
                 effort: Some("high".to_string()),
                 exclude: Some(false),
@@ -331,14 +362,24 @@ pub async fn send_message(
         .await
         .map_err(|e| format!("Failed to parse response: {}", e))?;
 
+    // content may be string or (rarely) null while reasoning holds the text
     let content = json
         .get("choices")
         .and_then(|c| c.get(0))
         .and_then(|c| c.get("message"))
         .and_then(|m| m.get("content"))
-        .and_then(|c| c.as_str())
-        .ok_or("No content in response")?
-        .to_string();
+        .and_then(|c| {
+            c.as_str()
+                .map(|s| s.to_string())
+                .or_else(|| c.as_array().map(|parts| {
+                    parts
+                        .iter()
+                        .filter_map(|p| p.get("text").and_then(|t| t.as_str()))
+                        .collect::<Vec<_>>()
+                        .join("")
+                }))
+        })
+        .unwrap_or_default();
 
     let reasoning = json
         .get("choices")
@@ -350,6 +391,14 @@ pub async fn send_message(
         })
         .and_then(|r| r.as_str())
         .map(|r| r.to_string());
+
+    let (content, reasoning) = coalesce_content_and_reasoning(content, reasoning);
+    if content.trim().is_empty() {
+        return Err(
+            "Model returned an empty response (no content or reasoning). Try another model or provider."
+                .into(),
+        );
+    }
 
     let usage = json.get("usage");
     let tokens_used = usage
@@ -617,7 +666,7 @@ pub async fn stream_message(
         max_tokens: Some(4096),
         temperature: Some(0.3),
         stream: true,
-        reasoning: if model_supports_reasoning(&model_id) {
+        reasoning: if should_send_reasoning_request(config, &model_id) {
             Some(OpenRouterRequestReasoning {
                 effort: Some("high".to_string()),
                 exclude: Some(false),
@@ -725,7 +774,25 @@ pub async fn stream_message(
         tokens_used = Some((full_content.len() / 4) as u64);
     }
 
-    let reasoning_val = if full_reasoning.is_empty() { None } else { Some(full_reasoning) };
+    let reasoning_val = if full_reasoning.is_empty() {
+        None
+    } else {
+        Some(full_reasoning)
+    };
+    let (full_content, reasoning_val) =
+        coalesce_content_and_reasoning(full_content, reasoning_val);
+
+    if full_content.trim().is_empty() {
+        let msg = "Model returned an empty streamed response (no content or reasoning). Try another model.";
+        let _ = tx.send(format!("__STREAM_ERROR__:{msg}")).await;
+        return Err(msg.into());
+    }
+
+    // If we only had reasoning during stream, push the promoted body so the UI
+    // doesn't flash empty before history reload.
+    if chunk_count == 0 {
+        let _ = tx.send(full_content.clone()).await;
+    }
 
     Ok(OpenRouterResponse {
         content: full_content,
@@ -779,7 +846,7 @@ pub async fn send_message_with_context(
         max_tokens: Some(4096),
         temperature: Some(0.3),
         stream: false,
-        reasoning: if model_supports_reasoning(&model_id) {
+        reasoning: if should_send_reasoning_request(config, &model_id) {
             Some(OpenRouterRequestReasoning {
                 effort: Some("high".to_string()),
                 exclude: Some(false),
@@ -824,18 +891,55 @@ pub async fn send_message_with_context(
         .and_then(|c| c.get("message"))
         .and_then(|m| m.get("content"))
         .and_then(|c| c.as_str())
-        .ok_or("No content in response")?
+        .unwrap_or("")
         .to_string();
+    let reasoning = json
+        .get("choices")
+        .and_then(|c| c.get(0))
+        .and_then(|c| c.get("message"))
+        .and_then(|m| m.get("reasoning").or_else(|| m.get("reasoning_content")))
+        .and_then(|r| r.as_str())
+        .map(|r| r.to_string());
+    let (content, reasoning) = coalesce_content_and_reasoning(content, reasoning);
+    if content.trim().is_empty() {
+        return Err("Model returned an empty response (no content or reasoning).".into());
+    }
 
     let usage = json.get("usage");
     let tokens_used = usage.and_then(|u| u.get("total_tokens")).and_then(|t| t.as_u64());
 
     Ok(OpenRouterResponse {
         content,
-        reasoning: None,
+        reasoning,
         tokens_used,
         model: model_id,
     })
 }
 
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn coalesce_promotes_reasoning_when_content_empty() {
+        let (c, r) = coalesce_content_and_reasoning(String::new(), Some("thinking hard".into()));
+        assert_eq!(c, "thinking hard");
+        assert!(r.is_none());
+    }
+
+    #[test]
+    fn coalesce_keeps_content_when_present() {
+        let (c, r) = coalesce_content_and_reasoning("hello".into(), Some("secret thoughts".into()));
+        assert_eq!(c, "hello");
+        assert_eq!(r.as_deref(), Some("secret thoughts"));
+    }
+
+    #[test]
+    fn coalesce_empty_both_stays_empty() {
+        let (c, r) = coalesce_content_and_reasoning("   ".into(), Some("  ".into()));
+        assert_eq!(c.trim(), "");
+        assert!(r.is_some());
+    }
+}

@@ -17,6 +17,8 @@ export function useChat() {
   const sessionIdRef = useRef<string | null>(null);
   const streamUnsubsRef = useRef<UnlistenFn[]>([]);
   const streamAbortRef = useRef(false);
+  const streamingTextRef = useRef('');
+  const streamingThoughtRef = useRef('');
 
   const refreshKalshiContextStatus = useCallback(async () => {
     try {
@@ -124,6 +126,8 @@ export function useChat() {
       };
       setMessages((prev) => [...prev, userMsg]);
       setIsStreaming(true);
+      streamingTextRef.current = '';
+      streamingThoughtRef.current = '';
       setStreamingText('');
       setStreamingThought('');
       setError(null);
@@ -133,11 +137,15 @@ export function useChat() {
 
       const onChunk = (chunk: string) => {
         if (streamAbortRef.current) return;
-        setStreamingText((prev) => prev + chunk);
+        streamingTextRef.current += chunk;
+        setStreamingText(streamingTextRef.current);
       };
       const onThought = (thought: string) => {
         if (streamAbortRef.current) return;
-        setStreamingThought((prev) => (prev ? `${prev}\n${thought}` : thought));
+        streamingThoughtRef.current = streamingThoughtRef.current
+          ? `${streamingThoughtRef.current}\n${thought}`
+          : thought;
+        setStreamingThought(streamingThoughtRef.current);
       };
 
       try {
@@ -167,7 +175,22 @@ export function useChat() {
 
         if (!streamAbortRef.current) {
           const history = await chatApi.getHistory(sid);
+          // If history has an empty assistant tail but we streamed text/thoughts,
+          // keep the streamed body so the UI never flashes blank.
+          const streamedBody = streamingTextRef.current || streamingThoughtRef.current;
+          if (history.length > 0) {
+            const last = history[history.length - 1];
+            const emptyAssistant =
+              last?.role === 'assistant' &&
+              !(last.content || '').trim() &&
+              !(last.reasoning || '').trim();
+            if (emptyAssistant && streamedBody) {
+              history[history.length - 1] = { ...last, content: streamedBody };
+            }
+          }
           setMessages(history);
+          streamingTextRef.current = '';
+          streamingThoughtRef.current = '';
           setStreamingText('');
           setStreamingThought('');
         }
