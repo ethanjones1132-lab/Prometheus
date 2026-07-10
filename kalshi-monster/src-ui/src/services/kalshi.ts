@@ -9,6 +9,7 @@ import type {
   CalibrationStatus,
   EdgeAnalysisResult,
   ForecastCalibrationReport,
+  BreakerDecision,
   PaperAccount,
   PaperAnalytics,
   PaperPosition,
@@ -91,6 +92,11 @@ export const kalshiApi = {
 
   getForecastCalibrationReport: () =>
     invoke<ForecastCalibrationReport>('kalshi_get_forecast_calibration_report'),
+
+  evaluateBreakers: () => invoke<BreakerDecision>('kalshi_evaluate_breakers'),
+
+  manualReenableBreaker: () =>
+    invoke<BreakerDecision['state']>('kalshi_manual_reenable_breaker'),
 
   getPriceHistory: (ticker: string, limit?: number) =>
     invoke<KalshiPriceHistory>('kalshi_get_price_history', { ticker, limit: limit ?? 200 }),

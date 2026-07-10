@@ -3116,7 +3116,46 @@ pub async fn get_fincept_market_tracker(
     bridge.get_json(&path).await
 }
 
-#[cfg(test)]
+// ════════════════════════════════════════════════════════════════════════════════
+// Breaker State Commands (Phase 3 productization)
+// ════════════════════════════════════════════════════════════════════════════════
+
+/// Get the current circuit breaker state (Phase 3, plan §6.4 breaker latches).
+/// Returns the persisted breaker latch state: stake scaling active, live trading disabled,
+/// and paper-mode forced flags.  The caller re-evaluates the full [`BreakerDecision`]
+/// each tick with fresh inputs; this command only returns the latched portion.
+#[tauri::command]
+pub async fn kalshi_get_breaker_state(
+    db_pool: State<'_, Pool<Sqlite>>,
+) -> Result<crate::edge_engine::breakers::BreakerState, String> {
+    crate::edge_engine::persistence::load_breaker_state(&db_pool).await
+}
+
+/// Manual re-enable of the 25% drawdown breaker (plan §6.4 row 3).
+/// Clears the `live_trading_disabled` latch so live orders can resume on the
+/// next evaluation pass.  If the drawdown is still ≥ 25%, the breaker
+/// re-latches immediately on the next call to [`evaluate_breakers`].
+///
+/// Persists the cleared state and returns the updated [`BreakerState`].
+#[tauri::command]
+pub async fn kalshi_manual_reenable_breaker(
+    db_pool: State<'_, Pool<Sqlite>>,
+) -> Result<crate::edge_engine::breakers::BreakerState, String> {
+    let current = crate::edge_engine::persistence::load_breaker_state(&db_pool).await?;
+    let cleared = current.manual_reenable();
+    crate::edge_engine::persistence::save_breaker_state(&db_pool, &cleared).await?;
+    tracing::info!("[Kalshi] breaker manually re-enabled (live_trading_disabled cleared)");
+    Ok(cleared)
+}
+
+/// Run one §6.4 breaker evaluation from live paper + calibration inputs; persists latches.
+#[tauri::command]
+pub async fn kalshi_evaluate_breakers(
+    db_pool: State<'_, Pool<Sqlite>>,
+) -> Result<crate::edge_engine::breakers::BreakerDecision, String> {
+    crate::edge_engine::persistence::evaluate_and_persist_breakers(&db_pool).await
+}
+
 mod kalshi_dashboard_bootstrap_tests {
     use super::build_kalshi_dashboard_data_quality_notes;
 

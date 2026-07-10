@@ -62,6 +62,22 @@ export interface ForecastCalibrationReport {
   paper_pnl: number | null;
 }
 
+/** §6.4 circuit breaker latch state (persisted). */
+export interface BreakerState {
+  stake_scaling_active: boolean;
+  live_trading_disabled: boolean;
+  paper_mode_forced: boolean;
+}
+
+/** Outcome of one breaker evaluation tick. */
+export interface BreakerDecision {
+  state: BreakerState;
+  live_orders_allowed: boolean;
+  paper_only: boolean;
+  stake_multiplier: number;
+  reasons: string[];
+}
+
 export interface MLPhase3DashboardSummary {
   trainable_non_sports_categories: number;
   non_sports_sidecar_target: number;

@@ -6,6 +6,30 @@ Tracks execution of `docs/fincept-integration-plan.md` (v2.1). Newest entry firs
 
 ---
 
+## Current next steps (reconciled 2026-07-10, post breaker persistence)
+
+| # | Item | Why | Notes / acceptance |
+|---|---|------|---------------------|
+| **1** | ~~**KB-1 live verify**~~ | Done (catalog path) | Code + public API verified; release binary rebuilt. |
+| **2** | **Calibration flywheel (ongoing)** | Gate needs *resolved* rows | Pending forecasts in ledger; resolve as Kalshi settles. Gate LOCKED until ≥200 resolved + Brier + paper P&L. |
+| **3** | ~~**KB-2 Analyst UX**~~ | Shipped | Sessions, stream, paper, OpenCode providers, completion + retrieval fixes. |
+| **4** | **Phase 3 productization** | Math exists; ops path advancing | ✅ Breaker SQLite persistence + IPC (`kalshi_get_breaker_state`, `kalshi_manual_reenable_breaker`, `kalshi_evaluate_breakers`); Calibration tab shows §6.4 status. **Next:** reliability diagram UI; wire `live_orders_allowed` on order path; λ re-fit UI. |
+| **5** | **Phase 1 leftovers** | Sidecar ops / data breadth | Settings UI for bridge start/status; expand tracker; `externalBin` packaging. |
+| **6** | **More agents (honest data only)** | p_model coverage | Fincept spike or native agents only with real data. |
+| **7** | **AGPL isolation hygiene** | Plan §3 Rule 1 | Split `fincept-sidecar` public repo before Fincept-derived code. |
+
+---
+
+## 2026-07-10 — Phase 3 breaker persistence + Calibration UI (cron)
+
+- **`edge_engine/persistence.rs`:** `breaker_state` table; load/save latches; `evaluate_and_persist_breakers` from paper drawdown/daily loss + forecast rolling degradation.
+- **IPC:** `kalshi_get_breaker_state`, `kalshi_manual_reenable_breaker`, `kalshi_evaluate_breakers`; startup `init_breaker_table` in `lib.rs`.
+- **Paper inputs:** `current_drawdown_fraction`, `daily_realized_loss_fraction` for §6.4 inputs.
+- **UI:** Calibration tab evaluates breakers on refresh; manual re-enable when 25% latch tripped.
+- **Auto-remediation:** Committed prior interrupted pass WIP; removed one-off `scripts/*breaker*.py` helpers.
+
+---
+
 ## Current next steps (reconciled 2026-07-10, post completion + retrieval fixes)
 
 ---

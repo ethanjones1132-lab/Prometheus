@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { finceptApi } from '../services/tauri';
 import { kalshiApi } from '../services/kalshi';
-import type { EdgeAnalysisResult, ForecastCalibrationReport } from '../types/kalshi';
+import type { EdgeAnalysisResult, ForecastCalibrationReport, BreakerDecision } from '../types/kalshi';
 
 function pct(p: number | null | undefined): string {
   if (p == null || !Number.isFinite(p)) return '—';
@@ -29,17 +29,20 @@ export function CalibrationView() {
   const [actionBusy, setActionBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [breakers, setBreakers] = useState<BreakerDecision | null>(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const [rep, st] = await Promise.all([
+      const [rep, st, br] = await Promise.all([
         kalshiApi.getForecastCalibrationReport(),
         finceptApi.getBridgeStatus().catch(() => null),
+        kalshiApi.evaluateBreakers().catch(() => null),
       ]);
       setReport(rep);
       if (st) setBridge(st);
+      if (br) setBreakers(br);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -129,6 +132,49 @@ export function CalibrationView() {
         </p>
       )}
       {message && <p className="muted">{message}</p>}
+
+      {breakers && (
+        <div className="insightCard" style={{ marginBottom: '1rem' }} aria-label="Circuit breakers">
+          <span>Circuit breakers (§6.4)</span>
+          <strong className={breakers.live_orders_allowed ? 'pos' : 'neg'}>
+            {breakers.live_orders_allowed ? 'Live orders allowed' : 'Live orders blocked'}
+          </strong>
+          <p className="muted">
+            Stake multiplier {breakers.stake_multiplier.toFixed(2)}
+            {breakers.paper_only ? ' · paper-only demotion active' : ''}
+          </p>
+          {breakers.reasons.length > 0 && (
+            <ul className="muted" style={{ margin: '0.5rem 0 0', paddingLeft: '1.25rem' }}>
+              {breakers.reasons.map((r) => (
+                <li key={r}>{r}</li>
+              ))}
+            </ul>
+          )}
+          {breakers.state.live_trading_disabled && (
+            <button
+              type="button"
+              className="secondaryButton"
+              style={{ marginTop: '0.75rem' }}
+              disabled={actionBusy === 'breaker'}
+              onClick={() => void (async () => {
+                setActionBusy('breaker');
+                try {
+                  await kalshiApi.manualReenableBreaker();
+                  const br = await kalshiApi.evaluateBreakers();
+                  setBreakers(br);
+                  setMessage('Manual re-enable applied — breakers re-evaluated.');
+                } catch (e) {
+                  setError(e instanceof Error ? e.message : String(e));
+                } finally {
+                  setActionBusy(null);
+                }
+              })()}
+            >
+              {actionBusy === 'breaker' ? 'Working…' : 'Manual re-enable live trading'}
+            </button>
+          )}
+        </div>
+      )}
 
       <div className="mechanicsGrid" style={{ marginBottom: '1rem' }}>
         <div>

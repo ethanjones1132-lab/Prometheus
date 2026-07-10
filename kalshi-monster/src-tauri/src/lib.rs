@@ -78,18 +78,25 @@ pub fn run() {
     });
 
     // Initialize paper-trading journal tables
-        rt.block_on(async {
-            if let Err(e) = paper::init_paper_tables(&db_pool).await {
-                tracing::warn!("Failed to init paper tables: {e}");
-            }
-        });
+    rt.block_on(async {
+        if let Err(e) = paper::init_paper_tables(&db_pool).await {
+            tracing::warn!("Failed to init paper tables: {e}");
+        }
+    });
 
-        // Initialize forecast ledger table
-        rt.block_on(async {
-            if let Err(e) = kalshi::forecast::init_forecast_table(&db_pool).await {
-                tracing::warn!("Failed to init forecast table: {e}");
-            }
-        });
+    // Initialize forecast ledger table
+    rt.block_on(async {
+        if let Err(e) = kalshi::forecast::init_forecast_table(&db_pool).await {
+            tracing::warn!("Failed to init forecast table: {e}");
+        }
+    });
+
+    // Initialize breaker-state persistence (Phase 3 breaker latches)
+    rt.block_on(async {
+        if let Err(e) = edge_engine::persistence::init_breaker_table(&db_pool).await {
+            tracing::warn!("Failed to init breaker state table: {e}");
+        }
+    });
 
     // Initialize prediction tracker (migrates JSON data on first run)
     let prediction_tracker = rt.block_on(async {
@@ -377,6 +384,10 @@ pub fn run() {
             commands::fincept_bridge_start_dev,
             commands::fincept_bridge_stop,
             commands::get_fincept_market_tracker,
+            // Breaker state (Phase 3 productization)
+            commands::kalshi_get_breaker_state,
+            commands::kalshi_manual_reenable_breaker,
+            commands::kalshi_evaluate_breakers,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

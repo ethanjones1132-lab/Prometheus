@@ -938,6 +938,49 @@ pub fn normalize_entry_cents(price: f64) -> f64 {
     }
 }
 
+/// Current drawdown from equity high-water mark as a fraction (0..1).
+pub async fn current_drawdown_fraction(pool: &Pool<Sqlite>) -> Result<f64, String> {
+    let rows = sqlx::query("SELECT equity_dollars FROM paper_equity_snapshots ORDER BY ts ASC")
+        .fetch_all(pool)
+        .await
+        .map_err(|e| format!("Failed to fetch equity snapshots: {e}"))?;
+    if rows.is_empty() {
+        return Ok(0.0);
+    }
+    let mut peak = 0.0f64;
+    for row in &rows {
+        let eq: f64 = row.get("equity_dollars");
+        if eq > peak {
+            peak = eq;
+        }
+    }
+    let last: f64 = rows.last().unwrap().get("equity_dollars");
+    if peak <= 0.0 {
+        return Ok(0.0);
+    }
+    Ok(((peak - last) / peak).max(0.0))
+}
+
+/// Realized loss today as a fraction of deposits (positive = loss day).
+pub async fn daily_realized_loss_fraction(pool: &Pool<Sqlite>) -> Result<f64, String> {
+    let account = get_account(pool).await?;
+    let base = account.total_deposits.max(1.0);
+    let today = Utc::now().format("%Y-%m-%d").to_string();
+    let row = sqlx::query(
+        "SELECT COALESCE(SUM(realized_pnl), 0) AS pnl FROM paper_lots WHERE closed_at IS NOT NULL AND closed_at LIKE ?1 || '%'",
+    )
+    .bind(&today)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| format!("Failed to sum daily paper PnL: {e}"))?;
+    let pnl: f64 = row.get("pnl");
+    if pnl >= 0.0 {
+        Ok(0.0)
+    } else {
+        Ok((-pnl / base).max(0.0))
+    }
+}
+
 // ═══════════════════════════════════════════════════════════════
 // Tests
 // ═══════════════════════════════════════════════════════════════
