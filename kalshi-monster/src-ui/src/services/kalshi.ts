@@ -10,6 +10,7 @@ import type {
   EdgeAnalysisResult,
   ForecastCalibrationReport,
   BreakerDecision,
+  LiveOrderEligibility,
   PaperAccount,
   PaperAnalytics,
   PaperPosition,
@@ -94,6 +95,11 @@ export const kalshiApi = {
     invoke<ForecastCalibrationReport>('kalshi_get_forecast_calibration_report'),
 
   evaluateBreakers: () => invoke<BreakerDecision>('kalshi_evaluate_breakers'),
+
+  getLiveOrderEligibility: () =>
+    invoke<LiveOrderEligibility>('kalshi_get_live_order_eligibility'),
+
+  guardLiveOrderPath: () => invoke<void>('kalshi_guard_live_order_path'),
 
   manualReenableBreaker: () =>
     invoke<BreakerDecision['state']>('kalshi_manual_reenable_breaker'),

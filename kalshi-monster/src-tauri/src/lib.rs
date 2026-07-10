@@ -388,6 +388,8 @@ pub fn run() {
             commands::kalshi_get_breaker_state,
             commands::kalshi_manual_reenable_breaker,
             commands::kalshi_evaluate_breakers,
+            commands::kalshi_get_live_order_eligibility,
+            commands::kalshi_guard_live_order_path,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

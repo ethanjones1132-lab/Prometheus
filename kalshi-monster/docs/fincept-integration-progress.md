@@ -6,17 +6,26 @@ Tracks execution of `docs/fincept-integration-plan.md` (v2.1). Newest entry firs
 
 ---
 
-## Current next steps (reconciled 2026-07-10, post breaker persistence)
+## Current next steps (reconciled 2026-07-10, post reliability + live-order guard)
 
 | # | Item | Why | Notes / acceptance |
 |---|---|------|---------------------|
 | **1** | ~~**KB-1 live verify**~~ | Done (catalog path) | Code + public API verified; release binary rebuilt. |
 | **2** | **Calibration flywheel (ongoing)** | Gate needs *resolved* rows | Pending forecasts in ledger; resolve as Kalshi settles. Gate LOCKED until ≥200 resolved + Brier + paper P&L. |
 | **3** | ~~**KB-2 Analyst UX**~~ | Shipped | Sessions, stream, paper, OpenCode providers, completion + retrieval fixes. |
-| **4** | **Phase 3 productization** | Math exists; ops path advancing | ✅ Breaker SQLite persistence + IPC (`kalshi_get_breaker_state`, `kalshi_manual_reenable_breaker`, `kalshi_evaluate_breakers`); Calibration tab shows §6.4 status. **Next:** reliability diagram UI; wire `live_orders_allowed` on order path; λ re-fit UI. |
+| **4** | **Phase 3 productization** | Math exists; ops path advancing | ✅ Breaker persistence; ✅ reliability buckets in forecast report + Calibration SVG diagram; ✅ `execution_guard` + `kalshi_get_live_order_eligibility` / `kalshi_guard_live_order_path` (Phase 5 `place_order` calls `guard_live_order_path`). **Next:** λ re-fit UI; stake_multiplier on paper path. |
 | **5** | **Phase 1 leftovers** | Sidecar ops / data breadth | Settings UI for bridge start/status; expand tracker; `externalBin` packaging. |
 | **6** | **More agents (honest data only)** | p_model coverage | Fincept spike or native agents only with real data. |
 | **7** | **AGPL isolation hygiene** | Plan §3 Rule 1 | Split `fincept-sidecar` public repo before Fincept-derived code. |
+
+---
+
+## 2026-07-10 — Reliability diagram + §6.5 live-order guard (cron)
+
+- **`edge_engine/execution_guard.rs`:** `LiveOrderEligibility`, `evaluate_live_order_eligibility`, `assert_live_order_allowed`; unit tests.
+- **`commands/mod.rs`:** `reliability_final` / `reliability_market` on `ForecastCalibrationReport`; `load_live_order_eligibility`, `guard_live_order_path`, IPC `kalshi_get_live_order_eligibility`, `kalshi_guard_live_order_path`.
+- **UI:** `ReliabilityDiagram.tsx` on Calibration tab; types + `kalshiApi` helpers.
+- **Tests:** `execution_guard` 3/3; Calibration vitest 2/2; `cargo check` + `tsc` green.
 
 ---
 

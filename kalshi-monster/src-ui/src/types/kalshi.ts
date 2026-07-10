@@ -60,6 +60,21 @@ export interface ForecastCalibrationReport {
   gate_passed: boolean;
   gate_reasons: string[];
   paper_pnl: number | null;
+  reliability_final: ReliabilityBucket[];
+  reliability_market: ReliabilityBucket[];
+}
+
+export interface ReliabilityBucket {
+  predicted_mean: number;
+  observed_freq: number;
+  count: number;
+}
+
+export interface LiveOrderEligibility {
+  allowed: boolean;
+  calibration_gate_passed: boolean;
+  breakers_live_orders_allowed: boolean;
+  reasons: string[];
 }
 
 /** §6.4 circuit breaker latch state (persisted). */

@@ -2027,6 +2027,10 @@ pub struct ForecastCalibrationReport {
     pub gate_passed: bool,
     pub gate_reasons: Vec<String>,
     pub paper_pnl: Option<f64>,
+    /// 10-bucket reliability diagram for p_final (empty when no resolved rows).
+    pub reliability_final: Vec<crate::edge_engine::calibration::ReliabilityBucket>,
+    /// Same buckets using p_market for comparison.
+    pub reliability_market: Vec<crate::edge_engine::calibration::ReliabilityBucket>,
 }
 
 #[tauri::command]
@@ -2051,6 +2055,19 @@ pub async fn kalshi_get_forecast_calibration_report(
         &crate::edge_engine::calibration::GateConfig::default(),
     );
 
+    let pairs_final: Vec<(f64, bool)> = resolved
+        .iter()
+        .map(|r| (r.p_final, r.outcome))
+        .collect();
+    let pairs_market: Vec<(f64, bool)> = resolved
+        .iter()
+        .map(|r| (r.p_market, r.outcome))
+        .collect();
+    let reliability_final =
+        crate::edge_engine::calibration::reliability_diagram(&pairs_final, 10);
+    let reliability_market =
+        crate::edge_engine::calibration::reliability_diagram(&pairs_market, 10);
+
     Ok(ForecastCalibrationReport {
         resolved_count,
         unresolved_count,
@@ -2064,6 +2081,8 @@ pub async fn kalshi_get_forecast_calibration_report(
         gate_passed: gate.passed,
         gate_reasons: gate.conditions,
         paper_pnl,
+        reliability_final,
+        reliability_market,
     })
 }
 
@@ -3225,6 +3244,50 @@ pub async fn kalshi_evaluate_breakers(
     db_pool: State<'_, Pool<Sqlite>>,
 ) -> Result<crate::edge_engine::breakers::BreakerDecision, String> {
     crate::edge_engine::persistence::evaluate_and_persist_breakers(&db_pool).await
+}
+
+/// Load gate + breaker state and return combined live-order eligibility (§6.5).
+pub async fn load_live_order_eligibility(
+    db_pool: &Pool<Sqlite>,
+) -> Result<crate::edge_engine::execution_guard::LiveOrderEligibility, String> {
+    let resolved = crate::kalshi::forecast::resolved_forecasts_for_calibration(db_pool).await?;
+    let paper_pnl = crate::paper::get_analytics(db_pool, None)
+        .await
+        .ok()
+        .map(|a| a.realized_pnl)
+        .unwrap_or(0.0);
+    let gate = crate::edge_engine::calibration::evaluate_gate(
+        &resolved,
+        paper_pnl,
+        &crate::edge_engine::calibration::GateConfig::default(),
+    );
+    let breakers = crate::edge_engine::persistence::evaluate_and_persist_breakers(db_pool).await?;
+    Ok(crate::edge_engine::execution_guard::evaluate_live_order_eligibility(
+        gate.passed,
+        &gate.conditions,
+        &breakers,
+    ))
+}
+
+/// §6.5 order-path guard — Phase 5 `place_order` must call this before any live fill.
+pub async fn guard_live_order_path(db_pool: &Pool<Sqlite>) -> Result<(), String> {
+    let eligibility = load_live_order_eligibility(db_pool).await?;
+    crate::edge_engine::execution_guard::assert_live_order_allowed(&eligibility)
+}
+
+#[tauri::command]
+pub async fn kalshi_get_live_order_eligibility(
+    db_pool: State<'_, Pool<Sqlite>>,
+) -> Result<crate::edge_engine::execution_guard::LiveOrderEligibility, String> {
+    load_live_order_eligibility(&db_pool).await
+}
+
+/// Phase 5 placeholder: proves the live order path consults §6.5 before any API call.
+#[tauri::command]
+pub async fn kalshi_guard_live_order_path(
+    db_pool: State<'_, Pool<Sqlite>>,
+) -> Result<(), String> {
+    guard_live_order_path(&db_pool).await
 }
 
 mod kalshi_dashboard_bootstrap_tests {

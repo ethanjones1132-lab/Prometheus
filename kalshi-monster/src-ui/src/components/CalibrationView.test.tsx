@@ -49,6 +49,14 @@ describe('CalibrationView', () => {
         'paper P&L after fees -1.00 > 0: NOT met',
       ],
       paper_pnl: -1,
+      reliability_final: [
+        { predicted_mean: 0.15, observed_freq: 0.2, count: 5 },
+        { predicted_mean: 0.55, observed_freq: 0.5, count: 3 },
+      ],
+      reliability_market: [
+        { predicted_mean: 0.15, observed_freq: 0.18, count: 5 },
+        { predicted_mean: 0.55, observed_freq: 0.52, count: 3 },
+      ],
     });
     vi.mocked(finceptApi.getBridgeStatus).mockResolvedValue({
       online: true,
@@ -86,6 +94,7 @@ describe('CalibrationView', () => {
     expect(screen.getByText('0.2100')).toBeInTheDocument();
     expect(screen.getByText('0.1900')).toBeInTheDocument();
     expect(screen.getByText(/Online/)).toBeInTheDocument();
+    expect(screen.getByLabelText('p_final vs outcomes reliability chart')).toBeInTheDocument();
   });
 
   test('analyze top logs batch into table', async () => {

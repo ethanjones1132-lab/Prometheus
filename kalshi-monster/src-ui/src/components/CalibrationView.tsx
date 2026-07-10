@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { finceptApi } from '../services/tauri';
 import { kalshiApi } from '../services/kalshi';
 import type { EdgeAnalysisResult, ForecastCalibrationReport, BreakerDecision } from '../types/kalshi';
+import { ReliabilityDiagram } from './ReliabilityDiagram';
 
 function pct(p: number | null | undefined): string {
   if (p == null || !Number.isFinite(p)) return '—';
@@ -255,6 +256,21 @@ export function CalibrationView() {
             ))}
           </ul>
         )}
+      </section>
+
+      <section className="modalSection" aria-label="Reliability diagram">
+        <h4>Reliability (resolved forecasts)</h4>
+        <p className="muted" style={{ marginBottom: '0.75rem' }}>
+          Predicted probability vs observed Yes rate per bucket. Points on the diagonal are well calibrated.
+        </p>
+        <div style={{ display: 'grid', gap: '1rem', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))' }}>
+          <ReliabilityDiagram
+            title="p_final vs outcomes"
+            buckets={report?.reliability_final ?? []}
+            compareBuckets={report?.reliability_market}
+            compareLabel="p_market"
+          />
+        </div>
       </section>
 
       <section className="modalSection">
