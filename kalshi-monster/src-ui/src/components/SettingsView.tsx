@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { kalshiApi } from '../services/kalshi';
 import { bankrollApi, configApi, mlApi, notificationApi } from '../services/tauri';
 import type {
   ApiStatus,
@@ -98,6 +99,10 @@ export function SettingsView() {
   const [mlTrainMessage, setMlTrainMessage] = useState<string | null>(null);
   const [notificationSettings, setNotificationSettings] =
     useState<NotificationSettings>(DEFAULT_NOTIFICATION_SETTINGS);
+  const [edgeLambdaInput, setEdgeLambdaInput] = useState('0.25');
+  const [edgeSaving, setEdgeSaving] = useState(false);
+  const [edgeMessage, setEdgeMessage] = useState<string | null>(null);
+  const [edgeError, setEdgeError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [bankrollLoading, setBankrollLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -139,6 +144,37 @@ export function SettingsView() {
       setLoading(false);
     }
   }, []);
+
+  const loadEdgeConfig = useCallback(async () => {
+    setEdgeError(null);
+    try {
+      const cfg = await kalshiApi.getEdgeConfig();
+      setEdgeLambdaInput(cfg.shrinkage_lambda.toFixed(3));
+    } catch (e) {
+      setEdgeError(e instanceof Error ? e.message : String(e));
+    }
+  }, []);
+
+  const handleSaveEdgeLambda = async () => {
+    setEdgeSaving(true);
+    setEdgeMessage(null);
+    setEdgeError(null);
+    try {
+      const parsed = Number(edgeLambdaInput);
+      if (!Number.isFinite(parsed)) {
+        throw new Error('Enter a valid number between 0 and 1.');
+      }
+      const saved = await kalshiApi.setShrinkageLambda(parsed);
+      setEdgeLambdaInput(saved.shrinkage_lambda.toFixed(3));
+      setEdgeMessage(
+        `Shrinkage λ saved (${saved.shrinkage_lambda.toFixed(3)}). Analyze and paper paths use this value.`,
+      );
+    } catch (e) {
+      setEdgeError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setEdgeSaving(false);
+    }
+  };
 
   const reloadModelsForProvider = async (provider: string) => {
     try {
@@ -209,7 +245,8 @@ export function SettingsView() {
   useEffect(() => {
     void loadBankroll();
     void loadMlStatus();
-  }, [loadBankroll, loadMlStatus]);
+    void loadEdgeConfig();
+  }, [loadBankroll, loadMlStatus, loadEdgeConfig]);
 
   const handleSave = async () => {
     setSaving(true);
@@ -406,6 +443,43 @@ export function SettingsView() {
             </p>
           </>
         ) : null}
+      </div>
+
+      <div className="card settingsWide">
+        <h3>Edge engine (shrinkage λ)</h3>
+        <p className="muted" style={{ marginTop: 0 }}>
+          Manual override for plan §4.1 shrinkage between model and market probabilities. Calibration
+          re-fit also writes here; analyze and paper decisions load the persisted value from{' '}
+          <code>edge_config</code>.
+        </p>
+        {edgeError ? <div className="banner error">{edgeError}</div> : null}
+        {edgeMessage ? <div className="banner success">{edgeMessage}</div> : null}
+        <div className="formGrid">
+          <label>
+            Shrinkage λ (0–1)
+            <input
+              type="number"
+              min={0}
+              max={1}
+              step={0.001}
+              value={edgeLambdaInput}
+              onChange={(e) => setEdgeLambdaInput(e.target.value)}
+            />
+          </label>
+        </div>
+        <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.75rem', flexWrap: 'wrap' }}>
+          <button
+            type="button"
+            className="primaryBtn"
+            disabled={edgeSaving}
+            onClick={() => void handleSaveEdgeLambda()}
+          >
+            {edgeSaving ? 'Saving…' : 'Save shrinkage λ'}
+          </button>
+          <button type="button" className="ghostBtn" disabled={edgeSaving} onClick={() => void loadEdgeConfig()}>
+            Reload from DB
+          </button>
+        </div>
       </div>
 
       <div className="card settingsWide">

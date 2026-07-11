@@ -101,6 +101,9 @@ export const kalshiApi = {
 
   getEdgeConfig: () => invoke<EdgeConfig>('kalshi_get_edge_config'),
 
+  setShrinkageLambda: (lambda: number) =>
+    invoke<EdgeConfig>('kalshi_set_shrinkage_lambda', { lambda }),
+
   evaluateBreakers: () => invoke<BreakerDecision>('kalshi_evaluate_breakers'),
 
   getLiveOrderEligibility: () =>

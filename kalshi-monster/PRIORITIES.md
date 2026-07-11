@@ -2,6 +2,12 @@
 
 Last updated: 2026-07-11
 
+## Maintenance notes (2026-07-11, cron) — Settings manual shrinkage λ override
+
+- Shipped: `kalshi_set_shrinkage_lambda` IPC; Settings **Edge engine** card loads/saves persisted λ; vitest for card visibility.
+- Health: `cargo check`, `tsc`, lib tests, **39** vitest green.
+- **Next:** calibration flywheel; expand other edge_config fields in Settings when persisted.
+
 ## Maintenance notes (2026-07-11, cron) — edge λ persistence + paper breaker tests
 
 - Shipped: `edge_config` table, `kalshi_get_edge_config`, refit persists λ; analyze/paper use loaded config; `paper_breaker` module + tests; Calibration UI active λ.

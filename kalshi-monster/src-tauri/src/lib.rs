@@ -353,6 +353,7 @@ pub fn run() {
             commands::kalshi_get_forecast_calibration_report,
             commands::kalshi_refit_lambda,
             commands::kalshi_get_edge_config,
+            commands::kalshi_set_shrinkage_lambda,
             commands::kalshi_snapshot_prices,
             commands::kalshi_get_price_history,
             commands::kalshi_record_paper_decision,

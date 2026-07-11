@@ -2146,6 +2146,19 @@ pub async fn kalshi_get_edge_config(
     crate::edge_engine::persistence::load_edge_config(&db_pool).await
 }
 
+/// Manual override for shrinkage λ (plan §4.1). Value is clamped to [0, 1].
+#[tauri::command]
+pub async fn kalshi_set_shrinkage_lambda(
+    lambda: f64,
+    db_pool: State<'_, Pool<Sqlite>>,
+) -> Result<crate::edge_engine::EdgeConfig, String> {
+    if !lambda.is_finite() {
+        return Err("shrinkage_lambda must be a finite number".to_string());
+    }
+    crate::edge_engine::persistence::save_shrinkage_lambda(&db_pool, lambda).await?;
+    crate::edge_engine::persistence::load_edge_config(&db_pool).await
+}
+
 /// Record a paper-trade decision with calibration + correlation-adjusted sizing.
 #[tauri::command]
 pub async fn kalshi_record_paper_decision(

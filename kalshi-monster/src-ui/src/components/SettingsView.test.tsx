@@ -1,7 +1,15 @@
 import { render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { SettingsView } from './SettingsView';
+import { kalshiApi } from '../services/kalshi';
 import { bankrollApi, configApi, mlApi, notificationApi } from '../services/tauri';
+
+vi.mock('../services/kalshi', () => ({
+  kalshiApi: {
+    getEdgeConfig: vi.fn(),
+    setShrinkageLambda: vi.fn(),
+  },
+}));
 
 vi.mock('../services/tauri', () => ({
   configApi: {
@@ -145,6 +153,20 @@ describe('SettingsView', () => {
       ],
       message: 'No model trained yet.',
     });
+    vi.mocked(kalshiApi.getEdgeConfig).mockResolvedValue({
+      shrinkage_lambda: 0.25,
+      min_edge: 0.02,
+      fee_multiplier: 1.0,
+      kelly_fraction: 0.25,
+      min_confidence: 0.5,
+    });
+    vi.mocked(kalshiApi.setShrinkageLambda).mockResolvedValue({
+      shrinkage_lambda: 0.3,
+      min_edge: 0.02,
+      fee_multiplier: 1.0,
+      kelly_fraction: 0.25,
+      min_confidence: 0.5,
+    });
     vi.mocked(notificationApi.getSettings).mockResolvedValue({
       enabled: true,
       game_starting_enabled: true,
@@ -167,5 +189,11 @@ describe('SettingsView', () => {
     expect(screen.getByText('Credential vault migration pending')).toBeInTheDocument();
     expect(screen.queryByText('sk-or-v1-secret-value')).not.toBeInTheDocument();
     expect(screen.queryByText('kalshi-secret')).not.toBeInTheDocument();
+  });
+
+  test('shows edge shrinkage lambda settings card', async () => {
+    render(<SettingsView />);
+    expect(await screen.findByText('Edge engine (shrinkage λ)')).toBeInTheDocument();
+    expect(screen.getByLabelText(/Shrinkage λ/i)).toBeInTheDocument();
   });
 });

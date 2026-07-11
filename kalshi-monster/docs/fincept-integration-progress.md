@@ -6,17 +6,26 @@ Tracks execution of `docs/fincept-integration-plan.md` (v2.1). Newest entry firs
 
 ---
 
-## Current next steps (reconciled 2026-07-11, post edge λ persistence + paper breaker tests)
+## Current next steps (reconciled 2026-07-11, post Settings λ override)
 
 | # | Item | Why | Notes / acceptance |
 |---|---|------|---------------------|
 | **1** | ~~**KB-1 live verify**~~ | Done (catalog path) | Code + public API verified; release binary rebuilt. |
 | **2** | **Calibration flywheel (ongoing)** | Gate needs *resolved* rows | Pending forecasts in ledger; resolve as Kalshi settles. Gate LOCKED until ≥200 resolved + Brier + paper P&L. |
 | **3** | ~~**KB-2 Analyst UX**~~ | Shipped | Sessions, stream, paper, OpenCode providers, completion + retrieval fixes. |
-| **4** | **Phase 3 productization** | Ops path | ✅ Breaker persistence; ✅ reliability diagram; ✅ live-order guard; ✅ `kalshi_refit_lambda` + Calibration λ panel; ✅ breaker `stake_multiplier` on paper path; ✅ **persist fitted λ** (`edge_config` table + analyze/paper load); ✅ **paper-path breaker unit tests** (`paper_breaker.rs`). **Next:** optional manual λ override UI; expand edge_config fields in Settings. |
+| **4** | **Phase 3 productization** | Ops path | ✅ Breaker persistence; ✅ reliability diagram; ✅ live-order guard; ✅ `kalshi_refit_lambda` + Calibration λ panel; ✅ breaker `stake_multiplier` on paper path; ✅ persist fitted λ; ✅ paper-path breaker tests; ✅ **manual λ override in Settings** (`kalshi_set_shrinkage_lambda`). **Next:** expand other `edge_config` fields in Settings when persisted. |
 | **5** | **Phase 1 leftovers** | Sidecar ops / data breadth | Settings UI for bridge start/status; expand tracker; `externalBin` packaging. |
 | **6** | **More agents (honest data only)** | p_model coverage | Fincept spike or native agents only with real data. |
 | **7** | **AGPL isolation hygiene** | Plan §3 Rule 1 | Split `fincept-sidecar` public repo before Fincept-derived code. |
+
+---
+
+## 2026-07-11 — Settings manual shrinkage λ override (cron)
+
+- **`kalshi_set_shrinkage_lambda` IPC** — validates finite input, clamps to [0,1], persists via `save_shrinkage_lambda`, returns loaded `EdgeConfig`.
+- **Settings:** Edge engine card with load/save/reload; uses same `edge_config` table as Calibration re-fit.
+- **Tests:** SettingsView vitest (+1); **39** vitest total; **202** lib tests.
+- **Health:** `cargo check`, `tsc` clean.
 
 ---
 
