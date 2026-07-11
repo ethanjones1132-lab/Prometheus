@@ -93,6 +93,15 @@ export interface BreakerDecision {
   reasons: string[];
 }
 
+/** Result of plan §4.1 λ grid re-fit from resolved forecast ledger. */
+export interface LambdaFit {
+  lambda: number;
+  brier_at_fit: number;
+  brier_at_market: number;
+  brier_at_model: number;
+  n: number;
+}
+
 export interface MLPhase3DashboardSummary {
   trainable_non_sports_categories: number;
   non_sports_sidecar_target: number;

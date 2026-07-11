@@ -194,6 +194,8 @@ pub enum RiskFlag {
     ModelDisagreement,
     /// Tape says market is settled / closed — TAKE forbidden
     MarketSettledOrClosed,
+    /// Circuit breaker (§6.4) active — stake scaled or trading blocked
+    CircuitBreakerActive,
     /// Other unspecified risk
     Other(String),
 }

@@ -10,6 +10,7 @@ import type {
   EdgeAnalysisResult,
   ForecastCalibrationReport,
   BreakerDecision,
+  LambdaFit,
   LiveOrderEligibility,
   PaperAccount,
   PaperAnalytics,
@@ -93,6 +94,9 @@ export const kalshiApi = {
 
   getForecastCalibrationReport: () =>
     invoke<ForecastCalibrationReport>('kalshi_get_forecast_calibration_report'),
+
+  /** Re-fit shrinkage λ from resolved rows (null if fewer than 50 model opinions). */
+  refitLambda: () => invoke<LambdaFit | null>('kalshi_refit_lambda'),
 
   evaluateBreakers: () => invoke<BreakerDecision>('kalshi_evaluate_breakers'),
 

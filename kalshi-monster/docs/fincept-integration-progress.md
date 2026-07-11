@@ -6,6 +6,29 @@ Tracks execution of `docs/fincept-integration-plan.md` (v2.1). Newest entry firs
 
 ---
 
+## Current next steps (reconciled 2026-07-11, post λ UI + paper stake_multiplier)
+
+| # | Item | Why | Notes / acceptance |
+|---|---|------|---------------------|
+| **1** | ~~**KB-1 live verify**~~ | Done (catalog path) | Code + public API verified; release binary rebuilt. |
+| **2** | **Calibration flywheel (ongoing)** | Gate needs *resolved* rows | Pending forecasts in ledger; resolve as Kalshi settles. Gate LOCKED until ≥200 resolved + Brier + paper P&L. |
+| **3** | ~~**KB-2 Analyst UX**~~ | Shipped | Sessions, stream, paper, OpenCode providers, completion + retrieval fixes. |
+| **4** | **Phase 3 productization** | Ops path | ✅ Breaker persistence; ✅ reliability diagram; ✅ live-order guard; ✅ `kalshi_refit_lambda` + Calibration λ panel; ✅ breaker `stake_multiplier` on paper path. **Next:** persist fitted λ to edge config; paper-path breaker unit test. |
+| **5** | **Phase 1 leftovers** | Sidecar ops / data breadth | Settings UI for bridge start/status; expand tracker; `externalBin` packaging. |
+| **6** | **More agents (honest data only)** | p_model coverage | Fincept spike or native agents only with real data. |
+| **7** | **AGPL isolation hygiene** | Plan §3 Rule 1 | Split `fincept-sidecar` public repo before Fincept-derived code. |
+
+---
+
+## 2026-07-11 — λ re-fit UI + paper stake_multiplier (cron)
+
+- **`kalshi_refit_lambda` IPC** + invoke registration; **`CircuitBreakerActive`** risk flag.
+- **`kalshi_record_paper_decision`:** breaker evaluation scales stakes; thesis + risk flag annotation.
+- **UI:** Calibration §4.1 panel; vitest for insufficient-sample path.
+- **Health:** `cargo check`, `tsc`, 198 lib tests, 38 vitest green.
+
+---
+
 ## Current next steps (reconciled 2026-07-10, post reliability + live-order guard)
 
 | # | Item | Why | Notes / acceptance |

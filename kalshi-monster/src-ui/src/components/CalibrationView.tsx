@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { finceptApi } from '../services/tauri';
 import { kalshiApi } from '../services/kalshi';
-import type { EdgeAnalysisResult, ForecastCalibrationReport, BreakerDecision } from '../types/kalshi';
+import type { EdgeAnalysisResult, ForecastCalibrationReport, BreakerDecision, LambdaFit } from '../types/kalshi';
 import { ReliabilityDiagram } from './ReliabilityDiagram';
 
 function pct(p: number | null | undefined): string {
@@ -31,6 +31,7 @@ export function CalibrationView() {
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [breakers, setBreakers] = useState<BreakerDecision | null>(null);
+  const [lambdaFit, setLambdaFit] = useState<LambdaFit | null | undefined>(undefined);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -87,6 +88,25 @@ export function CalibrationView() {
           : `Logged ${rows.length} forecast row(s) via edge engine (PASS included). No fabricated outcomes.`,
       );
       await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setActionBusy(null);
+    }
+  };
+
+  const runLambdaRefit = async () => {
+    setActionBusy('lambda');
+    setMessage(null);
+    setError(null);
+    try {
+      const fit = await kalshiApi.refitLambda();
+      setLambdaFit(fit);
+      setMessage(
+        fit
+          ? `λ re-fit on n=${fit.n}: λ=${fit.lambda.toFixed(3)} (Brier ${fit.brier_at_fit.toFixed(4)} vs market ${fit.brier_at_market.toFixed(4)}).`
+          : 'Not enough resolved forecasts with model opinions (need ≥50). Keep resolving markets.',
+      );
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -256,6 +276,42 @@ export function CalibrationView() {
             ))}
           </ul>
         )}
+      </section>
+
+      <section className="modalSection" aria-label="Shrinkage lambda re-fit">
+        <h4>Shrinkage λ (§4.1)</h4>
+        <p className="muted" style={{ marginBottom: '0.75rem' }}>
+          Grid re-fit from resolved forecast rows with model opinions. Does not change runtime λ until
+          you apply it in edge config — this is diagnostic only.
+        </p>
+        {lambdaFit && (
+          <div className="mechanicsGrid" style={{ marginBottom: '0.75rem' }}>
+            <div>
+              <span>Fitted λ</span>
+              <strong>{lambdaFit.lambda.toFixed(3)}</strong>
+            </div>
+            <div>
+              <span>Brier @ fit</span>
+              <strong>{brier(lambdaFit.brier_at_fit)}</strong>
+            </div>
+            <div>
+              <span>Brier @ λ=0 (market)</span>
+              <strong>{brier(lambdaFit.brier_at_market)}</strong>
+            </div>
+            <div>
+              <span>Rows (n)</span>
+              <strong>{lambdaFit.n}</strong>
+            </div>
+          </div>
+        )}
+        <button
+          type="button"
+          className="secondaryButton"
+          disabled={actionBusy != null}
+          onClick={() => void runLambdaRefit()}
+        >
+          {actionBusy === 'lambda' ? 'Fitting…' : 'Re-fit λ from ledger'}
+        </button>
       </section>
 
       <section className="modalSection" aria-label="Reliability diagram">

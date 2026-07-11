@@ -2109,6 +2109,19 @@ pub async fn kalshi_get_price_history(
     crate::kalshi::price_tracker::get_price_history(&db_pool, &ticker, limit.unwrap_or(200)).await
 }
 
+/// Re-fit shrinkage lambda from resolved forecast ledger (plan §4.1).
+/// Returns None when fewer than LAMBDA_REFIT_MIN_SAMPLES rows carry a model opinion.
+#[tauri::command]
+pub async fn kalshi_refit_lambda(
+    db_pool: State<'_, Pool<Sqlite>>,
+) -> Result<Option<crate::edge_engine::calibration::LambdaFit>, String> {
+    let resolved = crate::kalshi::forecast::resolved_forecasts_for_calibration(&db_pool).await?;
+    Ok(crate::edge_engine::calibration::refit_lambda(
+        &resolved,
+        crate::edge_engine::calibration::LAMBDA_REFIT_MIN_SAMPLES,
+    ))
+}
+
 /// Record a paper-trade decision with calibration + correlation-adjusted sizing.
 #[tauri::command]
 pub async fn kalshi_record_paper_decision(
@@ -2188,11 +2201,45 @@ pub async fn kalshi_record_paper_decision(
     }
 
     let side = format!("{:?}", decision.contract_side);
+
+    // Circuit-breaker stake multiplier (§6.4): scale paper stakes when drawdown or
+    // calibration degradation is active.
+    let breaker_stake_mult =
+        match crate::edge_engine::persistence::evaluate_and_persist_breakers(&db_pool).await {
+            Ok(bd) => bd.stake_multiplier,
+            Err(e) => {
+                tracing::warn!("breaker evaluation skipped for paper decision: {e}");
+                1.0
+            }
+        };
+    let breaker_mult_applied = (breaker_stake_mult - 1.0).abs() > 1e-9;
+
     let raw_stake = if decision.recommended_stake_dollars > 0.0 {
         decision.recommended_stake_dollars
     } else {
         bankroll.total_bankroll * (decision.fractional_kelly_pct / 100.0)
     };
+    let raw_stake = raw_stake * breaker_stake_mult;
+
+    if breaker_mult_applied {
+        if !decision
+            .risk_flags
+            .contains(&crate::chat::decision_schema::RiskFlag::CircuitBreakerActive)
+        {
+            decision
+                .risk_flags
+                .push(crate::chat::decision_schema::RiskFlag::CircuitBreakerActive);
+        }
+        let note = format!(
+            "breaker stake_multiplier {:.2} applied (paper path)",
+            breaker_stake_mult
+        );
+        if !decision.thesis.is_empty() {
+            decision.thesis.push(' ');
+        }
+        decision.thesis.push_str(&note);
+    }
+
     let mut adj = crate::kalshi::compute_stake_adjustment(
         &decision.ticker,
         &decision.category,

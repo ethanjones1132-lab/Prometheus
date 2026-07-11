@@ -1,6 +1,12 @@
 # Kalshi Monster — Priority Roadmap
 
-Last updated: 2026-07-10
+Last updated: 2026-07-11
+
+## Maintenance notes (2026-07-11, cron) — Phase 3 λ UI + paper breaker stake scale
+
+- Shipped: `kalshi_refit_lambda`, `CircuitBreakerActive`, paper-path `stake_multiplier`, Calibration λ panel + vitest.
+- Health: `cargo check`, `tsc`, 198 lib tests, 38 vitest green.
+- **Next:** calibration flywheel; optional persist fitted λ to edge config.
 
 ## Maintenance notes (2026-07-10, cron) — Analyst settlement gates + web evidence
 

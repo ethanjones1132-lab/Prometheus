@@ -10,6 +10,7 @@ vi.mock('../services/kalshi', () => ({
     resolvePendingForecasts: vi.fn(),
     analyzeTopMarketsEdge: vi.fn(),
     evaluateBreakers: vi.fn(),
+    refitLambda: vi.fn(),
     manualReenableBreaker: vi.fn(),
   },
 }));
@@ -65,6 +66,7 @@ describe('CalibrationView', () => {
     });
     vi.mocked(kalshiApi.evaluateBreakers).mockResolvedValue(defaultBreakers);
     vi.mocked(kalshiApi.resolvePendingForecasts).mockResolvedValue(0);
+    vi.mocked(kalshiApi.refitLambda).mockResolvedValue(null);
     vi.mocked(kalshiApi.analyzeTopMarketsEdge).mockResolvedValue([
       {
         forecast_id: 1,
@@ -107,5 +109,17 @@ describe('CalibrationView', () => {
       expect(screen.getByText('KXTEST')).toBeInTheDocument();
     });
     expect(kalshiApi.analyzeTopMarketsEdge).toHaveBeenCalledWith(10);
+  });
+
+  test('lambda re-fit surfaces insufficient-sample message', async () => {
+    render(<CalibrationView />);
+    await waitFor(() => expect(screen.getByText('LOCKED')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: /Re-fit λ from ledger/i }));
+
+    await waitFor(() => {
+      expect(kalshiApi.refitLambda).toHaveBeenCalled();
+    });
+    expect(screen.getByText(/Not enough resolved forecasts/i)).toBeInTheDocument();
   });
 });

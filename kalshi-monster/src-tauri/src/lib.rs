@@ -345,6 +345,7 @@ pub fn run() {
             commands::kalshi_analyze_top_markets_edge,
             commands::kalshi_resolve_pending_forecasts,
             commands::kalshi_get_forecast_calibration_report,
+            commands::kalshi_refit_lambda,
             commands::kalshi_snapshot_prices,
             commands::kalshi_get_price_history,
             commands::kalshi_record_paper_decision,
