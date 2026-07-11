@@ -98,6 +98,12 @@ pub fn run() {
         }
     });
 
+    rt.block_on(async {
+        if let Err(e) = edge_engine::persistence::init_edge_config_table(&db_pool).await {
+            tracing::warn!("Failed to init edge config table: {e}");
+        }
+    });
+
     // Initialize prediction tracker (migrates JSON data on first run)
     let prediction_tracker = rt.block_on(async {
         PredictionTracker::new(db_pool.clone())
@@ -346,6 +352,7 @@ pub fn run() {
             commands::kalshi_resolve_pending_forecasts,
             commands::kalshi_get_forecast_calibration_report,
             commands::kalshi_refit_lambda,
+            commands::kalshi_get_edge_config,
             commands::kalshi_snapshot_prices,
             commands::kalshi_get_price_history,
             commands::kalshi_record_paper_decision,

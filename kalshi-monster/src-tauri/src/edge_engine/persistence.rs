@@ -11,10 +11,13 @@
 use sqlx::{Row, SqlitePool};
 
 use super::breakers::BreakerState;
+use super::EdgeConfig;
 
 /// Table name for the single-row breaker state.  Co-located with forecasts
 /// in `predictions.db`.
 const TABLE: &str = "breaker_state";
+
+const EDGE_TABLE: &str = "edge_config";
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 
@@ -114,6 +117,64 @@ pub async fn evaluate_and_persist_breakers(
     Ok(decision)
 }
 
+// ── Edge config (§4.1 persisted λ) ───────────────────────────────────────────
+
+/// Ensure the edge-config table exists. Idempotent — safe every startup.
+pub async fn init_edge_config_table(pool: &SqlitePool) -> Result<(), String> {
+    sqlx::query(&format!(
+        "CREATE TABLE IF NOT EXISTS {EDGE_TABLE} (
+            id               INTEGER PRIMARY KEY CHECK(id = 1),
+            shrinkage_lambda REAL NOT NULL DEFAULT 0.25
+        );"
+    ))
+    .execute(pool)
+    .await
+    .map_err(|e| format!("Failed to create {EDGE_TABLE} table: {e}"))?;
+
+    sqlx::query(&format!(
+        "INSERT OR IGNORE INTO {EDGE_TABLE} (id, shrinkage_lambda)
+         VALUES (1, 0.25);"
+    ))
+    .execute(pool)
+    .await
+    .map_err(|e| format!("Failed to seed {EDGE_TABLE} row: {e}"))?;
+
+    Ok(())
+}
+
+/// Load persisted edge tunables, merging with [`EdgeConfig::default`] for fields
+/// not yet stored in SQLite.
+pub async fn load_edge_config(pool: &SqlitePool) -> Result<EdgeConfig, String> {
+    init_edge_config_table(pool).await?;
+    let row = sqlx::query(&format!(
+        "SELECT shrinkage_lambda FROM {EDGE_TABLE} WHERE id = 1"
+    ))
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| format!("Failed to load {EDGE_TABLE}: {e}"))?;
+
+    let mut cfg = EdgeConfig::default();
+    if let Some(r) = row {
+        let lambda: f64 = r.get(0);
+        cfg.shrinkage_lambda = lambda.clamp(0.0, 1.0);
+    }
+    Ok(cfg)
+}
+
+/// Persist a re-fitted shrinkage λ (plan §4.1) for subsequent edge evaluation.
+pub async fn save_shrinkage_lambda(pool: &SqlitePool, lambda: f64) -> Result<(), String> {
+    init_edge_config_table(pool).await?;
+    let lambda = lambda.clamp(0.0, 1.0);
+    sqlx::query(&format!(
+        "INSERT OR REPLACE INTO {EDGE_TABLE} (id, shrinkage_lambda)
+         VALUES (1, {lambda})"
+    ))
+    .execute(pool)
+    .await
+    .map_err(|e| format!("Failed to save {EDGE_TABLE}: {e}"))?;
+    Ok(())
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -164,5 +225,21 @@ mod tests {
             .unwrap();
         let s3 = load_breaker_state(&pool).await.unwrap();
         assert_eq!(s3, BreakerState::default());
+    }
+
+    #[tokio::test]
+    async fn edge_config_defaults_then_persists_lambda() {
+        let pool = fresh_pool().await;
+        init_edge_config_table(&pool).await.unwrap();
+        let cfg0 = load_edge_config(&pool).await.unwrap();
+        assert!(approx(cfg0.shrinkage_lambda, 0.25, 1e-9));
+
+        save_shrinkage_lambda(&pool, 0.42).await.unwrap();
+        let cfg1 = load_edge_config(&pool).await.unwrap();
+        assert!(approx(cfg1.shrinkage_lambda, 0.42, 1e-9));
+    }
+
+    fn approx(a: f64, b: f64, eps: f64) -> bool {
+        (a - b).abs() <= eps
     }
 }

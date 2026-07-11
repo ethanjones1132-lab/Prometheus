@@ -1904,6 +1904,17 @@ pub async fn kalshi_get_calibration_status(
     ))
 }
 
+
+async fn edge_config_for_pool(db_pool: &Pool<Sqlite>) -> crate::edge_engine::EdgeConfig {
+    match crate::edge_engine::persistence::load_edge_config(db_pool).await {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!("edge config load failed, using defaults: {e}");
+            crate::edge_engine::EdgeConfig::default()
+        }
+    }
+}
+
 async fn analyze_market_edge_inner(
     ticker: &str,
     client: &crate::kalshi::KalshiClient,
@@ -1955,7 +1966,7 @@ async fn analyze_market_edge_inner(
         db_pool,
         bridge,
         input,
-        &crate::edge_engine::EdgeConfig::default(),
+        &edge_config_for_pool(db_pool).await,
     )
     .await
 }
@@ -2111,15 +2122,28 @@ pub async fn kalshi_get_price_history(
 
 /// Re-fit shrinkage lambda from resolved forecast ledger (plan §4.1).
 /// Returns None when fewer than LAMBDA_REFIT_MIN_SAMPLES rows carry a model opinion.
+/// On success, persists λ to SQLite edge config for subsequent evaluate/analyze paths.
 #[tauri::command]
 pub async fn kalshi_refit_lambda(
     db_pool: State<'_, Pool<Sqlite>>,
 ) -> Result<Option<crate::edge_engine::calibration::LambdaFit>, String> {
     let resolved = crate::kalshi::forecast::resolved_forecasts_for_calibration(&db_pool).await?;
-    Ok(crate::edge_engine::calibration::refit_lambda(
+    let fit = crate::edge_engine::calibration::refit_lambda(
         &resolved,
         crate::edge_engine::calibration::LAMBDA_REFIT_MIN_SAMPLES,
-    ))
+    );
+    if let Some(ref f) = fit {
+        crate::edge_engine::persistence::save_shrinkage_lambda(&db_pool, f.lambda).await?;
+    }
+    Ok(fit)
+}
+
+/// Load persisted edge tunables (shrinkage λ and defaults for other fields).
+#[tauri::command]
+pub async fn kalshi_get_edge_config(
+    db_pool: State<'_, Pool<Sqlite>>,
+) -> Result<crate::edge_engine::EdgeConfig, String> {
+    crate::edge_engine::persistence::load_edge_config(&db_pool).await
 }
 
 /// Record a paper-trade decision with calibration + correlation-adjusted sizing.
@@ -2212,16 +2236,18 @@ pub async fn kalshi_record_paper_decision(
                 1.0
             }
         };
-    let breaker_mult_applied = (breaker_stake_mult - 1.0).abs() > 1e-9;
-
-    let raw_stake = if decision.recommended_stake_dollars > 0.0 {
+    let base_stake = if decision.recommended_stake_dollars > 0.0 {
         decision.recommended_stake_dollars
     } else {
         bankroll.total_bankroll * (decision.fractional_kelly_pct / 100.0)
     };
-    let raw_stake = raw_stake * breaker_stake_mult;
+    let breaker_apply = crate::edge_engine::paper_breaker::apply_paper_breaker_stake(
+        base_stake,
+        breaker_stake_mult,
+    );
+    let raw_stake = breaker_apply.adjusted_stake;
 
-    if breaker_mult_applied {
+    if breaker_apply.multiplier_applied {
         if !decision
             .risk_flags
             .contains(&crate::chat::decision_schema::RiskFlag::CircuitBreakerActive)
@@ -2230,14 +2256,12 @@ pub async fn kalshi_record_paper_decision(
                 .risk_flags
                 .push(crate::chat::decision_schema::RiskFlag::CircuitBreakerActive);
         }
-        let note = format!(
-            "breaker stake_multiplier {:.2} applied (paper path)",
-            breaker_stake_mult
-        );
-        if !decision.thesis.is_empty() {
-            decision.thesis.push(' ');
+        if let Some(note) = breaker_apply.thesis_note {
+            if !decision.thesis.is_empty() {
+                decision.thesis.push(' ');
+            }
+            decision.thesis.push_str(&note);
         }
-        decision.thesis.push_str(&note);
     }
 
     let mut adj = crate::kalshi::compute_stake_adjustment(
@@ -2372,11 +2396,12 @@ pub async fn kalshi_record_paper_decision(
         if decision.contract_side == crate::chat::decision_schema::ContractSide::PASS {
             flags.push("user_or_model_pass".into());
         }
+        let edge_cfg = edge_config_for_pool(&db_pool).await;
         let edge = crate::edge_engine::evaluate(
             &opinion,
             quote,
             &flags,
-            &crate::edge_engine::EdgeConfig::default(),
+            &edge_cfg,
         );
         let verdict = match edge.verdict {
             crate::edge_engine::Verdict::TradeYes => "trade_yes",

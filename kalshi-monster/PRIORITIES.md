@@ -2,6 +2,12 @@
 
 Last updated: 2026-07-11
 
+## Maintenance notes (2026-07-11, cron) — edge λ persistence + paper breaker tests
+
+- Shipped: `edge_config` table, `kalshi_get_edge_config`, refit persists λ; analyze/paper use loaded config; `paper_breaker` module + tests; Calibration UI active λ.
+- Health: `cargo check`, `tsc`, 202 lib tests, 38 vitest green.
+- **Next:** calibration flywheel; optional manual λ override in Settings.
+
 ## Maintenance notes (2026-07-11, cron) — Phase 3 λ UI + paper breaker stake scale
 
 - Shipped: `kalshi_refit_lambda`, `CircuitBreakerActive`, paper-path `stake_multiplier`, Calibration λ panel + vitest.

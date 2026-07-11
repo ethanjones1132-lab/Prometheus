@@ -31,6 +31,7 @@ use std::collections::HashMap;
 pub mod breakers;
 pub mod calibration;
 pub mod execution_guard;
+pub mod paper_breaker;
 pub mod persistence;
 pub mod pipeline;
 

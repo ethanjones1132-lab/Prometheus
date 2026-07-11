@@ -93,6 +93,15 @@ export interface BreakerDecision {
   reasons: string[];
 }
 
+/** Persisted edge-engine tunables (IPC). */
+export interface EdgeConfig {
+  shrinkage_lambda: number;
+  min_edge: number;
+  fee_multiplier: number;
+  kelly_fraction: number;
+  min_confidence: number;
+}
+
 /** Result of plan §4.1 λ grid re-fit from resolved forecast ledger. */
 export interface LambdaFit {
   lambda: number;

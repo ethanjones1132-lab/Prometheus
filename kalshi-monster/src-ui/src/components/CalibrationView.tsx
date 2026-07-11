@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { finceptApi } from '../services/tauri';
 import { kalshiApi } from '../services/kalshi';
-import type { EdgeAnalysisResult, ForecastCalibrationReport, BreakerDecision, LambdaFit } from '../types/kalshi';
+import type { EdgeAnalysisResult, ForecastCalibrationReport, BreakerDecision, LambdaFit, EdgeConfig } from '../types/kalshi';
 import { ReliabilityDiagram } from './ReliabilityDiagram';
 
 function pct(p: number | null | undefined): string {
@@ -32,19 +32,22 @@ export function CalibrationView() {
   const [message, setMessage] = useState<string | null>(null);
   const [breakers, setBreakers] = useState<BreakerDecision | null>(null);
   const [lambdaFit, setLambdaFit] = useState<LambdaFit | null | undefined>(undefined);
+  const [edgeConfig, setEdgeConfig] = useState<EdgeConfig | null>(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const [rep, st, br] = await Promise.all([
+      const [rep, st, br, ec] = await Promise.all([
         kalshiApi.getForecastCalibrationReport(),
         finceptApi.getBridgeStatus().catch(() => null),
         kalshiApi.evaluateBreakers().catch(() => null),
+        kalshiApi.getEdgeConfig().catch(() => null),
       ]);
       setReport(rep);
       if (st) setBridge(st);
       if (br) setBreakers(br);
+      if (ec) setEdgeConfig(ec);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -104,9 +107,13 @@ export function CalibrationView() {
       setLambdaFit(fit);
       setMessage(
         fit
-          ? `λ re-fit on n=${fit.n}: λ=${fit.lambda.toFixed(3)} (Brier ${fit.brier_at_fit.toFixed(4)} vs market ${fit.brier_at_market.toFixed(4)}).`
+          ? `λ re-fit on n=${fit.n}: λ=${fit.lambda.toFixed(3)} (Brier ${fit.brier_at_fit.toFixed(4)} vs market ${fit.brier_at_market.toFixed(4)}). Saved to edge config.`
           : 'Not enough resolved forecasts with model opinions (need ≥50). Keep resolving markets.',
       );
+      if (fit) {
+        const ec = await kalshiApi.getEdgeConfig().catch(() => null);
+        if (ec) setEdgeConfig(ec);
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -281,8 +288,14 @@ export function CalibrationView() {
       <section className="modalSection" aria-label="Shrinkage lambda re-fit">
         <h4>Shrinkage λ (§4.1)</h4>
         <p className="muted" style={{ marginBottom: '0.75rem' }}>
-          Grid re-fit from resolved forecast rows with model opinions. Does not change runtime λ until
-          you apply it in edge config — this is diagnostic only.
+          Grid re-fit from resolved forecast rows with model opinions. Successful re-fit persists λ to
+          SQLite edge config and applies to analyze / paper edge evaluation.
+          {edgeConfig != null ? (
+            <>
+              {' '}
+              Active shrinkage λ: <strong>{edgeConfig.shrinkage_lambda.toFixed(3)}</strong>.
+            </>
+          ) : null}
         </p>
         {lambdaFit && (
           <div className="mechanicsGrid" style={{ marginBottom: '0.75rem' }}>

@@ -11,6 +11,7 @@ vi.mock('../services/kalshi', () => ({
     analyzeTopMarketsEdge: vi.fn(),
     evaluateBreakers: vi.fn(),
     refitLambda: vi.fn(),
+    getEdgeConfig: vi.fn(),
     manualReenableBreaker: vi.fn(),
   },
 }));
@@ -65,6 +66,13 @@ describe('CalibrationView', () => {
       restarts_remaining: 3,
     });
     vi.mocked(kalshiApi.evaluateBreakers).mockResolvedValue(defaultBreakers);
+    vi.mocked(kalshiApi.getEdgeConfig).mockResolvedValue({
+      shrinkage_lambda: 0.25,
+      min_edge: 0.05,
+      fee_multiplier: 0.07,
+      kelly_fraction: 0.25,
+      min_confidence: 0.3,
+    });
     vi.mocked(kalshiApi.resolvePendingForecasts).mockResolvedValue(0);
     vi.mocked(kalshiApi.refitLambda).mockResolvedValue(null);
     vi.mocked(kalshiApi.analyzeTopMarketsEdge).mockResolvedValue([
