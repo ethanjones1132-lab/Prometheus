@@ -2,6 +2,13 @@
 
 Last updated: 2026-07-12
 
+## Maintenance notes (2026-07-12, cron pm) — secrets keyring + forecast→outcome bridge
+
+- Shipped: `secrets.rs` OS credential store (keyring); migrate plaintext API keys from `config.json`; Settings load/save via `getSecrets` / `saveSecret` IPC; auto-grade calls `forecast::resolve_forecasts_for_market` when Kalshi markets settle; paper transaction helpers.
+- Auto-remediation: committed coherent interrupted WIP from prior pass (13 files + `secrets.rs`).
+- Health: `cargo check`, `tsc`, **207** lib tests, **39** vitest green.
+- **Next:** calibration flywheel (accumulate resolved forecasts); Phase 1 sidecar Settings UI.
+
 ## Maintenance notes (2026-07-12, cron) — full edge_config Settings + IPC
 
 - Shipped: `save_edge_config` / `kalshi_set_edge_config` for all five EdgeConfig fields; Settings **Edge engine config** card with Save all; NaN sentinels for unchanged fields; refit λ uses NaN for non-λ fields; vitest mock `setEdgeConfig`.

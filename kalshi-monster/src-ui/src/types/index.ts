@@ -187,6 +187,28 @@ export interface AppConfig {
   bot_daily_picks_time: string;
 }
 
+/** Secrets are stored in the OS credential store, not config.json. */
+export interface AppSecrets {
+  openrouter_api_key: string;
+  opencode_api_key: string;
+  openweathermap_api_key: string;
+  api_sports_key: string;
+  brave_api_key: string;
+  kalshi_password: string;
+  discord_webhook_url: string;
+  telegram_bot_token: string;
+}
+
+export type SecretKey =
+  | 'openrouter_api_key'
+  | 'opencode_api_key'
+  | 'openweathermap_api_key'
+  | 'api_sports_key'
+  | 'brave_api_key'
+  | 'kalshi_password'
+  | 'discord_webhook_url'
+  | 'telegram_bot_token';
+
 export interface ModelInfo {
   id: string;
   name: string;

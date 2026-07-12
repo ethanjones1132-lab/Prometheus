@@ -4,6 +4,7 @@ import type {
   AnalysisContext,
   ApiStatus,
   AppConfig,
+  AppSecrets,
   BankrollConfig,
   BankrollSummary,
   ChatMessage,
@@ -14,6 +15,7 @@ import type {
   OpenRouterResponse,
   PredictionRecord,
   PropAnalysisResult,
+  SecretKey,
   SecurityPosture,
   ScoredProp,
   MLModelStatus,
@@ -33,6 +35,13 @@ export const configApi = {
 
   getAvailableModels: (provider?: string | null) =>
     invoke<ModelInfo[]>('get_available_models', { provider: provider ?? null }),
+
+  getSecrets: () => invoke<AppSecrets>('get_secrets'),
+
+  saveSecret: (key: SecretKey, value: string) =>
+    invoke<void>('save_secret', { key, value }),
+
+  deleteSecret: (key: SecretKey) => invoke<void>('delete_secret', { key }),
 };
 
 // ── Chat ────────────────────────────────────────────────────────

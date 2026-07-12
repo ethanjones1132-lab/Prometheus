@@ -3,6 +3,7 @@ use crate::chat::session;
 use crate::config;
 use crate::config::AppConfig;
 use crate::error::AppError;
+use crate::secrets::{AppSecrets, SecretKey};
 use crate::football::data;
 use crate::football::live_data;
 use crate::football::player_stats;
@@ -62,9 +63,40 @@ pub async fn get_config(state: State<'_, Arc<Mutex<AppConfig>>>) -> Result<AppCo
 
 #[tauri::command]
 pub async fn save_config(
-    config: AppConfig,
+    mut config: AppConfig,
     state: State<'_, Arc<Mutex<AppConfig>>>,
 ) -> Result<(), String> {
+    // If the frontend did not send secret values (common when secrets are loaded
+    // separately), preserve the currently cached secrets in memory so they are
+    // not accidentally cleared.
+    {
+        let guard = state.lock().await;
+        if config.openrouter_api_key.is_empty() {
+            config.openrouter_api_key = guard.openrouter_api_key.clone();
+        }
+        if config.opencode_api_key.is_empty() {
+            config.opencode_api_key = guard.opencode_api_key.clone();
+        }
+        if config.openweathermap_api_key.is_empty() {
+            config.openweathermap_api_key = guard.openweathermap_api_key.clone();
+        }
+        if config.api_sports_key.is_empty() {
+            config.api_sports_key = guard.api_sports_key.clone();
+        }
+        if config.brave_api_key.is_empty() {
+            config.brave_api_key = guard.brave_api_key.clone();
+        }
+        if config.kalshi_password.is_empty() {
+            config.kalshi_password = guard.kalshi_password.clone();
+        }
+        if config.discord_webhook_url.is_empty() {
+            config.discord_webhook_url = guard.discord_webhook_url.clone();
+        }
+        if config.telegram_bot_token.is_empty() {
+            config.telegram_bot_token = guard.telegram_bot_token.clone();
+        }
+    }
+
     config::save_config(&config).map_err(|e| AppError::Config(e.to_string()))?;
     let mut guard = state.lock().await;
     *guard = config;
@@ -85,6 +117,60 @@ pub async fn get_security_posture(
 ) -> Result<config::SecurityPosture, String> {
     let config = state.lock().await.clone();
     Ok(config::security_posture(&config))
+}
+
+#[tauri::command]
+pub async fn get_secrets() -> Result<AppSecrets, String> {
+    AppSecrets::load()
+}
+
+#[tauri::command]
+pub async fn save_secret(
+    key: String,
+    value: String,
+    state: State<'_, Arc<Mutex<AppConfig>>>,
+) -> Result<(), String> {
+    let secret_key = SecretKey::from_account(&key)
+        .ok_or_else(|| format!("Unknown secret key: {}", key))?;
+    config::save_secret(secret_key, &value)?;
+
+    // Keep the in-memory config state in sync so existing callers that read
+    // secret fields from the cached config continue to see the latest value.
+    let mut guard = state.lock().await;
+    match secret_key {
+        SecretKey::OpenrouterApiKey => guard.openrouter_api_key = value,
+        SecretKey::OpencodeApiKey => guard.opencode_api_key = value,
+        SecretKey::OpenweathermapApiKey => guard.openweathermap_api_key = value,
+        SecretKey::ApiSportsKey => guard.api_sports_key = value,
+        SecretKey::BraveApiKey => guard.brave_api_key = value,
+        SecretKey::KalshiPassword => guard.kalshi_password = value,
+        SecretKey::DiscordWebhookUrl => guard.discord_webhook_url = value,
+        SecretKey::TelegramBotToken => guard.telegram_bot_token = value,
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn delete_secret(
+    key: String,
+    state: State<'_, Arc<Mutex<AppConfig>>>,
+) -> Result<(), String> {
+    let secret_key = SecretKey::from_account(&key)
+        .ok_or_else(|| format!("Unknown secret key: {}", key))?;
+    config::delete_secret(secret_key)?;
+
+    let mut guard = state.lock().await;
+    match secret_key {
+        SecretKey::OpenrouterApiKey => guard.openrouter_api_key.clear(),
+        SecretKey::OpencodeApiKey => guard.opencode_api_key.clear(),
+        SecretKey::OpenweathermapApiKey => guard.openweathermap_api_key.clear(),
+        SecretKey::ApiSportsKey => guard.api_sports_key.clear(),
+        SecretKey::BraveApiKey => guard.brave_api_key.clear(),
+        SecretKey::KalshiPassword => guard.kalshi_password.clear(),
+        SecretKey::DiscordWebhookUrl => guard.discord_webhook_url.clear(),
+        SecretKey::TelegramBotToken => guard.telegram_bot_token.clear(),
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -1392,57 +1478,6 @@ pub async fn save_notification_settings(
     Ok(())
 }
 
-// ── File Upload Commands ──
-
-/// Read a file from disk and return its content as a base64 string along with metadata.
-/// The frontend can use this to let users attach files (CSV, JSON, images, etc.) to chat.
-#[tauri::command]
-pub async fn read_file_base64(path: String) -> Result<serde_json::Value, String> {
-    use std::fs;
-    use std::path::Path;
-
-    let path = Path::new(&path);
-    if !path.exists() {
-        return Err(AppError::NotFound(format!("File not found: {}", path.display())).into());
-    }
-
-    let metadata = fs::metadata(path).map_err(|e| AppError::Io(format!("Failed to read file metadata: {}", e)))?;
-    let size = metadata.len();
-
-    // Limit file size to 5MB
-    const MAX_SIZE: u64 = 5 * 1024 * 1024;
-    if size > MAX_SIZE {
-        return Err(AppError::Validation(format!(
-            "File too large: {} bytes (max {} bytes / 5MB)",
-            size, MAX_SIZE
-        )).into());
-    }
-
-    let content = fs::read(path).map_err(|e| AppError::Io(format!("Failed to read file: {}", e)))?;
-    use base64::{Engine as _, engine::general_purpose};
-    let base64_content = general_purpose::STANDARD.encode(&content);
-
-    let file_name = path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("unknown")
-        .to_string();
-
-    let extension = path
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("")
-        .to_lowercase();
-
-    Ok(serde_json::json!({
-        "name": file_name,
-        "path": path.to_string_lossy().to_string(),
-        "size": size,
-        "extension": extension,
-        "content_base64": base64_content,
-    }))
-}
-
 // ═══════════════════════════════════════════════════════════════
 // Live Player Stats Commands — Multi-Sport API Integration
 // ═══════════════════════════════════════════════════════════════
@@ -2381,137 +2416,102 @@ pub async fn kalshi_record_paper_decision(
         resolved_at: None,
     };
 
-    let t = tracker.lock().await;
-        t.save_prediction(record).await?;
+    // Forecast ledger via edge_engine: shrink LLM fair-prob toward market mid,
+    // apply fee-aware verdict. Agent pipeline (sidecar) is the preferred source
+    // of p_model; paper path uses the decision's fair probability as a single
+    // model opinion so columns are never left blank with a raw unshrunk number.
+    let close_time = chrono::Utc::now().to_rfc3339();
+    // market_price_pct is percent 0–100; price_to_enter is dollars 0–1 after sanitize.
+    let p_market_raw = (decision.market_price_pct / 100.0).clamp(0.01, 0.99);
+    let p_model_raw = (decision.fair_probability_pct / 100.0).clamp(0.01, 0.99);
+    let yes_ask = crate::chat::decision_schema::coerce_price_to_dollars(decision.price_to_enter)
+        .clamp(0.01, 0.99);
+    // Approximate bid as mid-symmetric when only entry price is known.
+    let yes_bid = (2.0 * p_market_raw - yes_ask).clamp(0.0, 1.0);
+    let quote = crate::edge_engine::Quote { yes_bid, yes_ask };
+    let opinion = crate::edge_engine::ModelOpinion {
+        p_model: p_model_raw,
+        confidence: match decision.confidence_tier {
+            crate::chat::decision_schema::ConfidenceTier::High => 0.75,
+            crate::chat::decision_schema::ConfidenceTier::Medium => 0.50,
+            crate::chat::decision_schema::ConfidenceTier::Low => 0.30,
+            crate::chat::decision_schema::ConfidenceTier::None => 0.0,
+        },
+        contributions: vec![crate::edge_engine::AgentContribution {
+            agent: "llm_decision".into(),
+            probability: p_model_raw,
+            confidence: 0.5,
+            weight_normalized: 1.0,
+        }],
+    };
+    let mut flags: Vec<String> = adj.warnings.clone();
+    if decision.contract_side == crate::chat::decision_schema::ContractSide::PASS {
+        flags.push("user_or_model_pass".into());
+    }
+    let edge_cfg = edge_config_for_pool(&db_pool).await;
+    let edge = crate::edge_engine::evaluate(&opinion, quote, &flags, &edge_cfg);
+    let verdict = match edge.verdict {
+        crate::edge_engine::Verdict::TradeYes => "trade_yes",
+        crate::edge_engine::Verdict::TradeNo => "trade_no",
+        crate::edge_engine::Verdict::Pass => "pass",
+    };
+    let verdict_reasons =
+        serde_json::to_string(&edge.reasons).unwrap_or_else(|_| "[]".to_string());
+    let stake_suggested = if decision.recommended_stake_dollars > 0.0 {
+        Some(decision.recommended_stake_dollars)
+    } else {
+        None
+    };
+    let breakdown = serde_json::to_string(&opinion.contributions).ok();
 
-        // Forecast ledger via edge_engine: shrink LLM fair-prob toward market mid,
-        // apply fee-aware verdict. Agent pipeline (sidecar) is the preferred source
-        // of p_model; paper path uses the decision's fair probability as a single
-        // model opinion so columns are never left blank with a raw unshrunk number.
-        let close_time = chrono::Utc::now().to_rfc3339();
-        // market_price_pct is percent 0–100; price_to_enter is dollars 0–1 after sanitize.
-        let p_market_raw = (decision.market_price_pct / 100.0).clamp(0.01, 0.99);
-        let p_model_raw = (decision.fair_probability_pct / 100.0).clamp(0.01, 0.99);
-        let yes_ask = crate::chat::decision_schema::coerce_price_to_dollars(decision.price_to_enter)
-            .clamp(0.01, 0.99);
-        // Approximate bid as mid-symmetric when only entry price is known.
-        let yes_bid = (2.0 * p_market_raw - yes_ask).clamp(0.0, 1.0);
-        let quote = crate::edge_engine::Quote {
-            yes_bid,
-            yes_ask,
-        };
-        let opinion = crate::edge_engine::ModelOpinion {
-            p_model: p_model_raw,
-            confidence: match decision.confidence_tier {
-                crate::chat::decision_schema::ConfidenceTier::High => 0.75,
-                crate::chat::decision_schema::ConfidenceTier::Medium => 0.50,
-                crate::chat::decision_schema::ConfidenceTier::Low => 0.30,
-                crate::chat::decision_schema::ConfidenceTier::None => 0.0,
-            },
-            contributions: vec![crate::edge_engine::AgentContribution {
-                agent: "llm_decision".into(),
-                probability: p_model_raw,
-                confidence: 0.5,
-                weight_normalized: 1.0,
-            }],
-        };
-        let mut flags: Vec<String> = adj.warnings.clone();
-        if decision.contract_side == crate::chat::decision_schema::ContractSide::PASS {
-            flags.push("user_or_model_pass".into());
-        }
-        let edge_cfg = edge_config_for_pool(&db_pool).await;
-        let edge = crate::edge_engine::evaluate(
-            &opinion,
-            quote,
-            &flags,
-            &edge_cfg,
-        );
-        let verdict = match edge.verdict {
-            crate::edge_engine::Verdict::TradeYes => "trade_yes",
-            crate::edge_engine::Verdict::TradeNo => "trade_no",
-            crate::edge_engine::Verdict::Pass => "pass",
-        };
-        let verdict_reasons = serde_json::to_string(&edge.reasons)
-            .unwrap_or_else(|_| "[]".to_string());
-        let stake_suggested = if decision.recommended_stake_dollars > 0.0 {
-            Some(decision.recommended_stake_dollars)
-        } else {
-            None
-        };
-        let breakdown = serde_json::to_string(&opinion.contributions).ok();
-        let forecast_id = match crate::kalshi::forecast::insert_forecast(
-            &db_pool,
-            &decision.ticker,
-            &now,
-            &close_time,
-            edge.p_market,
-            Some(edge.p_model),
-            edge.p_final,
-            verdict,
-            &verdict_reasons,
-            stake_suggested,
-            breakdown.as_deref(),
-        )
-        .await
-        {
-            Ok(id) => Some(id),
-            Err(e) => {
-                tracing::warn!("forecast ledger write failed for {}: {e}", decision.ticker);
-                None
-            }
-        };
-        if let Err(e) = crate::predictions::storage::update_prediction_edge_fields(
-            &db_pool,
-            &prediction_id,
-            edge.p_market,
-            Some(edge.p_model),
-            edge.p_final,
-            verdict,
-            &verdict_reasons,
-            breakdown.as_deref(),
-            forecast_id,
-        )
-        .await
-        {
-            tracing::warn!("prediction edge fields update failed: {e}");
-        }
-
-        if decision.contract_side != crate::chat::decision_schema::ContractSide::PASS {
+    // Build optional paper trade input.
+    let trade_input = if decision.contract_side != crate::chat::decision_schema::ContractSide::PASS {
         let entry_cents = crate::paper::normalize_entry_cents(decision.price_to_enter);
         let stake = decision.recommended_stake_dollars.max(0.0);
         if stake > 0.0 && entry_cents > 0.0 && entry_cents < 100.0 {
             let qty = stake / (entry_cents / 100.0);
             let side = format!("{:?}", decision.contract_side);
-            let trade_input = crate::paper::PaperTradeInput {
+            Some(crate::paper::PaperTradeInput {
                 ticker: decision.ticker.clone(),
                 title: decision.market_title.clone(),
                 category: decision.category.clone(),
                 side,
                 qty,
                 entry_price_cents: entry_cents,
-                source: crate::paper::PaperTradeSource::Manual,
-                decision_json: Some(decision_json),
-            };
-            match crate::paper::place_trade(&db_pool, trade_input).await {
-                Ok(lot) => {
-                    tracing::info!(
-                        "paper lot opened: {} {:?} qty {:.2} @ {:.1}c",
-                        lot.ticker,
-                        decision.contract_side,
-                        lot.qty,
-                        lot.entry_price_cents
-                    );
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        "paper lot not opened for {} (prediction {} saved): {}",
-                        decision.ticker,
-                        prediction_id,
-                        e
-                    );
-                }
-            }
+                source: crate::paper::PaperTradeSource::AiDecision,
+                decision_json: Some(decision_json.clone()),
+            })
+        } else {
+            None
         }
+    } else {
+        None
+    };
+
+    let ctx = crate::paper::PaperDecisionContext {
+        prediction: record,
+        forecast_ticker: decision.ticker.clone(),
+        forecast_created_at: now.clone(),
+        forecast_close_time: close_time,
+        p_market: edge.p_market,
+        p_model: Some(edge.p_model),
+        p_final: edge.p_final,
+        verdict: verdict.to_string(),
+        verdict_reasons,
+        stake_suggested,
+        agent_breakdown: breakdown,
+        trade_input: trade_input.clone(),
+    };
+
+    let prediction_id = crate::paper::record_paper_decision(&db_pool, ctx).await?;
+
+    if trade_input.is_some() {
+        tracing::info!(
+            "paper decision recorded: {} {:?} (prediction {})",
+            decision.ticker,
+            decision.contract_side,
+            prediction_id
+        );
     }
 
     Ok(prediction_id)
@@ -2716,11 +2716,15 @@ pub async fn save_bot_config(
 ) -> Result<(), String> {
     let mut config = state.lock().await;
 
+    // Secret fields go to the OS credential store; non-secret preferences stay
+    // in config.json.
     if let Some(url) = bot_settings.get("discord_webhook_url").and_then(|v| v.as_str()) {
         config.discord_webhook_url = url.to_string();
+        config::save_secret(SecretKey::DiscordWebhookUrl, url)?;
     }
     if let Some(token) = bot_settings.get("telegram_bot_token").and_then(|v| v.as_str()) {
         config.telegram_bot_token = token.to_string();
+        config::save_secret(SecretKey::TelegramBotToken, token)?;
     }
     if let Some(chat_id) = bot_settings.get("telegram_chat_id").and_then(|v| v.as_str()) {
         config.telegram_chat_id = chat_id.to_string();

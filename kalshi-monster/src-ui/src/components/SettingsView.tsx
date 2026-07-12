@@ -120,7 +120,10 @@ export function SettingsView() {
     setLoading(true);
     setError(null);
     try {
-      const cfg = await configApi.get();
+      const [cfg, secrets] = await Promise.all([
+        configApi.get(),
+        configApi.getSecrets().catch(() => undefined),
+      ]);
       const provider = cfg.llm_provider || 'openrouter';
       const [modelList, posture, notifSettings] = await Promise.all([
         configApi.getAvailableModels(provider),
@@ -130,8 +133,9 @@ export function SettingsView() {
       setConfig({
         ...EMPTY_CONFIG,
         ...cfg,
+        ...secrets,
         llm_provider: provider,
-        opencode_api_key: cfg.opencode_api_key ?? '',
+        opencode_api_key: secrets?.opencode_api_key ?? cfg.opencode_api_key ?? '',
       });
       setModels(modelList);
       setSecurityPosture(posture);
@@ -142,6 +146,7 @@ export function SettingsView() {
       setKalshiPasswordInput('');
       setWeatherKeyInput('');
       setSportsKeyInput('');
+      setBraveKeyInput('');
       setDiscordInput('');
       setTelegramTokenInput('');
     } catch (e) {
@@ -289,6 +294,19 @@ export function SettingsView() {
           .map((s) => s.trim())
           .filter(Boolean),
       };
+
+      // Secrets are persisted to the OS credential store, never config.json.
+      await Promise.all([
+        apiKeyInput.trim() && configApi.saveSecret('openrouter_api_key', apiKeyInput.trim()),
+        opencodeKeyInput.trim() && configApi.saveSecret('opencode_api_key', opencodeKeyInput.trim()),
+        kalshiPasswordInput.trim() && configApi.saveSecret('kalshi_password', kalshiPasswordInput.trim()),
+        weatherKeyInput.trim() && configApi.saveSecret('openweathermap_api_key', weatherKeyInput.trim()),
+        sportsKeyInput.trim() && configApi.saveSecret('api_sports_key', sportsKeyInput.trim()),
+        braveKeyInput.trim() && configApi.saveSecret('brave_api_key', braveKeyInput.trim()),
+        discordInput.trim() && configApi.saveSecret('discord_webhook_url', discordInput.trim()),
+        telegramTokenInput.trim() && configApi.saveSecret('telegram_bot_token', telegramTokenInput.trim()),
+      ].filter(Boolean));
+
       await configApi.save(next);
       await notificationApi.saveSettings(notificationSettings);
       setConfig(next);
@@ -318,6 +336,10 @@ export function SettingsView() {
         openrouter_api_key: apiKeyInput.trim() || config.openrouter_api_key,
         opencode_api_key: opencodeKeyInput.trim() || config.opencode_api_key,
       };
+      await Promise.all([
+        apiKeyInput.trim() && configApi.saveSecret('openrouter_api_key', apiKeyInput.trim()),
+        opencodeKeyInput.trim() && configApi.saveSecret('opencode_api_key', opencodeKeyInput.trim()),
+      ].filter(Boolean));
       await configApi.save(draft);
       setConfig(draft);
       const status = await configApi.checkApiStatus();

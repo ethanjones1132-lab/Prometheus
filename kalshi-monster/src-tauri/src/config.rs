@@ -1,5 +1,6 @@
 use crate::predictions::tracker::CalibrationMetrics;
 pub use crate::predictions::tracker::ScoreRange;
+use crate::secrets::{AppSecrets, SecretKey};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
@@ -48,8 +49,11 @@ impl LlmProvider {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct AppConfig {
+    /// Secrets are stored in the OS credential store, not `config.json`.
+    /// This field is kept in memory for backward compatibility with callers
+    /// and is populated by `load_config()` from the keyring.
     pub openrouter_api_key: String,
     pub openrouter_base_url: String,
     /// Active chat gateway for Analyst (openrouter | opencode_zen | opencode_go).
@@ -101,6 +105,47 @@ pub struct AppConfig {
     pub bot_grading_results_enabled: bool,
     #[serde(default)]
     pub bot_daily_picks_time: String, // HH:MM format, e.g. "08:00"
+}
+
+impl std::fmt::Debug for AppConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AppConfig")
+            .field("openrouter_api_key", &redact(&self.openrouter_api_key))
+            .field("openrouter_base_url", &self.openrouter_base_url)
+            .field("llm_provider", &self.llm_provider)
+            .field("opencode_api_key", &redact(&self.opencode_api_key))
+            .field("selected_model", &self.selected_model)
+            .field("system_prompt", &"<system_prompt>")
+            .field("max_context_players", &self.max_context_players)
+            .field("openweathermap_api_key", &redact(&self.openweathermap_api_key))
+            .field("api_sports_key", &redact(&self.api_sports_key))
+            .field("brave_api_key", &redact(&self.brave_api_key))
+            .field("risk_tolerance", &self.risk_tolerance)
+            .field("preferred_leagues", &self.preferred_leagues)
+            .field("stat_weighting", &self.stat_weighting)
+            .field("output_format", &self.output_format)
+            .field("theme", &self.theme)
+            .field("kalshi_email", &self.kalshi_email)
+            .field("kalshi_password", &redact(&self.kalshi_password))
+            .field("kalshi_poll_interval_secs", &self.kalshi_poll_interval_secs)
+            .field("max_bet_pct", &self.max_bet_pct)
+            .field("discord_webhook_url", &redact(&self.discord_webhook_url))
+            .field("telegram_bot_token", &redact(&self.telegram_bot_token))
+            .field("telegram_chat_id", &redact(&self.telegram_chat_id))
+            .field("bot_daily_picks_enabled", &self.bot_daily_picks_enabled)
+            .field("bot_game_alerts_enabled", &self.bot_game_alerts_enabled)
+            .field("bot_grading_results_enabled", &self.bot_grading_results_enabled)
+            .field("bot_daily_picks_time", &self.bot_daily_picks_time)
+            .finish()
+    }
+}
+
+fn redact(value: &str) -> &str {
+    if value.is_empty() {
+        ""
+    } else {
+        "[REDACTED]"
+    }
 }
 
 impl Default for AppConfig {
@@ -259,26 +304,69 @@ pub fn config_path() -> PathBuf {
     config_dir().join(CONFIG_FILE)
 }
 
-pub fn load_config() -> AppConfig {
+fn load_config_json() -> AppConfig {
     let path = config_path();
     if path.exists() {
         if let Ok(content) = fs::read_to_string(&path) {
             if let Ok(mut config) = serde_json::from_str::<AppConfig>(&content) {
                 if config.selected_model == LING_FREE_MODEL_ID {
                     config.selected_model = RING_FREE_MODEL_ID.to_string();
-                    let _ = save_config(&config);
                 }
                 return config;
             }
         }
     }
-    let config = AppConfig::default();
-    if let Some(parent) = path.parent() {
-        let _ = fs::create_dir_all(parent);
+    AppConfig::default()
+}
+
+/// True if any secret field in `config` is non-empty (legacy plaintext state).
+fn config_has_secrets(config: &AppConfig) -> bool {
+    !config.openrouter_api_key.is_empty()
+        || !config.opencode_api_key.is_empty()
+        || !config.openweathermap_api_key.is_empty()
+        || !config.api_sports_key.is_empty()
+        || !config.brave_api_key.is_empty()
+        || !config.kalshi_password.is_empty()
+        || !config.discord_webhook_url.is_empty()
+        || !config.telegram_bot_token.is_empty()
+}
+
+pub fn load_config() -> AppConfig {
+    let mut config = load_config_json();
+
+    // Overlay secrets from the OS credential store.
+    match AppSecrets::load() {
+        Ok(secrets) => secrets.apply_to(&mut config),
+        Err(e) => tracing::warn!("failed to load secrets from credential store: {}", e),
     }
-    if let Ok(json) = serde_json::to_string_pretty(&config) {
-        let _ = fs::write(&path, json);
+
+    // One-time migration: if config.json still contains plaintext secrets and
+    // the credential store is empty, move them into the OS keychain and rewrite
+    // config.json without secrets.
+    if config_has_secrets(&config) {
+        match AppSecrets::load() {
+            Ok(loaded) => {
+                if !loaded.has_any() {
+                    tracing::info!(
+                        "migrating plaintext secrets from config.json to OS credential store"
+                    );
+                    match crate::secrets::migrate_plaintext_secrets(&config) {
+                        Ok(migrated) => {
+                            migrated.apply_to(&mut config);
+                            if let Err(e) = save_config(&config) {
+                                tracing::error!("failed to write redacted config after migration: {}", e);
+                            }
+                        }
+                        Err(e) => {
+                            tracing::error!("secret migration failed, leaving secrets in config.json: {}", e);
+                        }
+                    }
+                }
+            }
+            Err(e) => tracing::warn!("cannot determine migration state, leaving config as-is: {}", e),
+        }
     }
+
     config
 }
 
@@ -287,11 +375,40 @@ pub fn save_config(config: &AppConfig) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| format!("Failed to create config dir: {}", e))?;
     }
-    let json = serde_json::to_string_pretty(config)
+
+    // Persist only non-secret preference fields. Secrets live in the OS credential
+    // store and are managed via `save_secret` / `delete_secret`.
+    let redacted = AppConfig {
+        openrouter_api_key: String::new(),
+        opencode_api_key: String::new(),
+        openweathermap_api_key: String::new(),
+        api_sports_key: String::new(),
+        brave_api_key: String::new(),
+        kalshi_password: String::new(),
+        discord_webhook_url: String::new(),
+        telegram_bot_token: String::new(),
+        telegram_chat_id: config.telegram_chat_id.clone(),
+        ..config.clone()
+    };
+
+    let json = serde_json::to_string_pretty(&redacted)
         .map_err(|e| format!("Failed to serialize config: {}", e))?;
     fs::write(&path, json).map_err(|e| format!("Failed to write config: {}", e))?;
     Ok(())
 }
+
+/// Save a single secret to the OS credential store.
+pub fn save_secret(key: SecretKey, value: &str) -> Result<(), String> {
+    crate::secrets::save_secret(key, value)
+}
+
+/// Delete a single secret from the OS credential store.
+pub fn delete_secret(key: SecretKey) -> Result<(), String> {
+    crate::secrets::delete_secret(key)
+}
+
+/// Re-export for the command layer and other callers.
+pub use crate::secrets::AppSecrets as ConfigSecrets;
 
 /// Curated models for Analyst. `provider` is the gateway: openrouter | opencode_zen | opencode_go.
 pub fn available_models() -> Vec<ModelInfo> {
@@ -634,6 +751,7 @@ pub fn redact_secrets_for_diagnostics(input: &str) -> String {
 }
 
 pub fn security_posture(config: &AppConfig) -> SecurityPosture {
+    // Report configured secrets without exposing their values.
     let secret_values = [
         &config.openrouter_api_key,
         &config.opencode_api_key,
@@ -655,18 +773,29 @@ pub fn security_posture(config: &AppConfig) -> SecurityPosture {
         })
         .collect::<Vec<_>>();
 
-    let config_file_contains_secrets = !redacted_fields.is_empty();
-    let warnings = if config_file_contains_secrets {
-        vec!["Credential vault migration pending".to_string()]
+    // Check whether the on-disk config.json still contains plaintext secrets.
+    let config_file_contains_secrets = config_has_secrets(&load_config_json());
+    let keyring_ok = crate::secrets::keyring_available();
+
+    let mut warnings = Vec::new();
+    if config_file_contains_secrets {
+        warnings.push("Credential vault migration pending".to_string());
+    }
+    if !keyring_ok {
+        warnings.push("OS credential store unavailable; secrets may fall back to config.json".to_string());
+    }
+
+    let secret_store = if keyring_ok {
+        "OS credential store".to_string()
     } else {
-        Vec::new()
+        "OS credential store (unavailable)".to_string()
     };
 
     SecurityPosture {
         csp_enforced: true,
         secrets_redacted: true,
         config_file_contains_secrets,
-        secret_store: "Local encrypted vault pending".to_string(),
+        secret_store,
         redacted_fields,
         warnings: warnings
             .into_iter()

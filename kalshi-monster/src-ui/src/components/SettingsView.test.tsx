@@ -16,6 +16,9 @@ vi.mock('../services/tauri', () => ({
     get: vi.fn(),
     getAvailableModels: vi.fn(),
     getSecurityPosture: vi.fn(),
+    getSecrets: vi.fn(),
+    saveSecret: vi.fn(),
+    deleteSecret: vi.fn(),
   },
   bankrollApi: {
     refreshHistoricalBrier: vi.fn(),
@@ -63,6 +66,16 @@ const config = {
 describe('SettingsView', () => {
   beforeEach(() => {
     vi.mocked(configApi.get).mockResolvedValue(config);
+    vi.mocked(configApi.getSecrets).mockResolvedValue({
+      openrouter_api_key: 'sk-or-v1-secret-value',
+      opencode_api_key: '',
+      openweathermap_api_key: 'weather-secret',
+      api_sports_key: 'sports-secret',
+      brave_api_key: '',
+      kalshi_password: 'kalshi-secret',
+      discord_webhook_url: 'https://discord.com/api/webhooks/secret',
+      telegram_bot_token: 'telegram-secret',
+    });
     vi.mocked(configApi.getAvailableModels).mockResolvedValue([
       {
         id: 'model',
@@ -77,15 +90,15 @@ describe('SettingsView', () => {
     vi.mocked(configApi.getSecurityPosture).mockResolvedValue({
       csp_enforced: true,
       secrets_redacted: true,
-      config_file_contains_secrets: true,
-      secret_store: 'Local encrypted vault pending',
+      config_file_contains_secrets: false,
+      secret_store: 'OS credential store',
       redacted_fields: [
         'openrouter_api_key',
         'kalshi_password',
         'discord_webhook_url',
         'telegram_bot_token',
       ],
-      warnings: ['Credential vault migration pending'],
+      warnings: [],
     });
     vi.mocked(bankrollApi.getConfig).mockResolvedValue({
       total_bankroll: 1000,
@@ -186,7 +199,7 @@ describe('SettingsView', () => {
     expect(await screen.findByText('Security posture')).toBeInTheDocument();
     expect(screen.getByText('CSP enforced')).toBeInTheDocument();
     expect(screen.getByText('Secrets redacted from diagnostics')).toBeInTheDocument();
-    expect(screen.getByText('Credential vault migration pending')).toBeInTheDocument();
+    expect(screen.getByText('OS credential store')).toBeInTheDocument();
     expect(screen.queryByText('sk-or-v1-secret-value')).not.toBeInTheDocument();
     expect(screen.queryByText('kalshi-secret')).not.toBeInTheDocument();
   });

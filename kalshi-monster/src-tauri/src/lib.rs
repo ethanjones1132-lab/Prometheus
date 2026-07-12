@@ -18,6 +18,7 @@ pub mod line_tracker;
 pub mod ml_predictor;
 pub mod prizepicks;
 pub mod paper;
+pub mod secrets;
 
 use chat::ChatState;
 use football::api_client::{SportsApiClient, SportsApiConfig};
@@ -260,6 +261,9 @@ pub fn run() {
             commands::check_api_status,
             commands::get_security_posture,
             commands::get_available_models,
+            commands::get_secrets,
+            commands::save_secret,
+            commands::delete_secret,
             // Chat
             commands::send_message,
             commands::send_message_stream,
@@ -326,8 +330,7 @@ pub fn run() {
             commands::dismiss_notification_cmd,
             commands::get_notification_settings,
             commands::save_notification_settings,
-            // File upload
-            commands::read_file_base64,
+
             // Kalshi
             commands::kalshi_get_markets,
             commands::kalshi_get_market,

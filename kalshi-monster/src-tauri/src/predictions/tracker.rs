@@ -504,6 +504,15 @@ impl PredictionTracker {
         storage::insert_prediction(&self.pool, &record).await
     }
 
+    /// Transaction-aware version of `save_prediction`.
+    pub async fn save_prediction_tx(
+        &self,
+        txn: &mut sqlx::Transaction<'_, Sqlite>,
+        record: PredictionRecord,
+    ) -> Result<(), String> {
+        storage::insert_prediction_tx(txn, &record).await
+    }
+
     /// Update prediction outcome in SQLite
     pub async fn update_outcome(
         &self,

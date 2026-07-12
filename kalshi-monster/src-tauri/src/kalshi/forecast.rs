@@ -129,6 +129,47 @@ pub async fn insert_forecast(
     Ok(row.last_insert_rowid())
 }
 
+/// Transaction-aware version of `insert_forecast`.
+pub async fn insert_forecast_tx(
+    txn: &mut sqlx::Transaction<'_, Sqlite>,
+    market_ticker: &str,
+    created_at: &str,
+    close_time: &str,
+    p_market: f64,
+    p_model: Option<f64>,
+    p_final: f64,
+    verdict: &str,
+    verdict_reasons: &str,
+    stake_suggested: Option<f64>,
+    agent_breakdown: Option<&str>,
+) -> Result<i64, String> {
+    let row = sqlx::query(
+        r#"
+        INSERT INTO forecasts (
+            market_ticker, created_at, close_time,
+            p_market, p_model, p_final,
+            verdict, verdict_reasons,
+            stake_suggested, agent_breakdown
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+        "#,
+    )
+    .bind(market_ticker)
+    .bind(created_at)
+    .bind(close_time)
+    .bind(p_market)
+    .bind(p_model)
+    .bind(p_final)
+    .bind(verdict)
+    .bind(verdict_reasons)
+    .bind(stake_suggested)
+    .bind(agent_breakdown)
+    .execute(&mut **txn)
+    .await
+    .map_err(|e| format!("forecast insert: {e}"))?;
+
+    Ok(row.last_insert_rowid())
+}
+
 /// Record a resolution outcome on a forecast row.
 pub async fn resolve_forecast(
     pool: &Pool<Sqlite>,

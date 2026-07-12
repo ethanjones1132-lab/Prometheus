@@ -64,5 +64,7 @@ edge-eval = { path = "../../edge-eval" }
 
 # Shared Monster-apps edge math (also used by the offline backtest CLI)
 monster-edge-core = { path = "../../monster-edge-core" }
+# OS credential store for secrets (cross-platform keychain/Windows Credential Manager)
+keyring = { version = "3", features = ["linux-native", "windows-native", "apple-native"] }
 websearch = "0.1.1"
 scraper = "0.18"

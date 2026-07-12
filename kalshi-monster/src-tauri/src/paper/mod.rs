@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::{Pool, Row, Sqlite};
 
 use crate::kalshi::client::KalshiClient;
+use crate::predictions::tracker::PredictionRecord;
 
 
 pub const PAPER_SESSION_ID: &str = "paper-sim";
@@ -285,6 +286,24 @@ pub async fn get_account(pool: &Pool<Sqlite>) -> Result<PaperAccount, String> {
     })
 }
 
+async fn get_account_tx(txn: &mut sqlx::Transaction<'_, Sqlite>) -> Result<PaperAccount, String> {
+    let row = sqlx::query(
+        "SELECT id, balance_dollars, total_deposits, total_withdrawals, created_at, updated_at FROM paper_account WHERE id = 1",
+    )
+    .fetch_one(&mut **txn)
+    .await
+    .map_err(|e| format!("Failed to fetch paper account: {}", e))?;
+
+    Ok(PaperAccount {
+        id: row.get("id"),
+        balance_dollars: row.get("balance_dollars"),
+        total_deposits: row.get("total_deposits"),
+        total_withdrawals: row.get("total_withdrawals"),
+        created_at: row.get("created_at"),
+        updated_at: row.get("updated_at"),
+    })
+}
+
 pub async fn reset_account(
     pool: &Pool<Sqlite>,
     starting_balance: Option<f64>,
@@ -329,6 +348,19 @@ async fn update_balance(pool: &Pool<Sqlite>, delta: f64) -> Result<(), String> {
     Ok(())
 }
 
+async fn update_balance_tx(txn: &mut sqlx::Transaction<'_, Sqlite>, delta: f64) -> Result<(), String> {
+    let now = Utc::now().to_rfc3339();
+    sqlx::query(
+        "UPDATE paper_account SET balance_dollars = balance_dollars + ?1, updated_at = ?2 WHERE id = 1",
+    )
+    .bind(delta)
+    .bind(&now)
+    .execute(&mut **txn)
+    .await
+    .map_err(|e| format!("Failed to update paper balance: {}", e))?;
+    Ok(())
+}
+
 // ═══════════════════════════════════════════════════════════════
 // Lots & trades
 // ═══════════════════════════════════════════════════════════════
@@ -343,6 +375,23 @@ fn normalize_side(side: &str) -> Result<String, String> {
 }
 
 pub async fn place_trade(pool: &Pool<Sqlite>, input: PaperTradeInput) -> Result<PaperLot, String> {
+    let mut txn = pool.begin().await.map_err(|e| format!("begin transaction: {e}"))?;
+    let lot = place_trade_tx(&mut txn, &input).await?;
+    txn.commit().await.map_err(|e| format!("commit paper trade: {e}"))?;
+
+    // Snapshot is recorded after commit so mark-to-market reads do not hold
+    // the transaction open.
+    record_equity_snapshot(pool, None).await?;
+
+    Ok(lot)
+}
+
+/// Transaction-aware core of `place_trade`. The caller is responsible for
+/// committing `txn` and recording an equity snapshot afterwards.
+pub async fn place_trade_tx(
+    txn: &mut sqlx::Transaction<'_, Sqlite>,
+    input: &PaperTradeInput,
+) -> Result<PaperLot, String> {
     let side = normalize_side(&input.side)?;
     if input.qty <= 0.0 {
         return Err("Paper trade quantity must be positive".into());
@@ -352,7 +401,7 @@ pub async fn place_trade(pool: &Pool<Sqlite>, input: PaperTradeInput) -> Result<
     }
 
     let cost = input.qty * input.entry_price_cents / 100.0;
-    let account = get_account(pool).await?;
+    let account = get_account_tx(txn).await?;
     if cost > account.balance_dollars {
         return Err(format!(
             "Insufficient paper buying power: ${:.2} needed, ${:.2} available",
@@ -383,14 +432,101 @@ pub async fn place_trade(pool: &Pool<Sqlite>, input: PaperTradeInput) -> Result<
     .bind(&source_str)
     .bind(&input.decision_json)
     .bind(&now)
-    .execute(pool)
+    .execute(&mut **txn)
     .await
     .map_err(|e| format!("Failed to insert paper lot: {}", e))?;
 
-    update_balance(pool, -cost).await?;
-    record_equity_snapshot(pool, None).await?;
+    update_balance_tx(txn, -cost).await?;
 
-    get_lot(pool, &id).await
+    get_lot_tx(txn, &id).await
+}
+
+/// Bundles all database writes performed when recording a paper decision so
+/// they can commit atomically.
+#[derive(Clone)]
+pub struct PaperDecisionContext {
+    pub prediction: PredictionRecord,
+    pub forecast_ticker: String,
+    pub forecast_created_at: String,
+    pub forecast_close_time: String,
+    pub p_market: f64,
+    pub p_model: Option<f64>,
+    pub p_final: f64,
+    pub verdict: String,
+    pub verdict_reasons: String,
+    pub stake_suggested: Option<f64>,
+    pub agent_breakdown: Option<String>,
+    pub trade_input: Option<PaperTradeInput>,
+}
+
+/// Atomically record a paper decision: prediction, forecast, edge-field update,
+/// and (if not PASS) paper lot + balance change all commit together.
+/// Returns the prediction id.
+pub async fn record_paper_decision(
+    pool: &Pool<Sqlite>,
+    ctx: PaperDecisionContext,
+) -> Result<String, String> {
+    let prediction_id = ctx.prediction.prediction.id.clone();
+    let breakdown_slice = ctx.agent_breakdown.as_deref();
+
+    let mut txn = pool
+        .begin()
+        .await
+        .map_err(|e| format!("begin paper decision transaction: {e}"))?;
+
+    // 1. Prediction row.
+    crate::predictions::storage::insert_prediction_tx(&mut txn, &ctx.prediction)
+        .await
+        .map_err(|e| format!("prediction insert: {e}"))?;
+
+    // 2. Forecast ledger row.
+    let forecast_id = crate::kalshi::forecast::insert_forecast_tx(
+        &mut txn,
+        &ctx.forecast_ticker,
+        &ctx.forecast_created_at,
+        &ctx.forecast_close_time,
+        ctx.p_market,
+        ctx.p_model,
+        ctx.p_final,
+        &ctx.verdict,
+        &ctx.verdict_reasons,
+        ctx.stake_suggested,
+        breakdown_slice,
+    )
+    .await
+    .map_err(|e| format!("forecast insert: {e}"))?;
+
+    // 3. Attach edge fields + forecast id to the prediction.
+    crate::predictions::storage::update_prediction_edge_fields_tx(
+        &mut txn,
+        &prediction_id,
+        ctx.p_market,
+        ctx.p_model,
+        ctx.p_final,
+        &ctx.verdict,
+        &ctx.verdict_reasons,
+        breakdown_slice,
+        Some(forecast_id),
+    )
+    .await
+    .map_err(|e| format!("prediction edge update: {e}"))?;
+
+    // 4. Optional paper lot (PASS decisions do not open a position).
+    if let Some(input) = ctx.trade_input {
+        place_trade_tx(&mut txn, &input)
+            .await
+            .map_err(|e| format!("paper lot: {e}"))?;
+    }
+
+    txn.commit()
+        .await
+        .map_err(|e| format!("commit paper decision: {e}"))?;
+
+    // Equity snapshot is recorded after commit because it requires a
+    // mark-to-market read that should not hold the write transaction open.
+    record_equity_snapshot(pool, None).await.ok();
+
+    Ok(prediction_id)
 }
 
 pub async fn close_lot(
@@ -452,6 +588,23 @@ pub async fn get_lot(pool: &Pool<Sqlite>, lot_id: &str) -> Result<PaperLot, Stri
     )
     .bind(lot_id)
     .fetch_one(pool)
+    .await
+    .map_err(|e| format!("Failed to fetch paper lot: {}", e))?;
+
+    Ok(row_to_lot(&row))
+}
+
+async fn get_lot_tx(txn: &mut sqlx::Transaction<'_, Sqlite>, lot_id: &str) -> Result<PaperLot, String> {
+    let row = sqlx::query(
+        r#"
+        SELECT id, ticker, title, category, side, entry_price_cents, qty, stake_dollars,
+               source, decision_json, opened_at, closed_at, closed_price_cents,
+               realized_pnl, status, settlement_result
+        FROM paper_lots WHERE id = ?1
+        "#,
+    )
+    .bind(lot_id)
+    .fetch_one(&mut **txn)
     .await
     .map_err(|e| format!("Failed to fetch paper lot: {}", e))?;
 
@@ -1024,5 +1177,84 @@ mod tests {
             "AiDecision".parse().unwrap()
         );
         assert!("Other".parse::<PaperTradeSource>().is_err());
+    }
+
+    #[tokio::test]
+    async fn place_trade_is_atomic_and_enforces_balance() {
+        let pool = Pool::<Sqlite>::connect("sqlite::memory:")
+            .await
+            .unwrap();
+        init_paper_tables(&pool).await.unwrap();
+
+        let input = PaperTradeInput {
+            ticker: "KXTEST-1".into(),
+            title: "Test market".into(),
+            category: "Economics".into(),
+            side: "YES".into(),
+            qty: 10_000.0,            // 10,000 contracts @ 55c = $5,500
+            entry_price_cents: 55.0,
+            source: PaperTradeSource::AiDecision,
+            decision_json: None,
+        };
+
+        // First trade fits inside the $10,000 starting balance.
+        let lot = place_trade(&pool, input.clone()).await.unwrap();
+        assert_eq!(lot.status, "Open");
+        assert!((lot.stake_dollars - 5500.0).abs() < 0.001);
+
+        let account = get_account(&pool).await.unwrap();
+        assert!((account.balance_dollars - 4500.0).abs() < 0.001);
+
+        // Second identical trade should fail (would need $5,500, only $4,500 left).
+        let err = place_trade(&pool, input.clone()).await.unwrap_err();
+        assert!(err.contains("Insufficient paper buying power"), "expected insufficient funds, got: {}", err);
+
+        // Balance and lot count must reflect exactly one successful trade.
+        let account = get_account(&pool).await.unwrap();
+        assert!((account.balance_dollars - 4500.0).abs() < 0.001);
+        let lots = get_all_lots(&pool).await.unwrap();
+        assert_eq!(lots.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn concurrent_place_trades_do_not_double_spend() {
+        let pool = Pool::<Sqlite>::connect("sqlite::memory:")
+            .await
+            .unwrap();
+        init_paper_tables(&pool).await.unwrap();
+
+        let input = PaperTradeInput {
+            ticker: "KXTEST-2".into(),
+            title: "Test market".into(),
+            category: "Economics".into(),
+            side: "YES".into(),
+            qty: 10_000.0,            // $5,500 each; two would overdraw
+            entry_price_cents: 55.0,
+            source: PaperTradeSource::AiDecision,
+            decision_json: None,
+        };
+
+        // Both trades individually fit but together would overdraw. Run them
+        // concurrently on cloned pools to exercise the balance-check race path.
+        let pool_a = pool.clone();
+        let pool_b = pool.clone();
+        let input_a = input.clone();
+        let input_b = input.clone();
+        let h1 = tokio::spawn(async move { place_trade(&pool_a, input_a).await });
+        let h2 = tokio::spawn(async move { place_trade(&pool_b, input_b).await });
+        let (a, b) = (h1.await.unwrap(), h2.await.unwrap());
+
+        let successes = [a.is_ok(), b.is_ok()].into_iter().filter(|x| *x).count();
+        assert!(
+            successes <= 1,
+            "only one of two concurrent trades may succeed, got {}",
+            successes
+        );
+
+        let account = get_account(&pool).await.unwrap();
+        let lots = get_all_lots(&pool).await.unwrap();
+        let expected_balance = if successes == 1 { 4500.0 } else { 10000.0 };
+        assert!((account.balance_dollars - expected_balance).abs() < 0.001);
+        assert_eq!(lots.len(), successes);
     }
 }

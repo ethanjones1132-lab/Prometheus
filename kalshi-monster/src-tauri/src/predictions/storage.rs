@@ -13,7 +13,7 @@
 //! On first run, migrates existing JSON data into SQLite.
 //! ═══════════════════════════════════════════════════════════════
 
-use sqlx::{sqlite::SqlitePoolOptions, Pool, Sqlite, Row};
+use sqlx::{sqlite::SqlitePoolOptions, Pool, Sqlite, Row, Transaction};
 use std::path::PathBuf;
 
 use super::tracker::{
@@ -222,6 +222,45 @@ pub async fn update_prediction_edge_fields(
     Ok(())
 }
 
+/// Transaction-aware version of `update_prediction_edge_fields`.
+pub async fn update_prediction_edge_fields_tx(
+    txn: &mut Transaction<'_, Sqlite>,
+    prediction_id: &str,
+    p_market: f64,
+    p_model: Option<f64>,
+    p_final: f64,
+    verdict: &str,
+    verdict_reasons: &str,
+    agent_breakdown: Option<&str>,
+    forecast_id: Option<i64>,
+) -> Result<(), String> {
+    sqlx::query(
+        r#"
+        UPDATE predictions
+        SET p_market = ?1,
+            p_model = ?2,
+            p_final = ?3,
+            verdict = ?4,
+            verdict_reasons = ?5,
+            agent_breakdown = ?6,
+            forecast_id = ?7
+        WHERE id = ?8
+        "#,
+    )
+    .bind(p_market)
+    .bind(p_model)
+    .bind(p_final)
+    .bind(verdict)
+    .bind(verdict_reasons)
+    .bind(agent_breakdown)
+    .bind(forecast_id)
+    .bind(prediction_id)
+    .execute(&mut **txn)
+    .await
+    .map_err(|e| format!("update prediction edge fields: {e}"))?;
+    Ok(())
+}
+
 // ═══════════════════════════════════════════════════════════════
 // CRUD Operations
 // ═══════════════════════════════════════════════════════════════
@@ -263,6 +302,49 @@ pub async fn insert_prediction(
     .bind(p.entry_price)
     .bind(p.model_disagreement as i64)
     .execute(pool)
+    .await
+    .map_err(|e| format!("Failed to insert prediction: {}", e))?;
+
+    Ok(())
+}
+
+/// Transaction-aware version of `insert_prediction`.
+pub async fn insert_prediction_tx(
+    txn: &mut Transaction<'_, Sqlite>,
+    record: &PredictionRecord,
+) -> Result<(), String> {
+    let p = &record.prediction;
+    sqlx::query(
+        r#"
+        INSERT OR IGNORE INTO predictions
+            (id, session_id, raw_text, player_name, pick_type, line,
+             stat_category, confidence, confidence_score, probability,
+             reasoning, risk, created_at, outcome, actual_result, notes, resolved_at,
+             full_decision_json, entry_price, model_disagreement)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)
+        "#,
+    )
+    .bind(&p.id)
+    .bind(&p.session_id)
+    .bind(&p.raw_text)
+    .bind(&p.player_name)
+    .bind(&p.pick_type)
+    .bind(p.line)
+    .bind(&p.stat_category)
+    .bind(&p.confidence)
+    .bind(p.confidence_score.map(|v| v as i64))
+    .bind(p.probability)
+    .bind(&p.reasoning)
+    .bind(&p.risk)
+    .bind(&p.created_at)
+    .bind(record.outcome.to_string())
+    .bind(record.actual_result)
+    .bind(&record.notes)
+    .bind(&record.resolved_at)
+    .bind(&p.full_decision_json)
+    .bind(p.entry_price)
+    .bind(p.model_disagreement as i64)
+    .execute(&mut **txn)
     .await
     .map_err(|e| format!("Failed to insert prediction: {}", e))?;
 
