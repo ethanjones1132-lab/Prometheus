@@ -14,7 +14,7 @@ Tracks execution of `docs/fincept-integration-plan.md` (v2.1). Newest entry firs
 | **2** | **Calibration flywheel (ongoing)** | Gate needs *resolved* rows | ✅ Auto-grade now fills `forecasts.outcome` via `resolve_forecasts_for_market`; accumulate ≥200 resolved + Brier + paper P&L. |
 | **3** | ~~**KB-2 Analyst UX**~~ | Shipped | Sessions, stream, paper, OpenCode providers, completion + retrieval fixes. |
 | **4** | **Phase 3 productization** | Ops path | ✅ Breaker persistence; ✅ reliability diagram; ✅ live-order guard; ✅ λ re-fit + Calibration panel; ✅ full **edge_config** in Settings; ✅ OS **keyring** for API secrets. **Next:** operational polish as gate data accrues. |
-| **5** | **Phase 1 leftovers** | Sidecar ops / data breadth | Settings UI for bridge start/status; expand tracker; `externalBin` packaging. |
+| **5** | **Phase 1 leftovers** | Sidecar ops / data breadth | ✅ Settings UI for bridge start/status; expand tracker; `externalBin` packaging. |
 | **6** | **More agents (honest data only)** | p_model coverage | Fincept spike or native agents only with real data. |
 | **7** | **AGPL isolation hygiene** | Plan §3 Rule 1 | Split `fincept-sidecar` public repo before Fincept-derived code. |
 
