@@ -2,7 +2,7 @@ import { render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { SettingsView } from './SettingsView';
 import { kalshiApi } from '../services/kalshi';
-import { bankrollApi, configApi, mlApi, notificationApi } from '../services/tauri';
+import { bankrollApi, configApi, finceptApi, mlApi, notificationApi } from '../services/tauri';
 
 vi.mock('../services/kalshi', () => ({
   kalshiApi: {
@@ -31,6 +31,11 @@ vi.mock('../services/tauri', () => ({
   notificationApi: {
     getSettings: vi.fn(),
     saveSettings: vi.fn(),
+  },
+  finceptApi: {
+    getBridgeStatus: vi.fn(),
+    startDev: vi.fn(),
+    stop: vi.fn(),
   },
 }));
 
@@ -191,6 +196,13 @@ describe('SettingsView', () => {
       game_starting_minutes_before: 30,
       show_os_notifications: true,
     });
+    vi.mocked(finceptApi.getBridgeStatus).mockResolvedValue({
+      online: false,
+      degraded: false,
+      base_url: null,
+      last_error: null,
+      restarts_remaining: 3,
+    });
   });
 
   test('shows redacted security posture without exposing secret values', async () => {
@@ -208,5 +220,12 @@ describe('SettingsView', () => {
     render(<SettingsView />);
     expect(await screen.findByText('Edge engine config')).toBeInTheDocument();
     expect(screen.getByLabelText(/Shrinkage λ/i)).toBeInTheDocument();
+  });
+
+  test('shows Fincept sidecar status card', async () => {
+    render(<SettingsView />);
+    expect(await screen.findByText('Fincept sidecar (Phase 1)')).toBeInTheDocument();
+    expect(screen.getByText(/offline/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Start dev sidecar/i })).toBeInTheDocument();
   });
 });

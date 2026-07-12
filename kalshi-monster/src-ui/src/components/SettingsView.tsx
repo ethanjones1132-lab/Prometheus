@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { kalshiApi } from '../services/kalshi';
-import { bankrollApi, configApi, mlApi, notificationApi } from '../services/tauri';
+import { bankrollApi, configApi, finceptApi, mlApi, notificationApi } from '../services/tauri';
+import type { FinceptBridgeStatus } from '../services/tauri';
 import type {
   ApiStatus,
   AppConfig,
@@ -109,6 +110,9 @@ export function SettingsView() {
   const [edgeSaving, setEdgeSaving] = useState(false);
   const [edgeMessage, setEdgeMessage] = useState<string | null>(null);
   const [edgeError, setEdgeError] = useState<string | null>(null);
+  const [finceptBridge, setFinceptBridge] = useState<FinceptBridgeStatus | null>(null);
+  const [finceptBridgeBusy, setFinceptBridgeBusy] = useState(false);
+  const [finceptBridgeError, setFinceptBridgeError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [bankrollLoading, setBankrollLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -171,6 +175,30 @@ export function SettingsView() {
       setEdgeError(e instanceof Error ? e.message : String(e));
     }
   }, []);
+
+  const loadFinceptBridge = useCallback(async () => {
+    setFinceptBridgeError(null);
+    try {
+      const status = await finceptApi.getBridgeStatus();
+      setFinceptBridge(status);
+    } catch (e) {
+      setFinceptBridgeError(e instanceof Error ? e.message : String(e));
+    }
+  }, []);
+
+  const runFinceptBridgeAction = async (action: 'start' | 'stop') => {
+    setFinceptBridgeBusy(true);
+    setFinceptBridgeError(null);
+    try {
+      const status =
+        action === 'start' ? await finceptApi.startDev() : await finceptApi.stop();
+      setFinceptBridge(status);
+    } catch (e) {
+      setFinceptBridgeError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setFinceptBridgeBusy(false);
+    }
+  };
 
   const handleSaveEdgeConfig = async () => {
     setEdgeSaving(true);
@@ -271,7 +299,8 @@ export function SettingsView() {
     void loadBankroll();
     void loadMlStatus();
     void loadEdgeConfig();
-  }, [loadBankroll, loadMlStatus, loadEdgeConfig]);
+    void loadFinceptBridge();
+  }, [loadBankroll, loadMlStatus, loadEdgeConfig, loadFinceptBridge]);
 
   const handleSave = async () => {
     setSaving(true);
@@ -573,6 +602,64 @@ export function SettingsView() {
           </button>
           <button type="button" className="ghostBtn" disabled={edgeSaving} onClick={() => void loadEdgeConfig()}>
             Reload from DB
+          </button>
+        </div>
+      </div>
+
+      <div className="card settingsWide">
+        <h3>Fincept sidecar (Phase 1)</h3>
+        <p className="muted" style={{ marginTop: 0 }}>
+          AGPL Python world-markets bridge. Dev mode spawns <code>fincept-sidecar/main.py</code> when
+          present; status reflects handshake + health check.
+        </p>
+        {finceptBridgeError ? <div className="banner error">{finceptBridgeError}</div> : null}
+        {finceptBridge ? (
+          <p className="muted">
+            Status:{' '}
+            <strong>{finceptBridge.online ? 'online' : 'offline'}</strong>
+            {finceptBridge.degraded ? ' (degraded)' : ''}
+            {finceptBridge.base_url ? (
+              <>
+                {' '}
+                · <code>{finceptBridge.base_url}</code>
+              </>
+            ) : null}
+            {' '}
+            · restarts remaining: <strong>{finceptBridge.restarts_remaining}</strong>
+            {finceptBridge.last_error ? (
+              <>
+                <br />
+                Last error: {finceptBridge.last_error}
+              </>
+            ) : null}
+          </p>
+        ) : (
+          <p className="muted">Loading bridge status…</p>
+        )}
+        <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.75rem', flexWrap: 'wrap' }}>
+          <button
+            type="button"
+            className="primaryBtn"
+            disabled={finceptBridgeBusy}
+            onClick={() => void runFinceptBridgeAction('start')}
+          >
+            {finceptBridgeBusy ? 'Working…' : 'Start dev sidecar'}
+          </button>
+          <button
+            type="button"
+            className="ghostBtn"
+            disabled={finceptBridgeBusy}
+            onClick={() => void runFinceptBridgeAction('stop')}
+          >
+            Stop sidecar
+          </button>
+          <button
+            type="button"
+            className="ghostBtn"
+            disabled={finceptBridgeBusy}
+            onClick={() => void loadFinceptBridge()}
+          >
+            Refresh status
           </button>
         </div>
       </div>
