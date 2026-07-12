@@ -127,8 +127,8 @@ pub fn fee_per_contract(p: f64, fee_multiplier: f64) -> f64 {
 /// next cent per Kalshi's schedule. A tiny epsilon guards against binary
 /// floating-point artifacts (e.g. 141.12 cents representing as 141.12000...2)
 /// spuriously ceiling to an extra cent.
-pub fn order_fee(p: f64, contracts: u32, fee_multiplier: f64) -> f64 {
-    let raw = fee_per_contract(p, fee_multiplier) * contracts as f64;
+pub fn order_fee(p: f64, contracts: f64, fee_multiplier: f64) -> f64 {
+    let raw = fee_per_contract(p, fee_multiplier) * contracts;
     ((raw * 100.0 - 1e-9).ceil()).max(0.0) / 100.0
 }
 
@@ -480,13 +480,13 @@ mod tests {
     #[test]
     fn order_fee_rounds_up_to_cent_on_the_total() {
         // 100 contracts at 72¢: raw 141.12¢ → 142¢ = $1.42
-        assert!(approx(order_fee(0.72, 100, 0.07), 1.42, 1e-9));
+        assert!(approx(order_fee(0.72, 100.0, 0.07), 1.42, 1e-9));
         // 1 contract at 50¢: raw 1.75¢ → 2¢
-        assert!(approx(order_fee(0.50, 1, 0.07), 0.02, 1e-9));
+        assert!(approx(order_fee(0.50, 1.0, 0.07), 0.02, 1e-9));
         // Exact-cent totals must NOT round up an extra cent (fp guard):
         // 10000 contracts at 50¢: raw exactly $175.00
-        assert!(approx(order_fee(0.50, 10_000, 0.07), 175.00, 1e-9));
-        assert!(approx(order_fee(0.72, 0, 0.07), 0.0, 1e-12));
+        assert!(approx(order_fee(0.50, 10_000.0, 0.07), 175.00, 1e-9));
+        assert!(approx(order_fee(0.72, 0.0, 0.07), 0.0, 1e-12));
     }
 
     // ---- shrinkage (§4.1) ----

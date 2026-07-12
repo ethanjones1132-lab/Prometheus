@@ -39,6 +39,10 @@ fn ensure_db_dir() -> Result<(), String> {
     Ok(())
 }
 
+/// Latest schema version tracked by the migration ledger. Bump this when adding
+/// a new migration and implement the corresponding `migration_XX_*` function.
+const BASELINE_VERSION: i64 = 3;
+
 /// Open a connection pool and run migrations.
 pub async fn init_db() -> Result<Pool<Sqlite>, String> {
     ensure_db_dir()?;
@@ -48,11 +52,152 @@ pub async fn init_db() -> Result<Pool<Sqlite>, String> {
 
     let pool = SqlitePoolOptions::new()
         .max_connections(5)
+        .after_connect(|conn, _meta| {
+            Box::pin(async move {
+                sqlx::query("PRAGMA journal_mode=WAL")
+                    .execute(&mut *conn)
+                    .await?;
+                sqlx::query("PRAGMA foreign_keys=ON")
+                    .execute(&mut *conn)
+                    .await?;
+                Ok(())
+            })
+        })
         .connect(&url)
         .await
         .map_err(|e| format!("Failed to connect to SQLite: {}", e))?;
 
-    // Create tables if they don't exist
+    ensure_migrations_table(&pool).await?;
+    baseline_existing_db(&pool).await?;
+    run_migrations(&pool).await?;
+
+    Ok(pool)
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Migration ledger
+// ═══════════════════════════════════════════════════════════════
+
+async fn ensure_migrations_table(pool: &Pool<Sqlite>) -> Result<(), String> {
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS _migrations (
+            version INTEGER PRIMARY KEY,
+            name TEXT NOT NULL,
+            applied_at TEXT NOT NULL
+        )
+        "#,
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| format!("Failed to create _migrations table: {}", e))?;
+    Ok(())
+}
+
+async fn current_migration_version(pool: &Pool<Sqlite>) -> Result<i64, String> {
+    let version: i64 = sqlx::query_scalar("SELECT COALESCE(MAX(version), 0) FROM _migrations")
+        .fetch_one(pool)
+        .await
+        .map_err(|e| format!("Failed to read migration version: {}", e))?;
+    Ok(version)
+}
+
+async fn predictions_table_exists(pool: &Pool<Sqlite>) -> Result<bool, String> {
+    let exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'predictions')",
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(|e| format!("Failed to check predictions table: {}", e))?;
+    Ok(exists)
+}
+
+/// Existing databases that predate the migration ledger are baselined by
+/// running all current migrations idempotently and recording them as applied.
+async fn baseline_existing_db(pool: &Pool<Sqlite>) -> Result<(), String> {
+    if current_migration_version(pool).await? > 0 {
+        return Ok(());
+    }
+    if !predictions_table_exists(pool).await? {
+        return Ok(());
+    }
+
+    let mut txn = pool
+        .begin()
+        .await
+        .map_err(|e| format!("begin baseline migration: {}", e))?;
+    migration_01_initial_schema_tx(&mut txn).await?;
+    migration_02_prediction_delta_columns_tx(&mut txn).await?;
+    migration_03_prediction_edge_columns_tx(&mut txn).await?;
+    for version in 1..=BASELINE_VERSION {
+        record_migration_tx(&mut txn, version).await?;
+    }
+    txn.commit()
+        .await
+        .map_err(|e| format!("commit baseline migration: {}", e))?;
+    Ok(())
+}
+
+/// Run every migration newer than the recorded version inside its own
+/// transaction. The migration row is inserted before commit so a crash midway
+/// leaves the ledger consistent with the schema that was actually applied.
+async fn run_migrations(pool: &Pool<Sqlite>) -> Result<(), String> {
+    let current = current_migration_version(pool).await?;
+    for version in (current + 1)..=BASELINE_VERSION {
+        let mut txn = pool
+            .begin()
+            .await
+            .map_err(|e| format!("begin migration {version}: {}", e))?;
+        match version {
+            1 => migration_01_initial_schema_tx(&mut txn).await?,
+            2 => migration_02_prediction_delta_columns_tx(&mut txn).await?,
+            3 => migration_03_prediction_edge_columns_tx(&mut txn).await?,
+            _ => return Err(format!("Unknown migration version: {}", version)),
+        }
+        record_migration_tx(&mut txn, version).await?;
+        txn.commit()
+            .await
+            .map_err(|e| format!("commit migration {version}: {}", e))?;
+    }
+    Ok(())
+}
+
+async fn record_migration_tx(txn: &mut Transaction<'_, Sqlite>, version: i64) -> Result<(), String> {
+    let name = migration_name(version);
+    let now = chrono::Utc::now().to_rfc3339();
+    sqlx::query(
+        "INSERT INTO _migrations (version, name, applied_at) VALUES (?1, ?2, ?3)",
+    )
+    .bind(version)
+    .bind(name)
+    .bind(&now)
+    .execute(&mut **txn)
+    .await
+    .map_err(|e| format!("Failed to record migration {version}: {}", e))?;
+    Ok(())
+}
+
+fn migration_name(version: i64) -> &'static str {
+    match version {
+        1 => "initial_schema",
+        2 => "prediction_delta_columns",
+        3 => "prediction_edge_columns",
+        _ => "unknown",
+    }
+}
+
+async fn existing_columns_tx(
+    txn: &mut Transaction<'_, Sqlite>,
+    table: &str,
+) -> Result<std::collections::HashSet<String>, String> {
+    let rows = sqlx::query(&format!("PRAGMA table_info({})", table))
+        .fetch_all(&mut **txn)
+        .await
+        .map_err(|e| format!("PRAGMA table_info({}) failed: {}", table, e))?;
+    Ok(rows.iter().map(|r| r.get::<String, _>("name")).collect())
+}
+
+async fn migration_01_initial_schema_tx(txn: &mut Transaction<'_, Sqlite>) -> Result<(), String> {
     sqlx::query(
         r#"
         CREATE TABLE IF NOT EXISTS predictions (
@@ -80,15 +225,9 @@ pub async fn init_db() -> Result<Pool<Sqlite>, String> {
         )
         "#,
     )
-    .execute(&pool)
+    .execute(&mut **txn)
     .await
-    .map_err(|e| format!("Failed to create predictions table: {}", e))?;
-
-    // Migration: add columns if they don't exist (for existing databases)
-    let _ = sqlx::query("ALTER TABLE predictions ADD COLUMN entry_price REAL DEFAULT 0").execute(&pool).await;
-    let _ = sqlx::query("ALTER TABLE predictions ADD COLUMN close_price REAL DEFAULT 0").execute(&pool).await;
-    let _ = sqlx::query("ALTER TABLE predictions ADD COLUMN clv REAL DEFAULT 0").execute(&pool).await;
-    let _ = sqlx::query("ALTER TABLE predictions ADD COLUMN model_disagreement INTEGER DEFAULT 0").execute(&pool).await;
+    .map_err(|e| format!("Migration 1 predictions table: {}", e))?;
 
     sqlx::query(
         r#"
@@ -108,56 +247,55 @@ pub async fn init_db() -> Result<Pool<Sqlite>, String> {
         )
         "#,
     )
-    .execute(&pool)
+    .execute(&mut **txn)
     .await
-    .map_err(|e| format!("Failed to create bet_history table: {}", e))?;
+    .map_err(|e| format!("Migration 1 bet_history table: {}", e))?;
 
-    // Indexes for common queries
-    sqlx::query("CREATE INDEX IF NOT EXISTS idx_pred_session ON predictions(session_id)")
-        .execute(&pool)
-        .await
-        .ok();
-    sqlx::query("CREATE INDEX IF NOT EXISTS idx_pred_outcome ON predictions(outcome)")
-        .execute(&pool)
-        .await
-        .ok();
-    sqlx::query("CREATE INDEX IF NOT EXISTS idx_pred_player ON predictions(player_name)")
-        .execute(&pool)
-        .await
-        .ok();
-    sqlx::query("CREATE INDEX IF NOT EXISTS idx_pred_created ON predictions(created_at)")
-        .execute(&pool)
-        .await
-        .ok();
-    sqlx::query("CREATE INDEX IF NOT EXISTS idx_pred_outcome_created ON predictions(outcome, created_at)")
-        .execute(&pool)
-        .await
-        .ok();
-    sqlx::query("CREATE INDEX IF NOT EXISTS idx_pred_confidence ON predictions(confidence_score)")
-        .execute(&pool)
-        .await
-        .ok();
+    let indexes = [
+        "CREATE INDEX IF NOT EXISTS idx_pred_session ON predictions(session_id)",
+        "CREATE INDEX IF NOT EXISTS idx_pred_outcome ON predictions(outcome)",
+        "CREATE INDEX IF NOT EXISTS idx_pred_player ON predictions(player_name)",
+        "CREATE INDEX IF NOT EXISTS idx_pred_created ON predictions(created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_pred_outcome_created ON predictions(outcome, created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_pred_confidence ON predictions(confidence_score)",
+    ];
+    for sql in indexes {
+        sqlx::query(sql)
+            .execute(&mut **txn)
+            .await
+            .map_err(|e| format!("Migration 1 index ({sql}): {}", e))?;
+    }
 
-    migrate_predictions_columns(&pool).await?;
-
-    Ok(pool)
+    Ok(())
 }
 
-/// Add columns introduced after initial schema without breaking existing DBs.
-async fn migrate_predictions_columns(pool: &Pool<Sqlite>) -> Result<(), String> {
-    let rows = sqlx::query("PRAGMA table_info(predictions)")
-        .fetch_all(pool)
-        .await
-        .map_err(|e| format!("PRAGMA table_info failed: {}", e))?;
+async fn migration_02_prediction_delta_columns_tx(
+    txn: &mut Transaction<'_, Sqlite>,
+) -> Result<(), String> {
+    let existing = existing_columns_tx(txn, "predictions").await?;
+    let additions: &[(&str, &str)] = &[
+        ("entry_price", "REAL DEFAULT 0"),
+        ("close_price", "REAL DEFAULT 0"),
+        ("clv", "REAL DEFAULT 0"),
+        ("model_disagreement", "INTEGER DEFAULT 0"),
+    ];
+    for (name, ty) in additions {
+        if existing.contains(*name) {
+            continue;
+        }
+        let sql = format!("ALTER TABLE predictions ADD COLUMN {name} {ty}");
+        sqlx::query(&sql)
+            .execute(&mut **txn)
+            .await
+            .map_err(|e| format!("Migration 2 add column {name}: {}", e))?;
+    }
+    Ok(())
+}
 
-    let existing: std::collections::HashSet<String> = rows
-        .iter()
-        .map(|r| r.get::<String, _>("name"))
-        .collect();
-
-    // Phase 0 delta (fincept-integration-progress): shrinkage-pipeline columns.
-    // Canonical calibration ledger remains `forecasts`; these mirror edge fields
-    // onto prediction rows written from paper/LLM decisions.
+async fn migration_03_prediction_edge_columns_tx(
+    txn: &mut Transaction<'_, Sqlite>,
+) -> Result<(), String> {
+    let existing = existing_columns_tx(txn, "predictions").await?;
     let additions: &[(&str, &str)] = &[
         ("full_decision_json", "TEXT"),
         ("p_market", "REAL"),
@@ -168,18 +306,16 @@ async fn migrate_predictions_columns(pool: &Pool<Sqlite>) -> Result<(), String> 
         ("agent_breakdown", "TEXT"),
         ("forecast_id", "INTEGER"),
     ];
-
     for (name, ty) in additions {
         if existing.contains(*name) {
             continue;
         }
         let sql = format!("ALTER TABLE predictions ADD COLUMN {name} {ty}");
         sqlx::query(&sql)
-            .execute(pool)
+            .execute(&mut **txn)
             .await
-            .map_err(|e| format!("ALTER TABLE {name} failed: {e}"))?;
+            .map_err(|e| format!("Migration 3 add column {name}: {}", e))?;
     }
-
     Ok(())
 }
 

@@ -2,6 +2,13 @@
 
 Last updated: 2026-07-12
 
+## Maintenance notes (2026-07-12, cron) — fee-aware grading + paper PnL (§6.5)
+
+- Shipped: `contract_pnl` / `evaluate_bet` use persisted `fee_multiplier`; paper `place_trade` charges `order_fee` on open; `order_fee` accepts fractional contracts; predictions storage aligned.
+- Auto-remediation: committed coherent interrupted WIP (4 Rust modules).
+- Health: `cargo check`, `tsc`, **211** lib tests, **40** vitest green.
+- **Next:** calibration flywheel; `externalBin` sidecar packaging.
+
 ## Maintenance notes (2026-07-12, cron pm b) — Fincept bridge Settings panel
 
 - Shipped: Settings **Fincept sidecar (Phase 1)** card — status, start/stop dev, refresh via existing IPC.

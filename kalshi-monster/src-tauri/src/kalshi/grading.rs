@@ -2,6 +2,7 @@
 
 use super::forecast;
 use super::models::KalshiPrediction;
+use crate::edge_engine::fee_per_contract;
 use crate::kalshi::client::KalshiClient;
 use crate::kalshi::models::{KalshiGradingResult, KalshiGradingSummary};
 use crate::notification::{self, AppNotification, NotificationType};
@@ -112,25 +113,32 @@ pub fn bet_won(side: KalshiBetSide, actual_outcome: &str) -> Option<bool> {
     }
 }
 
-pub fn contract_pnl(stake: f64, entry_price: f64, won: bool) -> f64 {
+pub fn contract_pnl(stake: f64, entry_price: f64, won: bool, fee_multiplier: f64) -> f64 {
     if stake <= 0.0 {
         return 0.0;
     }
-    if !won {
-        return -stake;
-    }
     let p = entry_price.clamp(0.01, 0.99);
-    (stake / p) - stake
+    let contracts = stake / p;
+    let fee_total = fee_per_contract(p, fee_multiplier) * contracts;
+    if !won {
+        return -(stake + fee_total);
+    }
+    // Each winning contract pays $1; net PnL subtracts both stake and fees.
+    contracts - stake - fee_total
 }
 
-pub fn evaluate_bet(pred: &KalshiPrediction, actual_outcome: &str) -> Option<KalshiBetEvaluation> {
+pub fn evaluate_bet(
+    pred: &KalshiPrediction,
+    actual_outcome: &str,
+    fee_multiplier: f64,
+) -> Option<KalshiBetEvaluation> {
     let side = parse_bet_side(
         pred.contract_side.as_deref(),
         pred.pick_type.as_deref(),
     );
     let won = bet_won(side, actual_outcome)?;
     let entry_price = entry_price_decimal(pred, side);
-    let pnl = contract_pnl(pred.stake_amount, entry_price, won);
+    let pnl = contract_pnl(pred.stake_amount, entry_price, won, fee_multiplier);
     Some(KalshiBetEvaluation {
         side,
         won,
@@ -145,6 +153,10 @@ pub async fn grade_pending_predictions(
     client: &KalshiClient,
     pool: &Pool<Sqlite>,
 ) -> Result<KalshiGradingSummary, String> {
+    let edge_cfg = crate::edge_engine::persistence::load_edge_config(pool)
+        .await
+        .unwrap_or_default();
+
     let pending: Vec<KalshiPrediction> = tracker
         .get_kalshi_predictions()
         .await
@@ -188,7 +200,7 @@ pub async fn grade_pending_predictions(
         }
 
         for pred in preds {
-            let Some(eval) = evaluate_bet(pred, &actual) else {
+            let Some(eval) = evaluate_bet(pred, &actual, edge_cfg.fee_multiplier) else {
                 continue;
             };
             if eval.won {
@@ -491,11 +503,32 @@ mod tests {
 
     #[test]
     fn yes_below_fifty_wins() {
-        assert!(evaluate_bet(&pred("YES", 48.0, 100.0, 0.52), "Yes").unwrap().won);
+        assert!(evaluate_bet(&pred("YES", 48.0, 100.0, 0.52), "Yes", 0.0).unwrap().won);
     }
 
     #[test]
     fn no_wins_on_no() {
-        assert!(evaluate_bet(&pred("NO", 40.0, 100.0, 0.40), "No").unwrap().won);
+        assert!(evaluate_bet(&pred("NO", 40.0, 100.0, 0.40), "No", 0.0).unwrap().won);
+    }
+
+    #[test]
+    fn contract_pnl_subtracts_fees_on_win() {
+        // $100 stake at 50¢ → 200 contracts. Gross win = $200 - $100 = $100.
+        // Fee = 0.07 · 0.50 · 0.50 · 200 = $3.50. Net PnL = $96.50.
+        let pnl = contract_pnl(100.0, 0.50, true, 0.07);
+        assert!((pnl - 96.50).abs() < 0.001, "expected 96.50, got {pnl}");
+    }
+
+    #[test]
+    fn contract_pnl_subtracts_fees_on_loss() {
+        // $100 stake at 50¢ → 200 contracts. Fee = $3.50. Total loss = -$103.50.
+        let pnl = contract_pnl(100.0, 0.50, false, 0.07);
+        assert!((pnl - (-103.50)).abs() < 0.001, "expected -103.50, got {pnl}");
+    }
+
+    #[test]
+    fn zero_fee_multiplier_preserves_gross_pnl() {
+        let pnl = contract_pnl(100.0, 0.50, true, 0.0);
+        assert!((pnl - 100.0).abs() < 0.001);
     }
 }

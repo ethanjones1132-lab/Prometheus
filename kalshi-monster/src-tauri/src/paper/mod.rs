@@ -9,12 +9,20 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use sqlx::{Pool, Row, Sqlite};
 
+use crate::edge_engine::{order_fee, EdgeConfig};
 use crate::kalshi::client::KalshiClient;
 use crate::predictions::tracker::PredictionRecord;
 
 
 pub const PAPER_SESSION_ID: &str = "paper-sim";
 const DEFAULT_STARTING_BALANCE: f64 = 10_000.0;
+
+async fn edge_fee_multiplier(pool: &Pool<Sqlite>) -> f64 {
+    crate::edge_engine::persistence::load_edge_config(pool)
+        .await
+        .map(|c| c.fee_multiplier)
+        .unwrap_or_else(|_| EdgeConfig::default().fee_multiplier)
+}
 
 /// Singleton paper account.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -65,6 +73,7 @@ pub struct PaperLot {
     pub side: String,
     pub entry_price_cents: f64,
     pub qty: f64,
+    /// Total cash spent to open the lot: gross cost + Kalshi taker fee.
     pub stake_dollars: f64,
     pub source: PaperTradeSource,
     pub decision_json: Option<String>,
@@ -375,8 +384,9 @@ fn normalize_side(side: &str) -> Result<String, String> {
 }
 
 pub async fn place_trade(pool: &Pool<Sqlite>, input: PaperTradeInput) -> Result<PaperLot, String> {
+    let fee_multiplier = edge_fee_multiplier(pool).await;
     let mut txn = pool.begin().await.map_err(|e| format!("begin transaction: {e}"))?;
-    let lot = place_trade_tx(&mut txn, &input).await?;
+    let lot = place_trade_tx(&mut txn, &input, fee_multiplier).await?;
     txn.commit().await.map_err(|e| format!("commit paper trade: {e}"))?;
 
     // Snapshot is recorded after commit so mark-to-market reads do not hold
@@ -391,6 +401,7 @@ pub async fn place_trade(pool: &Pool<Sqlite>, input: PaperTradeInput) -> Result<
 pub async fn place_trade_tx(
     txn: &mut sqlx::Transaction<'_, Sqlite>,
     input: &PaperTradeInput,
+    fee_multiplier: f64,
 ) -> Result<PaperLot, String> {
     let side = normalize_side(&input.side)?;
     if input.qty <= 0.0 {
@@ -400,12 +411,15 @@ pub async fn place_trade_tx(
         return Err("Paper entry price must be between 0 and 100 cents".into());
     }
 
-    let cost = input.qty * input.entry_price_cents / 100.0;
+    let entry_price_dollars = input.entry_price_cents / 100.0;
+    let cost = input.qty * entry_price_dollars;
+    let fee = order_fee(entry_price_dollars, input.qty, fee_multiplier);
+    let total_cost = cost + fee;
     let account = get_account_tx(txn).await?;
-    if cost > account.balance_dollars {
+    if total_cost > account.balance_dollars {
         return Err(format!(
             "Insufficient paper buying power: ${:.2} needed, ${:.2} available",
-            cost, account.balance_dollars
+            total_cost, account.balance_dollars
         ));
     }
 
@@ -428,7 +442,7 @@ pub async fn place_trade_tx(
     .bind(&side)
     .bind(input.entry_price_cents)
     .bind(input.qty)
-    .bind(cost)
+    .bind(total_cost)
     .bind(&source_str)
     .bind(&input.decision_json)
     .bind(&now)
@@ -436,7 +450,7 @@ pub async fn place_trade_tx(
     .await
     .map_err(|e| format!("Failed to insert paper lot: {}", e))?;
 
-    update_balance_tx(txn, -cost).await?;
+    update_balance_tx(txn, -total_cost).await?;
 
     get_lot_tx(txn, &id).await
 }
@@ -468,6 +482,7 @@ pub async fn record_paper_decision(
 ) -> Result<String, String> {
     let prediction_id = ctx.prediction.prediction.id.clone();
     let breakdown_slice = ctx.agent_breakdown.as_deref();
+    let fee_multiplier = edge_fee_multiplier(pool).await;
 
     let mut txn = pool
         .begin()
@@ -513,7 +528,7 @@ pub async fn record_paper_decision(
 
     // 4. Optional paper lot (PASS decisions do not open a position).
     if let Some(input) = ctx.trade_input {
-        place_trade_tx(&mut txn, &input)
+        place_trade_tx(&mut txn, &input, fee_multiplier)
             .await
             .map_err(|e| format!("paper lot: {e}"))?;
     }
@@ -1147,10 +1162,12 @@ mod tests {
         let qty = 10.0;
         let entry = 55.0; // cents
         let cost = qty * entry / 100.0; // $5.50
+        let fee = order_fee(entry / 100.0, qty, EdgeConfig::default().fee_multiplier); // ≈$0.17
+        let total_cost = cost + fee;
         let exit = 100.0;
         let proceeds = qty * exit / 100.0; // $10.00
-        let pnl: f64 = proceeds - cost;
-        assert!((pnl - 4.50).abs() < 0.001);
+        let pnl: f64 = proceeds - total_cost;
+        assert!((pnl - 4.33).abs() < 0.02, "expected ~4.33, got {pnl}");
     }
 
     #[test]
@@ -1158,10 +1175,12 @@ mod tests {
         let qty = 10.0;
         let entry = 45.0; // NO price in cents
         let cost = qty * entry / 100.0; // $4.50
+        let fee = order_fee(entry / 100.0, qty, EdgeConfig::default().fee_multiplier); // ≈$0.17
+        let total_cost = cost + fee;
         let exit = 100.0; // No wins
         let proceeds = qty * exit / 100.0; // $10.00
-        let pnl: f64 = proceeds - cost;
-        assert!((pnl - 5.50).abs() < 0.001);
+        let pnl: f64 = proceeds - total_cost;
+        assert!((pnl - 5.33).abs() < 0.02, "expected ~5.33, got {pnl}");
     }
 
     #[test]
@@ -1191,27 +1210,28 @@ mod tests {
             title: "Test market".into(),
             category: "Economics".into(),
             side: "YES".into(),
-            qty: 10_000.0,            // 10,000 contracts @ 55c = $5,500
+            qty: 10_000.0,            // 10,000 contracts @ 55c = $5,500 + fees
             entry_price_cents: 55.0,
             source: PaperTradeSource::AiDecision,
             decision_json: None,
         };
+        let total_cost = 5500.0 + order_fee(0.55, 10_000.0, EdgeConfig::default().fee_multiplier);
 
         // First trade fits inside the $10,000 starting balance.
         let lot = place_trade(&pool, input.clone()).await.unwrap();
         assert_eq!(lot.status, "Open");
-        assert!((lot.stake_dollars - 5500.0).abs() < 0.001);
+        assert!((lot.stake_dollars - total_cost).abs() < 0.001);
 
         let account = get_account(&pool).await.unwrap();
-        assert!((account.balance_dollars - 4500.0).abs() < 0.001);
+        assert!((account.balance_dollars - (10_000.0 - total_cost)).abs() < 0.001);
 
-        // Second identical trade should fail (would need $5,500, only $4,500 left).
+        // Second identical trade should fail (would need total_cost, only remainder left).
         let err = place_trade(&pool, input.clone()).await.unwrap_err();
         assert!(err.contains("Insufficient paper buying power"), "expected insufficient funds, got: {}", err);
 
         // Balance and lot count must reflect exactly one successful trade.
         let account = get_account(&pool).await.unwrap();
-        assert!((account.balance_dollars - 4500.0).abs() < 0.001);
+        assert!((account.balance_dollars - (10_000.0 - total_cost)).abs() < 0.001);
         let lots = get_all_lots(&pool).await.unwrap();
         assert_eq!(lots.len(), 1);
     }
@@ -1228,11 +1248,12 @@ mod tests {
             title: "Test market".into(),
             category: "Economics".into(),
             side: "YES".into(),
-            qty: 10_000.0,            // $5,500 each; two would overdraw
+            qty: 10_000.0,            // ~$5,673 each; two would overdraw
             entry_price_cents: 55.0,
             source: PaperTradeSource::AiDecision,
             decision_json: None,
         };
+        let total_cost = 5500.0 + order_fee(0.55, 10_000.0, EdgeConfig::default().fee_multiplier);
 
         // Both trades individually fit but together would overdraw. Run them
         // concurrently on cloned pools to exercise the balance-check race path.
@@ -1253,8 +1274,36 @@ mod tests {
 
         let account = get_account(&pool).await.unwrap();
         let lots = get_all_lots(&pool).await.unwrap();
-        let expected_balance = if successes == 1 { 4500.0 } else { 10000.0 };
+        let expected_balance = if successes == 1 { 10_000.0 - total_cost } else { 10000.0 };
         assert!((account.balance_dollars - expected_balance).abs() < 0.001);
         assert_eq!(lots.len(), successes);
+    }
+
+    #[tokio::test]
+    async fn close_lot_realized_pnl_includes_entry_fees() {
+        let pool = Pool::<Sqlite>::connect("sqlite::memory:")
+            .await
+            .unwrap();
+        init_paper_tables(&pool).await.unwrap();
+
+        let input = PaperTradeInput {
+            ticker: "KXTEST-3".into(),
+            title: "Test market".into(),
+            category: "Economics".into(),
+            side: "YES".into(),
+            qty: 100.0,
+            entry_price_cents: 50.0,
+            source: PaperTradeSource::Manual,
+            decision_json: None,
+        };
+        let lot = place_trade(&pool, input).await.unwrap();
+        let total_cost = lot.stake_dollars;
+        let fee = order_fee(0.50, 100.0, EdgeConfig::default().fee_multiplier);
+        assert!((total_cost - (50.0 + fee)).abs() < 0.001);
+
+        let closed = close_lot(&pool, &lot.id, 100.0).await.unwrap();
+        let realized = closed.realized_pnl.unwrap();
+        // Proceeds $100 - total cost (gross $50 + fee).
+        assert!((realized - (50.0 - fee)).abs() < 0.001, "expected {}, got {}", 50.0 - fee, realized);
     }
 }
