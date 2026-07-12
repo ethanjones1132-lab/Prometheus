@@ -7,7 +7,7 @@ import { bankrollApi, configApi, mlApi, notificationApi } from '../services/taur
 vi.mock('../services/kalshi', () => ({
   kalshiApi: {
     getEdgeConfig: vi.fn(),
-    setShrinkageLambda: vi.fn(),
+    setEdgeConfig: vi.fn(),
   },
 }));
 
@@ -160,7 +160,7 @@ describe('SettingsView', () => {
       kelly_fraction: 0.25,
       min_confidence: 0.5,
     });
-    vi.mocked(kalshiApi.setShrinkageLambda).mockResolvedValue({
+    vi.mocked(kalshiApi.setEdgeConfig).mockResolvedValue({
       shrinkage_lambda: 0.3,
       min_edge: 0.02,
       fee_multiplier: 1.0,
@@ -193,7 +193,7 @@ describe('SettingsView', () => {
 
   test('shows edge shrinkage lambda settings card', async () => {
     render(<SettingsView />);
-    expect(await screen.findByText('Edge engine (shrinkage λ)')).toBeInTheDocument();
+    expect(await screen.findByText('Edge engine config')).toBeInTheDocument();
     expect(screen.getByLabelText(/Shrinkage λ/i)).toBeInTheDocument();
   });
 });

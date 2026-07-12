@@ -2133,7 +2133,8 @@ pub async fn kalshi_refit_lambda(
         crate::edge_engine::calibration::LAMBDA_REFIT_MIN_SAMPLES,
     );
     if let Some(ref f) = fit {
-        crate::edge_engine::persistence::save_shrinkage_lambda(&db_pool, f.lambda).await?;
+        // NaN for non-lambda fields keeps previous values
+        crate::edge_engine::persistence::save_edge_config(&db_pool, f.lambda, f64::NAN, f64::NAN, f64::NAN, f64::NAN).await?;
     }
     Ok(fit)
 }
@@ -2146,17 +2147,26 @@ pub async fn kalshi_get_edge_config(
     crate::edge_engine::persistence::load_edge_config(&db_pool).await
 }
 
-/// Manual override for shrinkage λ (plan §4.1). Value is clamped to [0, 1].
+/// Persist edge-engine tunables (plan §4.1, Appendix C).  Any field passed as 0.0 or
+/// non-finite keeps its previous value.  Returns the loaded config after persistence.
 #[tauri::command]
-pub async fn kalshi_set_shrinkage_lambda(
-    lambda: f64,
+pub async fn kalshi_set_edge_config(
+    shrinkage_lambda: f64,
+    min_edge: f64,
+    fee_multiplier: f64,
+    kelly_fraction: f64,
+    min_confidence: f64,
     db_pool: State<'_, Pool<Sqlite>>,
 ) -> Result<crate::edge_engine::EdgeConfig, String> {
-    if !lambda.is_finite() {
-        return Err("shrinkage_lambda must be a finite number".to_string());
-    }
-    crate::edge_engine::persistence::save_shrinkage_lambda(&db_pool, lambda).await?;
-    crate::edge_engine::persistence::load_edge_config(&db_pool).await
+    crate::edge_engine::persistence::save_edge_config(
+        &db_pool,
+        shrinkage_lambda,
+        min_edge,
+        fee_multiplier,
+        kelly_fraction,
+        min_confidence,
+    )
+    .await
 }
 
 /// Record a paper-trade decision with calibration + correlation-adjusted sizing.

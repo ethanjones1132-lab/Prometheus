@@ -99,7 +99,13 @@ export function SettingsView() {
   const [mlTrainMessage, setMlTrainMessage] = useState<string | null>(null);
   const [notificationSettings, setNotificationSettings] =
     useState<NotificationSettings>(DEFAULT_NOTIFICATION_SETTINGS);
-  const [edgeLambdaInput, setEdgeLambdaInput] = useState('0.25');
+  const [edgeConfigInputs, setEdgeConfigInputs] = useState({
+    shrinkage_lambda: '0.25',
+    min_edge: '0.05',
+    fee_multiplier: '0.07',
+    kelly_fraction: '0.25',
+    min_confidence: '0.30',
+  });
   const [edgeSaving, setEdgeSaving] = useState(false);
   const [edgeMessage, setEdgeMessage] = useState<string | null>(null);
   const [edgeError, setEdgeError] = useState<string | null>(null);
@@ -149,25 +155,39 @@ export function SettingsView() {
     setEdgeError(null);
     try {
       const cfg = await kalshiApi.getEdgeConfig();
-      setEdgeLambdaInput(cfg.shrinkage_lambda.toFixed(3));
+      setEdgeConfigInputs({
+        shrinkage_lambda: cfg.shrinkage_lambda.toFixed(3),
+        min_edge: cfg.min_edge.toFixed(3),
+        fee_multiplier: cfg.fee_multiplier.toFixed(3),
+        kelly_fraction: cfg.kelly_fraction.toFixed(3),
+        min_confidence: cfg.min_confidence.toFixed(3),
+      });
     } catch (e) {
       setEdgeError(e instanceof Error ? e.message : String(e));
     }
   }, []);
 
-  const handleSaveEdgeLambda = async () => {
+  const handleSaveEdgeConfig = async () => {
     setEdgeSaving(true);
     setEdgeMessage(null);
     setEdgeError(null);
     try {
-      const parsed = Number(edgeLambdaInput);
-      if (!Number.isFinite(parsed)) {
-        throw new Error('Enter a valid number between 0 and 1.');
-      }
-      const saved = await kalshiApi.setShrinkageLambda(parsed);
-      setEdgeLambdaInput(saved.shrinkage_lambda.toFixed(3));
+      const saved = await kalshiApi.setEdgeConfig({
+        shrinkage_lambda: Number(edgeConfigInputs.shrinkage_lambda),
+        min_edge: Number(edgeConfigInputs.min_edge),
+        fee_multiplier: Number(edgeConfigInputs.fee_multiplier),
+        kelly_fraction: Number(edgeConfigInputs.kelly_fraction),
+        min_confidence: Number(edgeConfigInputs.min_confidence),
+      });
+      setEdgeConfigInputs({
+        shrinkage_lambda: saved.shrinkage_lambda.toFixed(3),
+        min_edge: saved.min_edge.toFixed(3),
+        fee_multiplier: saved.fee_multiplier.toFixed(3),
+        kelly_fraction: saved.kelly_fraction.toFixed(3),
+        min_confidence: saved.min_confidence.toFixed(3),
+      });
       setEdgeMessage(
-        `Shrinkage λ saved (${saved.shrinkage_lambda.toFixed(3)}). Analyze and paper paths use this value.`,
+        `Edge config saved (λ=${saved.shrinkage_lambda.toFixed(3)}, min_edge=${saved.min_edge.toFixed(3)}, fee=${saved.fee_multiplier.toFixed(3)}, kelly=${saved.kelly_fraction.toFixed(3)}, confidence=${saved.min_confidence.toFixed(3)}).`,
       );
     } catch (e) {
       setEdgeError(e instanceof Error ? e.message : String(e));
@@ -446,11 +466,10 @@ export function SettingsView() {
       </div>
 
       <div className="card settingsWide">
-        <h3>Edge engine (shrinkage λ)</h3>
+        <h3>Edge engine config</h3>
         <p className="muted" style={{ marginTop: 0 }}>
-          Manual override for plan §4.1 shrinkage between model and market probabilities. Calibration
-          re-fit also writes here; analyze and paper decisions load the persisted value from{' '}
-          <code>edge_config</code>.
+          Plan §4.1 + Appendix C.  Analyze and paper decisions load values from{' '}
+          <code>edge_config</code>.  Calibration re-fit also writes shrinkage λ here.
         </p>
         {edgeError ? <div className="banner error">{edgeError}</div> : null}
         {edgeMessage ? <div className="banner success">{edgeMessage}</div> : null}
@@ -462,8 +481,62 @@ export function SettingsView() {
               min={0}
               max={1}
               step={0.001}
-              value={edgeLambdaInput}
-              onChange={(e) => setEdgeLambdaInput(e.target.value)}
+              value={edgeConfigInputs.shrinkage_lambda}
+              onChange={(e) =>
+                setEdgeConfigInputs((prev) => ({ ...prev, shrinkage_lambda: e.target.value }))
+              }
+            />
+          </label>
+          <label>
+            Min edge ($ per $1 payout)
+            <input
+              type="number"
+              min={0.01}
+              max={0.50}
+              step={0.001}
+              value={edgeConfigInputs.min_edge}
+              onChange={(e) =>
+                setEdgeConfigInputs((prev) => ({ ...prev, min_edge: e.target.value }))
+              }
+            />
+          </label>
+          <label>
+            Fee multiplier
+            <input
+              type="number"
+              min={0.01}
+              max={0.30}
+              step={0.01}
+              value={edgeConfigInputs.fee_multiplier}
+              onChange={(e) =>
+                setEdgeConfigInputs((prev) => ({ ...prev, fee_multiplier: e.target.value }))
+              }
+            />
+          </label>
+          <label>
+            Kelly fraction
+            <input
+              type="number"
+              min={0.01}
+              max={1.0}
+              step={0.01}
+              value={edgeConfigInputs.kelly_fraction}
+              onChange={(e) =>
+                setEdgeConfigInputs((prev) => ({ ...prev, kelly_fraction: e.target.value }))
+              }
+            />
+          </label>
+          <label>
+            Min confidence
+            <input
+              type="number"
+              min={0}
+              max={1.0}
+              step={0.01}
+              value={edgeConfigInputs.min_confidence}
+              onChange={(e) =>
+                setEdgeConfigInputs((prev) => ({ ...prev, min_confidence: e.target.value }))
+              }
             />
           </label>
         </div>
@@ -472,9 +545,9 @@ export function SettingsView() {
             type="button"
             className="primaryBtn"
             disabled={edgeSaving}
-            onClick={() => void handleSaveEdgeLambda()}
+            onClick={() => void handleSaveEdgeConfig()}
           >
-            {edgeSaving ? 'Saving…' : 'Save shrinkage λ'}
+            {edgeSaving ? 'Saving…' : 'Save all edge config'}
           </button>
           <button type="button" className="ghostBtn" disabled={edgeSaving} onClick={() => void loadEdgeConfig()}>
             Reload from DB

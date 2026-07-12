@@ -101,8 +101,20 @@ export const kalshiApi = {
 
   getEdgeConfig: () => invoke<EdgeConfig>('kalshi_get_edge_config'),
 
-  setShrinkageLambda: (lambda: number) =>
-    invoke<EdgeConfig>('kalshi_set_shrinkage_lambda', { lambda }),
+  setEdgeConfig: (cfg: {
+      shrinkage_lambda?: number;
+      min_edge?: number;
+      fee_multiplier?: number;
+      kelly_fraction?: number;
+      min_confidence?: number;
+    }) =>
+      invoke<EdgeConfig>('kalshi_set_edge_config', {
+        shrinkageLambda: cfg.shrinkage_lambda ?? NaN,
+        minEdge: cfg.min_edge ?? NaN,
+        feeMultiplier: cfg.fee_multiplier ?? NaN,
+        kellyFraction: cfg.kelly_fraction ?? NaN,
+        minConfidence: cfg.min_confidence ?? NaN,
+      }),
 
   evaluateBreakers: () => invoke<BreakerDecision>('kalshi_evaluate_breakers'),
 

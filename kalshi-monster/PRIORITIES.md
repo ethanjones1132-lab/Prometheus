@@ -1,6 +1,13 @@
 # Kalshi Monster — Priority Roadmap
 
-Last updated: 2026-07-11
+Last updated: 2026-07-12
+
+## Maintenance notes (2026-07-12, cron) — full edge_config Settings + IPC
+
+- Shipped: `save_edge_config` / `kalshi_set_edge_config` for all five EdgeConfig fields; Settings **Edge engine config** card with Save all; NaN sentinels for unchanged fields; refit λ uses NaN for non-λ fields; vitest mock `setEdgeConfig`.
+- Auto-remediation: committed interrupted WIP; gitignored one-off `scripts/fix_*.py` / `expand_*.py` agent helpers.
+- Health: `cargo check`, `tsc`, 202 lib tests, **39** vitest green.
+- **Next:** KB-1 live credential verification; forecast→outcome bridge on auto-grade; calibration flywheel.
 
 ## Maintenance notes (2026-07-11, cron) — Settings manual shrinkage λ override
 

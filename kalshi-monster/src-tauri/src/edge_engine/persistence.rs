@@ -124,7 +124,11 @@ pub async fn init_edge_config_table(pool: &SqlitePool) -> Result<(), String> {
     sqlx::query(&format!(
         "CREATE TABLE IF NOT EXISTS {EDGE_TABLE} (
             id               INTEGER PRIMARY KEY CHECK(id = 1),
-            shrinkage_lambda REAL NOT NULL DEFAULT 0.25
+            shrinkage_lambda REAL NOT NULL DEFAULT 0.25,
+            min_edge         REAL NOT NULL DEFAULT 0.05,
+            fee_multiplier   REAL NOT NULL DEFAULT 0.07,
+            kelly_fraction   REAL NOT NULL DEFAULT 0.25,
+            min_confidence   REAL NOT NULL DEFAULT 0.30
         );"
     ))
     .execute(pool)
@@ -132,8 +136,9 @@ pub async fn init_edge_config_table(pool: &SqlitePool) -> Result<(), String> {
     .map_err(|e| format!("Failed to create {EDGE_TABLE} table: {e}"))?;
 
     sqlx::query(&format!(
-        "INSERT OR IGNORE INTO {EDGE_TABLE} (id, shrinkage_lambda)
-         VALUES (1, 0.25);"
+        "INSERT OR IGNORE INTO {EDGE_TABLE}
+         (id, shrinkage_lambda, min_edge, fee_multiplier, kelly_fraction, min_confidence)
+         VALUES (1, 0.25, 0.05, 0.07, 0.25, 0.30);"
     ))
     .execute(pool)
     .await
@@ -147,7 +152,7 @@ pub async fn init_edge_config_table(pool: &SqlitePool) -> Result<(), String> {
 pub async fn load_edge_config(pool: &SqlitePool) -> Result<EdgeConfig, String> {
     init_edge_config_table(pool).await?;
     let row = sqlx::query(&format!(
-        "SELECT shrinkage_lambda FROM {EDGE_TABLE} WHERE id = 1"
+        "SELECT shrinkage_lambda, min_edge, fee_multiplier, kelly_fraction, min_confidence FROM {EDGE_TABLE} WHERE id = 1"
     ))
     .fetch_optional(pool)
     .await
@@ -157,22 +162,73 @@ pub async fn load_edge_config(pool: &SqlitePool) -> Result<EdgeConfig, String> {
     if let Some(r) = row {
         let lambda: f64 = r.get(0);
         cfg.shrinkage_lambda = lambda.clamp(0.0, 1.0);
+        let me: f64 = r.get(1);
+        if me.is_finite() && me > 0.0 {
+            cfg.min_edge = me;
+        }
+        let fm: f64 = r.get(2);
+        if fm.is_finite() && fm > 0.0 {
+            cfg.fee_multiplier = fm;
+        }
+        let kf: f64 = r.get(3);
+        if kf.is_finite() && kf > 0.0 {
+            cfg.kelly_fraction = kf;
+        }
+        let mc: f64 = r.get(4);
+        if mc.is_finite() && mc >= 0.0 {
+            cfg.min_confidence = mc;
+        }
     }
     Ok(cfg)
 }
 
-/// Persist a re-fitted shrinkage λ (plan §4.1) for subsequent edge evaluation.
-pub async fn save_shrinkage_lambda(pool: &SqlitePool, lambda: f64) -> Result<(), String> {
+/// Persist all edge-engine tunables (plan §4.1, Appendix C).  Only provided
+/// (finite) values overwrite defaults; pass 0.0 for values you want to keep as-is.
+pub async fn save_edge_config(
+    pool: &SqlitePool,
+    shrinkage_lambda: f64,
+    min_edge: f64,
+    fee_multiplier: f64,
+    kelly_fraction: f64,
+    min_confidence: f64,
+) -> Result<EdgeConfig, String> {
     init_edge_config_table(pool).await?;
-    let lambda = lambda.clamp(0.0, 1.0);
+    let prev = load_edge_config(pool).await.unwrap_or_default();
+    let lambda = if shrinkage_lambda.is_finite() {
+        shrinkage_lambda.clamp(0.0, 1.0)
+    } else {
+        prev.shrinkage_lambda
+    };
+    let me = if min_edge.is_finite() && min_edge > 0.0 {
+        min_edge
+    } else {
+        prev.min_edge
+    };
+    let fm = if fee_multiplier.is_finite() && fee_multiplier > 0.0 {
+        fee_multiplier
+    } else {
+        prev.fee_multiplier
+    };
+    let kf = if kelly_fraction.is_finite() && kelly_fraction > 0.0 {
+        kelly_fraction
+    } else {
+        prev.kelly_fraction
+    };
+    // min_confidence can legitimately be 0, so treat non-positive as "unchanged"
+    let mc = if min_confidence.is_finite() && min_confidence > 0.0 {
+        min_confidence
+    } else {
+        prev.min_confidence
+    };
     sqlx::query(&format!(
-        "INSERT OR REPLACE INTO {EDGE_TABLE} (id, shrinkage_lambda)
-         VALUES (1, {lambda})"
+        "INSERT OR REPLACE INTO {EDGE_TABLE}
+         (id, shrinkage_lambda, min_edge, fee_multiplier, kelly_fraction, min_confidence)
+         VALUES (1, {lambda}, {me}, {fm}, {kf}, {mc})"
     ))
     .execute(pool)
     .await
     .map_err(|e| format!("Failed to save {EDGE_TABLE}: {e}"))?;
-    Ok(())
+    load_edge_config(pool).await
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -228,15 +284,26 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn edge_config_defaults_then_persists_lambda() {
+    async fn edge_config_defaults_then_persists_all_fields() {
         let pool = fresh_pool().await;
         init_edge_config_table(&pool).await.unwrap();
         let cfg0 = load_edge_config(&pool).await.unwrap();
         assert!(approx(cfg0.shrinkage_lambda, 0.25, 1e-9));
+        assert!(approx(cfg0.min_edge, 0.05, 1e-9));
+        assert!(approx(cfg0.fee_multiplier, 0.07, 1e-9));
+        assert!(approx(cfg0.kelly_fraction, 0.25, 1e-9));
+        assert!(approx(cfg0.min_confidence, 0.30, 1e-9));
 
-        save_shrinkage_lambda(&pool, 0.42).await.unwrap();
-        let cfg1 = load_edge_config(&pool).await.unwrap();
-        assert!(approx(cfg1.shrinkage_lambda, 0.42, 1e-9));
+        // NaN for fields we do not want to change - they keep previous DB values.
+        let saved = save_edge_config(&pool, 0.42, 0.08, f64::NAN, f64::NAN, f64::NAN).await.unwrap();
+        assert!(approx(saved.shrinkage_lambda, 0.42, 1e-9));
+        assert!(approx(saved.min_edge, 0.08, 1e-9));
+        assert!(approx(saved.fee_multiplier, 0.07, 1e-9), "unchanged field preserved");
+        assert!(approx(saved.kelly_fraction, 0.25, 1e-9), "unchanged field preserved");
+        assert!(approx(saved.min_confidence, 0.30, 1e-9), "unchanged field preserved");
+        let reloaded = load_edge_config(&pool).await.unwrap();
+        assert!(approx(reloaded.shrinkage_lambda, 0.42, 1e-9));
+        assert!(approx(reloaded.min_edge, 0.08, 1e-9));
     }
 
     fn approx(a: f64, b: f64, eps: f64) -> bool {
