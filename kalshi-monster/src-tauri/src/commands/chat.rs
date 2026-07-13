@@ -351,6 +351,14 @@ pub async fn delete_chat_session(session_id: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub async fn rename_chat_session(
+    session_id: String,
+    new_name: String,
+) -> Result<session::ChatSession, String> {
+    session::rename_session(&session_id, &new_name)
+}
+
+#[tauri::command]
 pub async fn get_session_messages(
     session_id: String,
     chat_state: State<'_, Arc<Mutex<session::ChatState>>>,

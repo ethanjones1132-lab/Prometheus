@@ -59,6 +59,9 @@ export const chatApi = {
 
   deleteSession: (sessionId: string) => invoke<void>('delete_chat_session', { sessionId }),
 
+  renameSession: (sessionId: string, newName: string) =>
+    invoke<ChatSession>('rename_chat_session', { sessionId, newName }),
+
   getHistory: (sessionId: string) =>
     invoke<ChatMessage[]>('get_session_messages', { sessionId }),
 };

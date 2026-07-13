@@ -159,6 +159,26 @@ pub fn delete_session(session_id: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Rename a session by rewriting its metadata file with the new name.
+pub fn rename_session(session_id: &str, new_name: &str) -> Result<ChatSession, String> {
+    let dir = sessions_dir();
+    let session_path = dir.join(format!("{}.json", session_id));
+    if !session_path.exists() {
+        return Err(format!("Session {} not found", session_id));
+    }
+    let content = fs::read_to_string(&session_path)
+        .map_err(|e| format!("Failed to read session: {}", e))?;
+    let mut session: ChatSession = serde_json::from_str(&content)
+        .map_err(|e| format!("Failed to parse session: {}", e))?;
+    session.name = new_name.to_string();
+    session.updated_at = chrono::Utc::now().to_rfc3339();
+    let json = serde_json::to_string_pretty(&session)
+        .map_err(|e| format!("Failed to serialize session: {}", e))?;
+    fs::write(&session_path, json)
+        .map_err(|e| format!("Failed to write session: {}", e))?;
+    Ok(session)
+}
+
 pub fn save_session_messages(
     session_id: &str,
     messages: &[ChatMessage],

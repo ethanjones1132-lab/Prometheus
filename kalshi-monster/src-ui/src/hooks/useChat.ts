@@ -110,6 +110,14 @@ export function useChat() {
     [initSession, refreshSessions],
   );
 
+  const renameSession = useCallback(
+    async (id: string, newName: string) => {
+      await chatApi.renameSession(id, newName);
+      await refreshSessions();
+    },
+    [refreshSessions],
+  );
+
   const sendMessage = useCallback(
     async (content: string) => {
       if (!sessionIdRef.current) {
@@ -250,6 +258,7 @@ export function useChat() {
     initSession,
     selectSession,
     deleteSession,
+    renameSession,
     refreshSessions,
     cancelStream,
     retryLast,

@@ -1,6 +1,12 @@
 # Kalshi Monster — Priority Roadmap
 
-Last updated: 2026-07-12
+Last updated: 2026-07-13
+
+## Maintenance notes (2026-07-13, overnight) — session rename (KB-2b)
+
+- Shipped: `rename_session()` backend + `rename_chat_session` Tauri command + inline rename UI in ChatView (double-click pencil → inline input). Completes the KB-2b layout/sessions slice.
+- Health: `cargo check`, `tsc`, **216** lib tests green. KB-2 essentially done (2a/2b/2c/2d).
+- **Next:** KB-1 live credential verification (blocking); calibration flywheel; Phase 1 sidecar packaging.
 
 ## Maintenance notes (2026-07-12, cron) — fee-aware grading + paper PnL (§6.5)
 

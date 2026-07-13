@@ -256,9 +256,10 @@ pub fn run() {
             commands::send_message,
             commands::send_message_stream,
             commands::new_chat_session,
-            commands::list_chat_sessions,
-            commands::delete_chat_session,
-            commands::get_session_messages,
+                        commands::list_chat_sessions,
+                        commands::delete_chat_session,
+                        commands::rename_chat_session,
+                        commands::get_session_messages,
             // Football data
             commands::search_players,
             commands::get_game_schedule,

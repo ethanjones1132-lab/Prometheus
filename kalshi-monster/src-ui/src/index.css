@@ -1689,6 +1689,34 @@ button {
   line-height: 1;
 }
 
+.sessionRenameBtn {
+  padding: 2px 6px !important;
+  min-width: 0;
+  font-size: 12px;
+  opacity: 0.5;
+}
+.sessionRenameBtn:hover {
+  opacity: 0.9;
+}
+
+.sessionRenameForm {
+  margin-top: 4px;
+}
+.sessionRenameInput {
+  width: 100%;
+  padding: 4px 6px;
+  font-size: 12px;
+  border: 1px solid rgba(201, 168, 76, 0.25);
+  border-radius: 4px;
+  background: rgba(20, 20, 18, 0.85);
+  color: #f5f5f0;
+  outline: none;
+}
+.sessionRenameInput:focus {
+  border-color: rgba(201, 168, 76, 0.5);
+  box-shadow: 0 0 0 1px rgba(201, 168, 76, 0.15);
+}
+
 .sessionEmpty {
   padding: 12px;
   font-size: 12px;

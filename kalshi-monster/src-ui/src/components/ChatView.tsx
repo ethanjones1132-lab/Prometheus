@@ -59,6 +59,7 @@ export function ChatView({
     initSession,
     selectSession,
     deleteSession,
+    renameSession,
     refreshSessions,
     cancelStream,
     retryLast,
@@ -71,6 +72,8 @@ export function ChatView({
   const [categories, setCategories] = useState<KalshiCategoryStat[]>([]);
   const [paperBusy, setPaperBusy] = useState<string | null>(null);
   const [paperMsg, setPaperMsg] = useState<string | null>(null);
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -210,6 +213,53 @@ export function ChatView({
               >
                 ×
               </button>
+              {renamingId === s.id ? (
+                <form
+                  className="sessionRenameForm"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    if (renameDraft.trim()) {
+                      void renameSession(s.id, renameDraft.trim());
+                    }
+                    setRenamingId(null);
+                    setRenameDraft('');
+                  }}
+                >
+                  <input
+                    type="text"
+                    className="sessionRenameInput"
+                    value={renameDraft}
+                    onChange={(e) => setRenameDraft(e.target.value)}
+                    onBlur={() => {
+                      if (renameDraft.trim()) {
+                        void renameSession(s.id, renameDraft.trim());
+                      }
+                      setRenamingId(null);
+                      setRenameDraft('');
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Escape') {
+                        setRenamingId(null);
+                        setRenameDraft('');
+                      }
+                    }}
+                    autoFocus
+                  />
+                </form>
+              ) : (
+                <button
+                  type="button"
+                  className="sessionRenameBtn ghostBtn"
+                  title="Double-click to rename"
+                  disabled={isStreaming}
+                  onDoubleClick={() => {
+                    setRenamingId(s.id);
+                    setRenameDraft(s.name || '');
+                  }}
+                >
+                  ✎
+                </button>
+              )}
             </li>
           ))}
         </ul>
