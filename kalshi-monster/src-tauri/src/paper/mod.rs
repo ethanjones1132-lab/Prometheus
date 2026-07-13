@@ -1056,7 +1056,7 @@ fn best_bid(levels: &[crate::kalshi::models::KalshiOrderbookLevel]) -> Option<f6
 
 pub fn spawn_paper_settle_task(
     pool: Pool<Sqlite>,
-    kalshi: std::sync::Arc<tokio::sync::Mutex<KalshiClient>>,
+    kalshi: std::sync::Arc<KalshiClient>,
     poll_interval_secs: u64,
 ) {
     let interval_secs = poll_interval_secs.max(60);
@@ -1074,14 +1074,11 @@ pub fn spawn_paper_settle_task(
             if open_count == 0 {
                 continue;
             }
-            let summary = {
-                let client = kalshi.lock().await;
-                match settle_pending(&pool, &client).await {
-                    Ok(s) => s,
-                    Err(e) => {
-                        tracing::warn!("paper auto-settle: {}", e);
-                        continue;
-                    }
+            let summary = match settle_pending(&pool, &*kalshi).await {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::warn!("paper auto-settle: {}", e);
+                    continue;
                 }
             };
             if summary.settled > 0 {

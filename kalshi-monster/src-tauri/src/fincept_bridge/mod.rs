@@ -1,9 +1,11 @@
 //! Fincept sidecar supervisor — plan §7 Phase 1 (`FinceptBridge`).
 //!
 //! Spawns the AGPL Python analysis process, reads the `FINCEPT_READY port=<n>`
-//! handshake from stdout, and issues authenticated HTTP health checks. Full
-//! Tauri `sidecar()` packaging is deferred until `externalBin` is wired; dev
-//! launches use `python` against `../../fincept-sidecar/main.py`.
+//! handshake from stdout, and issues authenticated HTTP health checks.
+//!
+//! - Dev: spawns `python` against `../../fincept-sidecar/main.py`.
+//! - Prod: spawns the bundled sidecar binary placed next to the app executable
+//!   by Tauri `externalBin`.
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -25,6 +27,24 @@ pub fn parse_ready_line(line: &str) -> Option<u16> {
     let trimmed = line.trim();
     let rest = trimmed.strip_prefix(READY_LINE_PREFIX)?;
     rest.parse().ok().filter(|&p| p > 0)
+}
+
+/// Bundled sidecar filename. Tauri strips the target triple and places the
+/// binary next to the app executable at runtime.
+fn sidecar_exe_name() -> &'static str {
+    if cfg!(windows) {
+        "fincept-sidecar.exe"
+    } else {
+        "fincept-sidecar"
+    }
+}
+
+/// Resolve the bundled sidecar binary next to the current executable.
+fn sidecar_binary_path() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let dir = exe.parent()?;
+    let path = dir.join(sidecar_exe_name());
+    path.is_file().then_some(path)
 }
 
 /// Per-launch bearer secret for sidecar auth (plan §10.2).
@@ -138,6 +158,15 @@ impl FinceptBridge {
             })
     }
 
+    /// Spawn the sidecar using the bundled binary (production) or Python dev path.
+    pub async fn start_sidecar(&self) -> Result<(), String> {
+        if tauri::is_dev() {
+            self.start_dev_sidecar().await
+        } else {
+            self.start_bundled_sidecar().await
+        }
+    }
+
     /// Spawn the Python sidecar and block until READY or timeout.
     pub async fn start_dev_sidecar(&self) -> Result<(), String> {
         let main_py = Self::default_main_py_path();
@@ -173,6 +202,42 @@ impl FinceptBridge {
         let port = wait_for_ready_port(stdout, DEFAULT_HANDSHAKE_TIMEOUT).await?;
         let base_url = format!("http://127.0.0.1:{port}");
 
+        self.apply_started_child(child, token, base_url).await;
+        Ok(())
+    }
+
+    /// Spawn the bundled sidecar binary next to the app executable.
+    async fn start_bundled_sidecar(&self) -> Result<(), String> {
+        let path = sidecar_binary_path().ok_or_else(|| {
+            format!(
+                "bundled fincept-sidecar not found next to executable (expected {})",
+                sidecar_exe_name()
+            )
+        })?;
+
+        let token = generate_launch_token();
+        let mut child = Command::new(&path)
+            .env("FINCEPT_TOKEN", &token)
+            .env("FINCEPT_PORT", "0")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
+            .map_err(|e| format!("spawn fincept-sidecar: {e}"))?;
+
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| "sidecar stdout not piped".to_string())?;
+
+        let port = wait_for_ready_port(stdout, DEFAULT_HANDSHAKE_TIMEOUT).await?;
+        let base_url = format!("http://127.0.0.1:{port}");
+
+        self.apply_started_child(child, token, base_url).await;
+        Ok(())
+    }
+
+    async fn apply_started_child(&self, child: Child, token: String, base_url: String) {
         let mut inner = self.inner.lock().await;
         if let Some(mut old) = inner.child.take() {
             let _ = old.kill().await;
@@ -182,7 +247,6 @@ impl FinceptBridge {
         inner.base_url = Some(base_url);
         inner.degraded = false;
         inner.last_error = None;
-        Ok(())
     }
 
     pub async fn stop(&self) {
@@ -308,7 +372,7 @@ impl FinceptBridge {
         }
 
         drop(inner);
-        if let Err(e) = self.start_dev_sidecar().await {
+        if let Err(e) = self.start_sidecar().await {
             let mut inner = self.inner.lock().await;
             inner.degraded = true;
             inner.last_error = Some(e);

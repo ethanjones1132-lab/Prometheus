@@ -28,7 +28,7 @@ pub async fn build_ultimate_prompt(
     analysis_context: Option<&AnalysisContext>,
     ml_predictions: Option<&[MLPrediction]>,
     ml_model_status: Option<&MLModelStatus>,
-    kalshi_client: Option<&mut KalshiClient>,
+    kalshi_client: Option<&KalshiClient>,
 ) -> String {
     let mut prompt = String::with_capacity(16384);
 
@@ -254,7 +254,7 @@ pub async fn build_ultimate_prompt_with_live_data(
     analysis_context: Option<&AnalysisContext>,
     ml_predictions: Option<&[MLPrediction]>,
     ml_model_status: Option<&MLModelStatus>,
-    kalshi_client: Option<&mut KalshiClient>,
+    kalshi_client: Option<&KalshiClient>,
 ) -> String {
     // Build base prompt and fetch live data concurrently
     let base_future = build_ultimate_prompt(

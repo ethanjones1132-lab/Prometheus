@@ -16,15 +16,12 @@ pub mod notification;
 pub mod kalshi;
 pub mod line_tracker;
 pub mod ml_predictor;
-pub mod prizepicks;
 pub mod paper;
 pub mod secrets;
 
 use chat::ChatState;
 use football::api_client::{SportsApiClient, SportsApiConfig};
 use predictions::tracker::PredictionTracker;
-use prizepicks::PrizePicksFetcher;
-
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use weather::WeatherClient;
@@ -118,8 +115,6 @@ pub fn run() {
     let weather_client = Arc::new(Mutex::new(WeatherClient::new(
         config::load_config().openweathermap_api_key,
     )));
-    // Shared cache that read-only commands access without locking the client mutex
-    let kalshi_cache_holder: kalshi::SharedCache = Arc::new(tokio::sync::RwLock::new(None));
     let kalshi_persisted = rt.block_on(async {
         kalshi::load_persisted_cache(&db_pool)
             .await
@@ -128,23 +123,20 @@ pub fn run() {
                 None
             })
     });
-    let mut kalshi_client_inner = kalshi::KalshiClient::new(
+    let kalshi_client_inner = kalshi::KalshiClient::new(
         kalshi::kalshi_config_from_app(&config::load_config()),
-        kalshi_cache_holder.clone(),
         Some(Arc::new(db_pool.clone())),
     );
     if let Some(cache) = kalshi_persisted {
-        // hydrate_cache is async (shared RwLock .write().await) — must run on rt.
         rt.block_on(async {
             kalshi_client_inner.hydrate_cache(cache).await;
         });
     }
-    let kalshi_client = Arc::new(Mutex::new(kalshi_client_inner));
+    let kalshi_client = Arc::new(kalshi_client_inner);
     let api_client = Arc::new(Mutex::new(
         SportsApiClient::new(SportsApiConfig::default())
             .expect("Failed to create sports API client"),
     ));
-    let prizepicks_fetcher = Arc::new(Mutex::new(PrizePicksFetcher));
     let fincept_bridge = Arc::new(fincept_bridge::FinceptBridge::new());
     let fincept_bridge_for_startup = fincept_bridge.clone();
     let db_pool_state = db_pool.clone();
@@ -191,9 +183,8 @@ pub fn run() {
             // Phase 4: prefetch quick cache at startup so the dashboard is warm before first open
             let kalshi_quick = kalshi_for_warm.clone();
             tauri::async_runtime::spawn(async move {
-                let mut client = kalshi_quick.lock().await;
-                if let Err(e) = client.ensure_quick_cache().await {
-                    client.set_last_fetch_error(&e);
+                if let Err(e) = kalshi_quick.ensure_quick_cache().await {
+                    kalshi_quick.set_last_fetch_error(&e);
                     tracing::warn!("kalshi startup quick cache prefetch failed: {}", e);
                 } else {
                     tracing::info!("kalshi startup quick cache prefetched");
@@ -204,10 +195,9 @@ pub fn run() {
             let kalshi_warm = kalshi_for_warm.clone();
             tauri::async_runtime::spawn(async move {
                 tokio::time::sleep(std::time::Duration::from_secs(8)).await;
-                let mut client = kalshi_warm.lock().await;
-                if client.needs_full_catalog() {
-                    if let Err(e) = client.fetch_all_markets().await {
-                        client.set_last_fetch_error(&e);
+                if kalshi_warm.needs_full_catalog() {
+                    if let Err(e) = kalshi_warm.fetch_all_markets().await {
+                        kalshi_warm.set_last_fetch_error(&e);
                         tracing::warn!("kalshi background cache warm failed: {}", e);
                     } else {
                         tracing::info!("kalshi full catalog cache warmed");
@@ -219,8 +209,8 @@ pub fn run() {
             // Dev: spawns `python fincept-sidecar/main.py`. Prod: uses Tauri externalBin.
             let bridge = fincept_bridge_for_startup.clone();
             tauri::async_runtime::spawn(async move {
-                if let Err(e) = bridge.start_dev_sidecar().await {
-                    tracing::warn!("FinceptBridge: dev sidecar start failed ({e}); continuing without analysis engine");
+                if let Err(e) = bridge.start_sidecar().await {
+                    tracing::warn!("FinceptBridge: sidecar start failed ({e}); continuing without analysis engine");
                     bridge.record_health_failure().await;
                     return;
                 }
@@ -250,8 +240,6 @@ pub fn run() {
         .manage(weather_client)
         .manage(api_client)
         .manage(kalshi_client)
-        .manage(kalshi_cache_holder)
-        .manage(prizepicks_fetcher)
         .manage(fincept_bridge)
         .manage(db_pool_state)
         .invoke_handler(tauri::generate_handler![
@@ -371,14 +359,6 @@ pub fn run() {
             commands::test_telegram_bot_cmd,
             commands::send_bot_test_message,
 
-            // Line Movement Tracking
-            commands::snapshot_line_movements,
-            commands::get_line_movements,
-            commands::get_line_detail,
-            commands::get_tracked_line_leagues,
-            commands::get_tracked_line_stat_categories,
-            commands::get_latest_line_snapshot,
-            commands::prune_line_movements,
             // Analysis engine
             commands::analyze_prop,
             commands::analyze_multiple_props,

@@ -196,7 +196,7 @@ pub struct KalshiContextBuild {
 /// Build a rich Kalshi context string for the AI prompt.
 /// Query-aware: prefer ticker detail + keyword-matched markets over dumping the whole tape.
 pub async fn build_kalshi_context(
-    client: &mut KalshiClient,
+    client: &KalshiClient,
     user_message: &str,
     portfolio: Option<&PortfolioSnapshot>,
 ) -> String {
@@ -207,7 +207,7 @@ pub async fn build_kalshi_context(
 
 /// Full build including settlement gates and open-market list for gated web search.
 pub async fn build_kalshi_context_full(
-    client: &mut KalshiClient,
+    client: &KalshiClient,
     user_message: &str,
     portfolio: Option<&PortfolioSnapshot>,
 ) -> KalshiContextBuild {
@@ -757,7 +757,7 @@ pub fn needs_cross_asset_context(query: &str) -> bool {
 }
 
 /// Fetch top markets by category
-async fn fetch_category_stats(client: &mut KalshiClient) -> Result<Vec<CategorySnapshot>, String> {
+async fn fetch_category_stats(client: &KalshiClient) -> Result<Vec<CategorySnapshot>, String> {
     let stats = client.category_stats();
     Ok(stats.into_iter().map(|s| CategorySnapshot {
         name: s.category,
@@ -809,11 +809,8 @@ mod tests {
 
     #[test]
     fn assess_chat_context_degraded_when_tape_empty() {
-        use std::sync::Arc;
-        use tokio::sync::RwLock;
         use crate::kalshi::KalshiConfig;
-        let shared = Arc::new(RwLock::new(None));
-        let client = KalshiClient::new(KalshiConfig::default(), shared, None);
+        let client = KalshiClient::new(KalshiConfig::default(), None);
         let status = assess_kalshi_chat_context(&client);
         assert!(status.degraded);
         assert_eq!(status.tape_market_count, 0);

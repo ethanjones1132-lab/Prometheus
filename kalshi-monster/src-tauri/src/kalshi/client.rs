@@ -1,9 +1,8 @@
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE, USER_AGENT};
 use sqlx::{Pool, Sqlite};
-use tokio::sync::RwLock;
 use crate::kalshi::models::{
     KalshiCache, KalshiConfig, KalshiEvent, KalshiEventsResponse, KalshiMarket,
     KalshiMarketsQuery, KalshiMarketsResponse, KalshiMarketSummary, KalshiOrderbook,
@@ -38,30 +37,27 @@ const PAGE_LIMIT: u32 = 200;
 const FLAT_MARKET_PAGE_LIMIT: u32 = 100;
 
 pub struct KalshiClient {
-    pub config: KalshiConfig,
+    config: Arc<RwLock<KalshiConfig>>,
     client: reqwest::Client,
     /// JWT bearer token acquired via /login
-    token: Option<String>,
+    token: Arc<RwLock<Option<String>>>,
     /// When the token expires (unix seconds)
-    token_expiry: Option<u64>,
+    token_expiry: Arc<RwLock<Option<u64>>>,
     /// Cached market list
-    cache: Option<KalshiCache>,
-    /// Shared cache that UI read commands access without locking the client mutex
-    shared_cache: Arc<RwLock<Option<KalshiCache>>>,
+    cache: Arc<RwLock<Option<KalshiCache>>>,
     /// Prevents concurrent full-catalog fetches; set before pagination, cleared after
     fetch_in_progress: Arc<AtomicBool>,
     /// When set, market cache snapshots are written to SQLite after each update
     persist_pool: Option<Arc<Pool<Sqlite>>>,
     /// True when in-memory cache was restored from SQLite (not yet refreshed from API)
-    cache_from_persisted: bool,
+    cache_from_persisted: AtomicBool,
     /// Last Kalshi catalog fetch error (startup warm or dashboard quick load) for UI hints
-    last_fetch_error: Option<String>,
+    last_fetch_error: Arc<RwLock<Option<String>>>,
 }
 
 impl KalshiClient {
     pub fn new(
         config: KalshiConfig,
-        shared_cache: Arc<RwLock<Option<KalshiCache>>>,
         persist_pool: Option<Arc<Pool<Sqlite>>>,
     ) -> Self {
         let client = reqwest::Client::builder()
@@ -69,38 +65,46 @@ impl KalshiClient {
             .build()
             .expect("Failed to build reqwest client");
         KalshiClient {
-            config,
+            config: Arc::new(RwLock::new(config)),
             client,
-            token: None,
-            token_expiry: None,
-            cache: None,
-            shared_cache,
+            token: Arc::new(RwLock::new(None)),
+            token_expiry: Arc::new(RwLock::new(None)),
+            cache: Arc::new(RwLock::new(None)),
             fetch_in_progress: Arc::new(AtomicBool::new(false)),
             persist_pool,
-            cache_from_persisted: false,
-            last_fetch_error: None,
+            cache_from_persisted: AtomicBool::new(false),
+            last_fetch_error: Arc::new(RwLock::new(None)),
         }
     }
 
-    pub fn last_fetch_error(&self) -> Option<&str> {
-        self.last_fetch_error.as_deref()
+    pub fn config(&self) -> KalshiConfig {
+        self.config.read().unwrap().clone()
     }
 
-    pub fn set_last_fetch_error(&mut self, message: impl Into<String>) {
-        self.last_fetch_error = Some(message.into());
+    pub fn set_config(&self, config: KalshiConfig) {
+        *self.config.write().unwrap() = config;
     }
 
-    fn clear_fetch_error(&mut self) {
-        self.last_fetch_error = None;
+    pub fn last_fetch_error(&self) -> Option<String> {
+        self.last_fetch_error.read().unwrap().clone()
     }
 
-    fn base_url(&self) -> &str {
-        if self.config.use_demo {
-            DEMO_BASE_URL
-        } else if !self.config.base_url.is_empty() {
-            &self.config.base_url
+    pub fn set_last_fetch_error(&self, message: impl Into<String>) {
+        *self.last_fetch_error.write().unwrap() = Some(message.into());
+    }
+
+    fn clear_fetch_error(&self) {
+        *self.last_fetch_error.write().unwrap() = None;
+    }
+
+    fn base_url(&self) -> String {
+        let config = self.config();
+        if config.use_demo {
+            DEMO_BASE_URL.to_string()
+        } else if !config.base_url.is_empty() {
+            config.base_url.clone()
         } else {
-            PRIMARY_BASE_URL
+            PRIMARY_BASE_URL.to_string()
         }
     }
 
@@ -112,7 +116,8 @@ impl KalshiClient {
     }
 
     pub fn cache_metadata(&self) -> (String, Option<u64>, bool, Option<u64>) {
-        match &self.cache {
+        let cache = self.cache.read().unwrap();
+        match &*cache {
             None => ("cold".to_string(), None, true, None),
             Some(cache) => {
                 let age = Self::now_secs().saturating_sub(cache.fetched_at);
@@ -124,27 +129,36 @@ impl KalshiClient {
 
     /// Whether the visible cache was rehydrated from SQLite and not yet replaced by a live fetch.
     pub fn showing_persisted_snapshot(&self) -> bool {
-        self.cache_from_persisted && self.cache.is_some()
+        self.cache_from_persisted.load(Ordering::Relaxed)
+            && self.cache.read().unwrap().is_some()
     }
 
     pub fn is_cache_stale(&self) -> bool {
-        match &self.cache {
+        let cache = self.cache.read().unwrap();
+        match &*cache {
             None => true,
             Some(cache) => Self::now_secs() - cache.fetched_at > CACHE_TTL_SECS,
         }
     }
 
-    pub fn get_cached(&self) -> Option<&Vec<KalshiMarket>> {
-        self.cache.as_ref().map(|c| &c.markets)
+    pub fn get_cached(&self) -> Option<Vec<KalshiMarket>> {
+        self.cache.read().unwrap().as_ref().map(|c| c.markets.clone())
     }
 
     /// Total markets in the in-memory tape (not the UI slice limit).
     pub fn cached_tape_market_count(&self) -> usize {
-        self.cache.as_ref().map(|c| c.markets.len()).unwrap_or(0)
+        self.cache
+            .read()
+            .unwrap()
+            .as_ref()
+            .map(|c| c.markets.len())
+            .unwrap_or(0)
     }
 
     fn is_token_valid(&self) -> bool {
-        match (&self.token, self.token_expiry) {
+        let token = self.token.read().unwrap();
+        let token_expiry = self.token_expiry.read().unwrap();
+        match (&*token, *token_expiry) {
             (Some(_), Some(expiry)) => Self::now_secs() + 60 < expiry,
             (Some(_), None) => true,
             _ => false,
@@ -155,7 +169,8 @@ impl KalshiClient {
         let mut headers = HeaderMap::new();
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
         headers.insert(USER_AGENT, HeaderValue::from_static("kalshi-monster/0.6.0"));
-        if let Some(token) = &self.token {
+        let token = self.token.read().unwrap();
+        if let Some(token) = &*token {
             if let Ok(val) = HeaderValue::from_str(&format!("Bearer {}", token)) {
                 headers.insert(AUTHORIZATION, val);
             }
@@ -165,15 +180,16 @@ impl KalshiClient {
 
     /// Authenticate with email/password to get a JWT token.
     /// Only required for portfolio/trading endpoints.
-    pub async fn login(&mut self) -> Result<(), String> {
-        if self.config.email.is_empty() || self.config.password.is_empty() {
+    pub async fn login(&self) -> Result<(), String> {
+        let config = self.config();
+        if config.email.is_empty() || config.password.is_empty() {
             return Err("No Kalshi credentials configured".to_string());
         }
 
         let url = format!("{}/login", self.base_url());
         let body = serde_json::json!({
-            "email": self.config.email,
-            "password": self.config.password,
+            "email": config.email,
+            "password": config.password,
         });
 
         let resp = self
@@ -197,14 +213,14 @@ impl KalshiClient {
             .ok_or("No token in login response")?
             .to_string();
 
-        self.token = Some(token);
+        *self.token.write().unwrap() = Some(token);
         // Kalshi tokens are valid for 24h
-        self.token_expiry = Some(Self::now_secs() + 86400);
+        *self.token_expiry.write().unwrap() = Some(Self::now_secs() + 86400);
         Ok(())
     }
 
     /// Ensure we have a valid token; attempt login if not.
-    async fn ensure_auth(&mut self) -> Result<(), String> {
+    async fn ensure_auth(&self) -> Result<(), String> {
         if !self.is_token_valid() {
             self.login().await?;
         }
@@ -519,24 +535,15 @@ impl KalshiClient {
         }
     }
 
-    /// Publish cache to the shared reader + local handle.
-    ///
-    /// Must be async: `blocking_write`/`blocking_read` on a Tokio `RwLock`
-    /// panic when called from inside a runtime (KB-1 root cause). Catalog
-    /// warm paths (`ensure_quick_cache`, `fetch_all_markets`) run on
-    /// `tauri::async_runtime`, so only `.write().await` is safe.
-    async fn apply_cache(&mut self, cache: KalshiCache) {
-        {
-            let mut shared = self.shared_cache.write().await;
-            *shared = Some(cache.clone());
-        }
-        self.cache = Some(cache);
+    /// Store a new cache snapshot in the local handle.
+    fn apply_cache(&self, cache: KalshiCache) {
+        *self.cache.write().unwrap() = Some(cache);
     }
 
     fn schedule_persist(&self) {
-        if let (Some(pool), Some(cache)) = (&self.persist_pool, &self.cache) {
+        let cache = self.cache.read().unwrap().clone();
+        if let (Some(pool), Some(cache)) = (&self.persist_pool, cache) {
             let pool = pool.clone();
-            let cache = cache.clone();
             tauri::async_runtime::spawn(async move {
                 if let Err(e) =
                     crate::kalshi::market_cache_store::save_persisted_cache(&pool, &cache).await
@@ -548,46 +555,52 @@ impl KalshiClient {
     }
 
     /// Restore cache from SQLite at startup (no disk write).
-    pub async fn hydrate_cache(&mut self, cache: KalshiCache) {
+    pub async fn hydrate_cache(&self, cache: KalshiCache) {
         tracing::info!(
             "Kalshi cache rehydrated from SQLite: {} markets (full_catalog={})",
             cache.markets.len(),
             cache.full_catalog
         );
-        self.cache_from_persisted = true;
-        self.apply_cache(cache).await;
+        self.cache_from_persisted.store(true, Ordering::Relaxed);
+        self.apply_cache(cache);
     }
 
-    async fn store_cache(&mut self, markets: Vec<KalshiMarket>, full_catalog: bool) {
+    async fn store_cache(&self, markets: Vec<KalshiMarket>, full_catalog: bool) {
         let cache = KalshiCache {
             markets,
             fetched_at: Self::now_secs(),
             full_catalog,
         };
-        self.apply_cache(cache).await;
-        self.cache_from_persisted = false;
+        self.apply_cache(cache);
+        self.cache_from_persisted.store(false, Ordering::Relaxed);
         self.schedule_persist();
     }
 
     pub fn needs_full_catalog(&self) -> bool {
-        match &self.cache {
+        let stale = self.is_cache_stale();
+        let cache = self.cache.read().unwrap();
+        match &*cache {
             None => true,
-            Some(cache) if self.is_cache_stale() => true,
+            Some(_) if stale => true,
             Some(cache) => !cache.full_catalog,
         }
     }
 
     /// Quick cache for dashboard first paint — at most `QUICK_LOAD_PAGES` API pages.
     /// Skips HTTP fetch if a full warm is already in progress (returns stale cache).
-    pub async fn ensure_quick_cache(&mut self) -> Result<(), String> {
-        if let Some(cache) = &self.cache {
-            // Empty persisted snapshot must not block live fetch (KB-1).
-            if !self.is_cache_stale() && !cache.markets.is_empty() {
-                return Ok(());
-            }
-            if cache.full_catalog {
-                // Stale full cache — fall through to quick reload so UI is not blocked 10s+
-                tracing::info!("Kalshi full cache stale; quick-reloading for dashboard");
+    pub async fn ensure_quick_cache(&self) -> Result<(), String> {
+        let stale = self.is_cache_stale();
+        {
+            let cache = self.cache.read().unwrap();
+            if let Some(cache) = &*cache {
+                // Empty persisted snapshot must not block live fetch (KB-1).
+                if !stale && !cache.markets.is_empty() {
+                    return Ok(());
+                }
+                if cache.full_catalog {
+                    // Stale full cache — fall through to quick reload so UI is not blocked 10s+
+                    tracing::info!("Kalshi full cache stale; quick-reloading for dashboard");
+                }
             }
         }
 
@@ -635,11 +648,15 @@ impl KalshiClient {
     /// Fetch all open non-multivariate markets, paginating through all pages.
     /// Caches the result for `CACHE_TTL_SECS` seconds.
     /// Uses `fetch_in_progress` guard to prevent concurrent full-catalog fetches.
-    pub async fn fetch_all_markets(&mut self) -> Result<Vec<KalshiMarket>, String> {
-        if !self.is_cache_stale() {
-            if let Some(cached) = &self.cache {
-                if cached.full_catalog {
-                    return Ok(cached.markets.clone());
+    pub async fn fetch_all_markets(&self) -> Result<Vec<KalshiMarket>, String> {
+        let stale = self.is_cache_stale();
+        {
+            let cache = self.cache.read().unwrap();
+            if !stale {
+                if let Some(cached) = &*cache {
+                    if cached.full_catalog {
+                        return Ok(cached.markets.clone());
+                    }
                 }
             }
         }
@@ -648,7 +665,9 @@ impl KalshiClient {
         if self.fetch_in_progress.swap(true, Ordering::AcqRel) {
             tracing::warn!("Kalshi full catalog fetch already in progress; skipping duplicate");
             // Return stale cache if available, otherwise error
-            return self.cache.as_ref()
+            let cache = self.cache.read().unwrap();
+            return cache
+                .as_ref()
                 .map(|c| c.markets.clone())
                 .ok_or_else(|| "Full catalog fetch already in progress and no cache available".to_string());
         }
@@ -681,17 +700,16 @@ impl KalshiClient {
         Ok(all_markets)
     }
 
-    fn cached_market_slice(&self) -> Option<&[KalshiMarket]> {
-        self.cache.as_ref().map(|c| c.markets.as_slice())
+    fn cached_market_slice(&self) -> Option<Vec<KalshiMarket>> {
+        self.cache.read().unwrap().as_ref().map(|c| c.markets.clone())
     }
 
     /// Look up a full market (including resolution rules) from the local tape cache.
     pub fn find_cached_market(&self, ticker: &str) -> Option<KalshiMarket> {
         self.cached_market_slice().and_then(|markets| {
             markets
-                .iter()
+                .into_iter()
                 .find(|m| m.ticker.eq_ignore_ascii_case(ticker))
-                .cloned()
         })
     }
 
@@ -705,8 +723,8 @@ impl KalshiClient {
         let Some(markets) = self.cached_market_slice() else {
             return Vec::new();
         };
-        let mut sibs: Vec<&KalshiMarket> = markets
-            .iter()
+        let mut sibs: Vec<KalshiMarket> = markets
+            .into_iter()
             .filter(|m| m.event_ticker.eq_ignore_ascii_case(event_ticker))
             .filter(|m| {
                 exclude_ticker
@@ -719,7 +737,7 @@ impl KalshiClient {
                 .partial_cmp(&a.volume_24h())
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
-        sibs.into_iter()
+        sibs.iter()
             .take(limit)
             .map(KalshiMarketSummary::from)
             .collect()
@@ -796,7 +814,7 @@ impl KalshiClient {
     }
 
     /// Search markets by keyword against the cached market list
-    pub async fn search_markets(&mut self, query: &str) -> Result<Vec<KalshiMarketSummary>, String> {
+    pub async fn search_markets(&self, query: &str) -> Result<Vec<KalshiMarketSummary>, String> {
         let trimmed = query.trim();
         if trimmed.len() < 2 {
             return Err("Search query must be at least 2 characters".to_string());
@@ -821,7 +839,7 @@ impl KalshiClient {
 
     /// Get markets filtered by category (inferred from ticker)
     pub async fn get_markets_by_category(
-        &mut self,
+        &self,
         category: &str,
     ) -> Result<Vec<KalshiMarketSummary>, String> {
         self.ensure_quick_cache().await?;
@@ -844,18 +862,18 @@ impl KalshiClient {
     }
 
     /// Get top markets by 24h volume
-    pub async fn get_top_markets(&mut self, limit: usize) -> Result<Vec<KalshiMarketSummary>, String> {
+    pub async fn get_top_markets(&self, limit: usize) -> Result<Vec<KalshiMarketSummary>, String> {
         self.ensure_quick_cache().await?;
         let markets = self
             .cached_market_slice()
             .ok_or("Kalshi market cache unavailable")?;
-        Ok(Self::top_summaries(markets, limit.min(MAX_UI_MARKET_RESULTS)))
+        Ok(Self::top_summaries(&markets, limit.min(MAX_UI_MARKET_RESULTS)))
     }
 
     // ─── Auth-required endpoints ────────────────────────────────────────────────
 
     /// Get portfolio balance (requires login)
-    pub async fn get_balance(&mut self) -> Result<KalshiBalance, String> {
+    pub async fn get_balance(&self) -> Result<KalshiBalance, String> {
         self.ensure_auth().await?;
         let url = format!("{}/portfolio/balance", self.base_url());
         let resp = self
@@ -881,7 +899,7 @@ impl KalshiClient {
     }
 
     /// Get portfolio positions (requires login)
-    pub async fn get_positions(&mut self) -> Result<Vec<KalshiPosition>, String> {
+    pub async fn get_positions(&self) -> Result<Vec<KalshiPosition>, String> {
         self.ensure_auth().await?;
         let url = format!("{}/portfolio/positions", self.base_url());
         let resp = self
@@ -907,19 +925,20 @@ impl KalshiClient {
     }
 
     /// Force-invalidate cache (used after config changes)
-    pub fn invalidate_cache(&mut self) {
-        self.cache = None;
-        self.token = None;
-        self.token_expiry = None;
+    pub fn invalidate_cache(&self) {
+        *self.cache.write().unwrap() = None;
+        *self.token.write().unwrap() = None;
+        *self.token_expiry.write().unwrap() = None;
     }
 
     /// Summarize all cached markets by category
     pub fn category_stats(&self) -> Vec<KalshiCategoryStat> {
-        let mut stats: std::collections::HashMap<&str, (usize, f64)> = std::collections::HashMap::new();
+        let cache = self.cache.read().unwrap();
+        let mut stats: std::collections::HashMap<String, (usize, f64)> = std::collections::HashMap::new();
 
-        if let Some(cache) = &self.cache {
+        if let Some(cache) = &*cache {
             for m in &cache.markets {
-                let cat = m.infer_category();
+                let cat = m.infer_category().to_string();
                 let entry = stats.entry(cat).or_insert((0, 0.0));
                 entry.0 += 1;
                 entry.1 += m.volume_24h();
@@ -929,7 +948,7 @@ impl KalshiClient {
         let mut result: Vec<KalshiCategoryStat> = stats
             .into_iter()
             .map(|(cat, (count, vol))| KalshiCategoryStat {
-                category: cat.to_string(),
+                category: cat,
                 count,
                 volume_24h: vol,
             })
@@ -939,18 +958,14 @@ impl KalshiClient {
         result
     }
 
-    /// Return a snapshot of the shared cache (for read-only commands that don't hold the client lock).
-    /// Uses `try_read` so callers never block the async runtime (KB-1).
-    pub fn shared_cache_snapshot(&self) -> Option<KalshiCache> {
-        self.shared_cache
-            .try_read()
-            .ok()
-            .and_then(|guard| guard.clone())
+    /// Return a snapshot of the in-memory cache.
+    pub fn cache_snapshot(&self) -> Option<KalshiCache> {
+        self.cache.read().unwrap().clone()
     }
 
-    /// Async shared-cache snapshot when the caller is already on the Tokio reactor.
-    pub async fn shared_cache_snapshot_async(&self) -> Option<KalshiCache> {
-        self.shared_cache.read().await.clone()
+    /// Async cache snapshot when the caller is already on the Tokio reactor.
+    pub async fn cache_snapshot_async(&self) -> Option<KalshiCache> {
+        self.cache_snapshot()
     }
 
     /// Check whether a full-catalog fetch is currently in progress.
@@ -1010,38 +1025,12 @@ mod tests {
 
     #[tokio::test]
     async fn cached_tape_market_count_reflects_cache_len() {
-        let shared = Arc::new(RwLock::new(None));
-        let mut client = KalshiClient::new(KalshiConfig::default(), shared, None);
+        let client = KalshiClient::new(KalshiConfig::default(), None);
         assert_eq!(client.cached_tape_market_count(), 0);
         client
             .store_cache(vec![KalshiMarket::default(), KalshiMarket::default()], false)
             .await;
         assert_eq!(client.cached_tape_market_count(), 2);
-    }
-
-    /// KB-1: documenting the failure mode that emptied the Markets tape.
-    /// `blocking_write` on a Tokio RwLock panics when invoked from inside a
-    /// runtime — which is exactly how `ensure_quick_cache` / `store_cache`
-    /// used to publish the catalog after a successful HTTP fetch.
-    #[tokio::test]
-    #[should_panic(expected = "Cannot block the current thread from within a runtime")]
-    async fn blocking_write_on_shared_cache_panics_inside_runtime() {
-        let lock: Arc<RwLock<Option<KalshiCache>>> = Arc::new(RwLock::new(None));
-        let _ = lock.blocking_write();
-    }
-
-    #[tokio::test]
-    async fn async_write_on_shared_cache_works_inside_runtime() {
-        let lock: Arc<RwLock<Option<KalshiCache>>> = Arc::new(RwLock::new(None));
-        {
-            let mut g = lock.write().await;
-            *g = Some(KalshiCache {
-                markets: vec![KalshiMarket::default()],
-                fetched_at: 1,
-                full_catalog: false,
-            });
-        }
-        assert_eq!(lock.read().await.as_ref().map(|c| c.markets.len()), Some(1));
     }
 }
 

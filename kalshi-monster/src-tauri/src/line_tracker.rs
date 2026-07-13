@@ -98,6 +98,20 @@ pub struct SnapshotResult {
     pub snapshot_at: String,
 }
 
+/// Generic prop snapshot input for line movement tracking.
+/// Any prop source (PrizePicks, Underdog, etc.) can map into this shape.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PropSnapshot {
+    pub player_name: String,
+    pub team: String,
+    pub opponent: String,
+    pub stat_category: String,
+    pub league: String,
+    pub line: f64,
+    pub projection: Option<f64>,
+    pub game_time: Option<String>,
+}
+
 // ═══════════════════════════════════════════════════════════════
 // Database Operations
 // ═══════════════════════════════════════════════════════════════
@@ -179,10 +193,10 @@ pub async fn insert_snapshot(
     Ok(())
 }
 
-/// Bulk insert snapshots from a PrizePicks data fetch
+/// Bulk insert snapshots from a prop-source fetch.
 pub async fn snapshot_props(
     pool: &Pool<Sqlite>,
-    props: &[crate::prizepicks::models::PrizePicksProp],
+    props: &[PropSnapshot],
     source: &str,
 ) -> Result<SnapshotResult, String> {
     let snapshot_at = chrono::Utc::now().to_rfc3339();

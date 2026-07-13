@@ -310,7 +310,7 @@ pub async fn resolve_pending_forecasts(
 }
 
 pub fn spawn_auto_grade_task(
-    kalshi: std::sync::Arc<tokio::sync::Mutex<KalshiClient>>,
+    kalshi: std::sync::Arc<KalshiClient>,
     tracker: std::sync::Arc<tokio::sync::Mutex<PredictionTracker>>,
     pool: Pool<Sqlite>,
     app_handle: tauri::AppHandle,
@@ -339,9 +339,8 @@ pub fn spawn_auto_grade_task(
             }
             let summary = {
                 let t = tracker.lock().await;
-                let client = kalshi.lock().await;
                 if pending_count > 0 {
-                    match grade_pending_predictions(&t, &client, &pool).await {
+                    match grade_pending_predictions(&t, &*kalshi, &pool).await {
                         Ok(s) => s,
                         Err(e) => {
                             tracing::warn!("kalshi auto-grade: {e}");
@@ -353,8 +352,7 @@ pub fn spawn_auto_grade_task(
                 }
             };
             if forecast_pending > 0 {
-                let client = kalshi.lock().await;
-                match resolve_pending_forecasts(&pool, &client).await {
+                match resolve_pending_forecasts(&pool, &*kalshi).await {
                     Ok(n) if n > 0 => {
                         tracing::info!("kalshi forecast poller: {n} forecast row(s) resolved");
                     }

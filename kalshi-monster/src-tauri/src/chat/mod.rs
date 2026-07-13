@@ -4,6 +4,7 @@ pub mod openrouter;
 pub mod kalshi_context;
 pub mod fincept_context;
 pub mod decision_schema;
+pub mod decision_extract;
 pub mod market_gate;
 pub mod web_context;
 

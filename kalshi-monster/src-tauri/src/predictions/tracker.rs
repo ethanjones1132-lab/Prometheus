@@ -4,6 +4,7 @@ use uuid::Uuid;
 use chrono::Datelike;
 
 use super::storage;
+use crate::chat::decision_extract;
 use crate::chat::decision_schema::{ContractSide, KalshiTradeDecision};
 use crate::kalshi::grading::{infer_market_price_at_entry, resolved_bet_won};
 use crate::kalshi::models::{
@@ -329,14 +330,6 @@ impl PredictionTracker {
         })
     }
 
-    fn is_kalshi_trade_json(val: &serde_json::Value) -> bool {
-        val.get("ticker")
-            .and_then(|v| v.as_str())
-            .map(|t| t.starts_with("KX") || t.contains('-'))
-            .unwrap_or(false)
-            && val.get("fair_probability_pct").is_some()
-    }
-
     fn parse_kalshi_json_prediction(
         &self,
         session_id: &str,
@@ -344,10 +337,10 @@ impl PredictionTracker {
         now: &str,
         raw_text: &str,
     ) -> Option<Prediction> {
-        if !Self::is_kalshi_trade_json(val) {
+        if !decision_extract::looks_like_kalshi_decision(val) {
             return None;
         }
-        let decision: KalshiTradeDecision = serde_json::from_value(val.clone()).ok()?;
+        let decision = decision_extract::parse_kalshi_trade_decision_from_value(val).ok()?;
         let full_json = serde_json::to_string(&decision).ok()?;
         let pick_type = match decision.contract_side {
             ContractSide::YES => Some("Over".to_string()),
@@ -984,7 +977,7 @@ impl PredictionTracker {
     }
 
     fn parse_kalshi_decision_blob(json: &str) -> Option<KalshiTradeDecision> {
-        serde_json::from_str::<KalshiTradeDecision>(json).ok()
+        decision_extract::parse_kalshi_decision_blob(json).ok()
     }
 
     fn kalshi_decision_from_record(r: &PredictionRecord) -> Option<KalshiTradeDecision> {
@@ -1000,40 +993,7 @@ impl PredictionTracker {
                 }
             }
         }
-        Self::find_kalshi_decision_in_text(&r.prediction.raw_text)
-    }
-
-    fn find_kalshi_decision_in_text(text: &str) -> Option<KalshiTradeDecision> {
-        let mut search_start = 0;
-        while let Some(block_start) = text[search_start..].find("```json") {
-            let abs_start = search_start + block_start + 7;
-            if let Some(block_end) = text[abs_start..].find("```") {
-                let json_str = text[abs_start..abs_start + block_end].trim();
-                if let Ok(val) = serde_json::from_str::<serde_json::Value>(json_str) {
-                    if Self::is_kalshi_trade_json(&val) {
-                        if let Ok(d) = serde_json::from_value(val) {
-                            return Some(d);
-                        }
-                    }
-                }
-                search_start = abs_start + block_end + 3;
-            } else {
-                break;
-            }
-        }
-        for line in text.lines() {
-            let trimmed = line.trim();
-            if trimmed.starts_with('{') && trimmed.ends_with('}') {
-                if let Ok(val) = serde_json::from_str::<serde_json::Value>(trimmed) {
-                    if Self::is_kalshi_trade_json(&val) {
-                        if let Ok(d) = serde_json::from_value(val) {
-                            return Some(d);
-                        }
-                    }
-                }
-            }
-        }
-        None
+        decision_extract::find_kalshi_decision_in_text(&r.prediction.raw_text).ok()
     }
 
     fn record_is_kalshi(r: &PredictionRecord) -> bool {
