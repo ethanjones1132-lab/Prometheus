@@ -2,6 +2,13 @@
 
 Last updated: 2026-07-13
 
+## Maintenance notes (2026-07-13, cron 4pm) — KB-1 bootstrap config sync
+
+- Shipped: `sync_kalshi_client_from_app_config` on `kalshi_get_dashboard_bootstrap` (and shared with portfolio/refresh); empty-tape hints distinguish login vs public-catalog paths; +1 lib test.
+- Auto-remediation: gitignored `scripts/add_*.py` (stray `add_rename_ui.py`).
+- Health: `cargo check`, `tsc`, **217** lib tests (+1), KalshiView vitest **14** green.
+- **Next:** KB-1 live credential verification on user machine; calibration flywheel; `externalBin` sidecar packaging.
+
 ## Maintenance notes (2026-07-13, overnight) — session rename (KB-2b)
 
 - Shipped: `rename_session()` backend + `rename_chat_session` Tauri command + inline rename UI in ChatView (double-click pencil → inline input). Completes the KB-2b layout/sessions slice.

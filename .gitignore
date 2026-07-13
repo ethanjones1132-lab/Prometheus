@@ -36,3 +36,4 @@ kalshi-monster/scripts/check_corruption.py
 kalshi-monster/scripts/debug_test.py
 kalshi-monster/scripts/expand_*.py
 kalshi-monster/scripts/fix_*.py
+kalshi-monster/scripts/add_*.py

@@ -22,6 +22,25 @@ use tokio::sync::{Mutex, mpsc};
 // Kalshi Commands — Prediction Market Integration
 // ═══════════════════════════════════════════════════════════════
 
+/// Sync KalshiClient from persisted app settings (KB-1). Invalidates cache when login fields change.
+pub(crate) fn sync_kalshi_client_from_app_config(
+    kalshi: &crate::kalshi::KalshiClient,
+    app_cfg: &AppConfig,
+) -> bool {
+    let current = kalshi.config();
+    let login_changed = current.email != app_cfg.kalshi_email
+        || current.password != app_cfg.kalshi_password;
+    if login_changed
+        || current.poll_interval_secs != app_cfg.kalshi_poll_interval_secs
+    {
+        kalshi.set_config(crate::kalshi::kalshi_config_from_app(app_cfg));
+        if login_changed {
+            kalshi.invalidate_cache();
+        }
+    }
+    !app_cfg.kalshi_email.is_empty() && !app_cfg.kalshi_password.is_empty()
+}
+
 /// Fetch markets filtered by category. Category can be "All", "Sports", "Politics",
 /// "Economics", "Crypto", "Finance", "Weather", "Other".
 #[tauri::command]
@@ -81,6 +100,7 @@ pub(crate) fn build_kalshi_dashboard_data_quality_notes(
     fetch_in_progress: bool,
     tape_market_count: usize,
     last_fetch_error: Option<&str>,
+    kalshi_login_configured: bool,
 ) -> Vec<String> {
     let mut notes = if partial_catalog {
         vec!["Partial catalog loaded for fast first paint".to_string()]
@@ -105,10 +125,17 @@ pub(crate) fn build_kalshi_dashboard_data_quality_notes(
         );
     }
     if tape_market_count == 0 {
-        notes.push(
-            "No markets loaded — verify Kalshi API access in Settings and tap Refresh and snapshot"
-                .to_string(),
-        );
+        if kalshi_login_configured {
+            notes.push(
+                "No markets loaded — verify Kalshi API access in Settings and tap Refresh and snapshot"
+                    .to_string(),
+            );
+        } else {
+            notes.push(
+                "No markets loaded — public catalog does not require login; check network and tap Refresh and snapshot"
+                    .to_string(),
+            );
+        }
     }
     if let Some(err) = last_fetch_error {
         if !err.is_empty() {
@@ -122,9 +149,15 @@ pub(crate) fn build_kalshi_dashboard_data_quality_notes(
 #[tauri::command]
 pub async fn kalshi_get_dashboard_bootstrap(
     limit: Option<usize>,
+    config: State<'_, Arc<Mutex<AppConfig>>>,
     kalshi: State<'_, KalshiState>,
     db_pool: State<'_, Pool<Sqlite>>,
 ) -> Result<KalshiDashboardBootstrap, String> {
+    let kalshi_login_configured = {
+        let app_cfg = config.lock().await;
+        sync_kalshi_client_from_app_config(kalshi.as_ref(), &app_cfg)
+    };
+
     let n = limit.unwrap_or(30).min(100);
     let client = kalshi.as_ref();
     let markets = client.get_top_markets(n).await?;
@@ -143,6 +176,7 @@ pub async fn kalshi_get_dashboard_bootstrap(
         client.is_fetch_in_progress(),
         tape_market_count,
         client.last_fetch_error().as_deref(),
+        kalshi_login_configured,
     );
 
     let ml_phase3 = crate::ml_predictor::phase3_dashboard_summary(&db_pool).await;
@@ -185,17 +219,9 @@ pub async fn kalshi_get_portfolio(
     config: State<'_, Arc<Mutex<AppConfig>>>,
     kalshi: State<'_, KalshiState>,
 ) -> Result<serde_json::Value, String> {
-    // Sync config into client before making auth calls
     {
         let app_cfg = config.lock().await;
-        let current = kalshi.config();
-        if current.email != app_cfg.kalshi_email
-            || current.password != app_cfg.kalshi_password
-        {
-            let new_cfg = crate::kalshi::kalshi_config_from_app(&app_cfg);
-            kalshi.set_config(new_cfg);
-            kalshi.invalidate_cache();
-        }
+        sync_kalshi_client_from_app_config(kalshi.as_ref(), &app_cfg);
     }
 
     let balance = kalshi.get_balance().await?;
@@ -218,8 +244,7 @@ pub async fn kalshi_refresh(
 ) -> Result<usize, String> {
     {
         let app_cfg = config.lock().await;
-        let new_cfg = crate::kalshi::kalshi_config_from_app(&app_cfg);
-        kalshi.set_config(new_cfg);
+        sync_kalshi_client_from_app_config(kalshi.as_ref(), &app_cfg);
         kalshi.invalidate_cache();
     }
     let markets = kalshi.fetch_all_markets().await?;
@@ -237,7 +262,15 @@ mod kalshi_dashboard_bootstrap_tests {
 
     #[test]
     fn data_quality_notes_include_stale_and_fetch_hints() {
-        let notes = build_kalshi_dashboard_data_quality_notes(true, true, true, true, 0, Some("auth failed"));
+        let notes = build_kalshi_dashboard_data_quality_notes(
+            true,
+            true,
+            true,
+            true,
+            0,
+            Some("auth failed"),
+            true,
+        );
         assert!(notes.iter().any(|n| n.contains("Partial catalog")));
         assert!(notes.iter().any(|n| n.contains("saved market snapshot")));
         assert!(notes.iter().any(|n| n.contains("older than 60s")));
@@ -248,8 +281,35 @@ mod kalshi_dashboard_bootstrap_tests {
 
     #[test]
     fn data_quality_notes_full_catalog_without_extras() {
-        let notes = build_kalshi_dashboard_data_quality_notes(false, false, false, false, 12, None);
+        let notes = build_kalshi_dashboard_data_quality_notes(
+            false,
+            false,
+            false,
+            false,
+            12,
+            None,
+            false,
+        );
         assert_eq!(notes.len(), 1);
         assert!(notes[0].contains("Full catalog"));
+    }
+
+    #[test]
+    fn data_quality_notes_empty_tape_without_login_mentions_public_catalog() {
+        let notes = build_kalshi_dashboard_data_quality_notes(
+            true,
+            false,
+            false,
+            false,
+            0,
+            None,
+            false,
+        );
+        assert!(
+            notes
+                .iter()
+                .any(|n| n.contains("does not require login")),
+            "expected public-catalog hint, got {notes:?}"
+        );
     }
 }
