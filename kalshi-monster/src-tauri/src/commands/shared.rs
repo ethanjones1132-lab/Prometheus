@@ -6,9 +6,9 @@ use crate::kalshi::KalshiClient;
 use sqlx::{Pool, Sqlite};
 use std::sync::Arc;
 use tauri::Emitter;
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::RwLock;
 
-pub type KalshiState = Arc<Mutex<KalshiClient>>;
+pub type KalshiState = Arc<KalshiClient>;
 pub type SharedCacheState = Arc<RwLock<Option<crate::kalshi::KalshiCache>>>;
 
 pub fn emit_chat_kalshi_context(
