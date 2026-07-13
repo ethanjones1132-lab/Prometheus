@@ -44,6 +44,7 @@ def exe_name(triple: str) -> str:
 
 
 def main() -> int:
+    dry_run = "--dry-run" in sys.argv
     repo_root = Path(__file__).resolve().parent.parent
     sidecar_dir = repo_root / "fincept-sidecar"
     entrypoint = sidecar_dir / "main.py"
@@ -55,6 +56,13 @@ def main() -> int:
     output_name = exe_name(triple)
     binaries_dir = repo_root / "kalshi-monster" / "src-tauri" / "binaries"
     binaries_dir.mkdir(parents=True, exist_ok=True)
+
+    if dry_run:
+        dest = binaries_dir / output_name
+        print(f"dry-run ok: entrypoint={entrypoint}")
+        print(f"dry-run ok: target_triple={triple}")
+        print(f"dry-run ok: staged_path={dest}")
+        return 0
 
     # Tauri externalBin expects the base name in the config and a file named
     # <base>-<target-triple>[.exe] in src-tauri/binaries/.

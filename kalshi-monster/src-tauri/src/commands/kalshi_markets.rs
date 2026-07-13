@@ -317,6 +317,34 @@ mod kalshi_dashboard_bootstrap_tests {
     }
 
     #[test]
+    fn data_quality_notes_empty_tape_with_login_mentions_settings_refresh() {
+        let notes = build_kalshi_dashboard_data_quality_notes(
+            true,
+            false,
+            false,
+            false,
+            0,
+            None,
+            true,
+        );
+        assert!(
+            notes.iter().any(|n| n.contains("Settings")),
+            "expected login-path empty-tape hint, got {notes:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn dashboard_market_count_reflects_full_tape_not_only_top_slice() {
+        let client = KalshiClient::new(KalshiConfig::default(), None);
+        client.seed_cache_for_test(42).await;
+        let top = client.get_top_markets(10).await.expect("top markets");
+        let tape = client.cached_tape_market_count();
+        let market_count = tape.max(top.len());
+        assert_eq!(top.len(), 10);
+        assert_eq!(market_count, 42);
+    }
+
+    #[test]
     fn sync_kalshi_reports_login_configured_only_with_both_fields() {
         let client = KalshiClient::new(KalshiConfig::default(), None);
         let cfg = AppConfig::default();

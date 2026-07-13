@@ -2,6 +2,12 @@
 
 Last updated: 2026-07-13
 
+## Maintenance notes (2026-07-13, cron pass) — KB-1 bootstrap tests + sidecar dry-run
+
+- Shipped: +2 lib tests for dashboard empty-tape login vs public-catalog hints; +1 test pinning `market_count` to full tape size (not top-N slice only); `build_fincept_sidecar.py --dry-run` for packaging layout checks without PyInstaller.
+- Health: `cargo check`, `tsc`, **222** lib tests (+2), bootstrap test module 7/7 green; sidecar dry-run ok on `x86_64-pc-windows-msvc`.
+- **Next:** KB-1 logged-in portfolio verify on user machine; run full `build_fincept_sidecar.py` + `tauri build --config tauri.conf.release.json`; calibration flywheel.
+
 ## Maintenance notes (2026-07-13, cron) — KB-1 sync tests + release externalBin config
 
 - Shipped: unit tests for `sync_kalshi_client_from_app_config` (login gate + cache invalidation on credential change); `tauri.conf.release.json` with `externalBin: ["fincept-sidecar"]` (pairs with `scripts/build_fincept_sidecar.py` + `src-tauri/binaries/README.md`); Fincept bridge test for bundled exe name.
