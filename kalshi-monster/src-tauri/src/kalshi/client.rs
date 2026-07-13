@@ -994,6 +994,14 @@ impl Drop for FetchInProgressGuard {
 }
 
 #[cfg(test)]
+impl KalshiClient {
+    pub(crate) async fn seed_cache_for_test(&self, count: usize) {
+        let markets: Vec<KalshiMarket> = (0..count).map(|_| KalshiMarket::default()).collect();
+        self.store_cache(markets, false).await;
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 

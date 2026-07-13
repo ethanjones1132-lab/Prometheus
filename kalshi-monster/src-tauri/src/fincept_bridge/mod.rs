@@ -452,6 +452,15 @@ mod tests {
     }
 
     #[test]
+    fn sidecar_exe_name_matches_tauri_bundled_binary() {
+        if cfg!(windows) {
+            assert_eq!(super::sidecar_exe_name(), "fincept-sidecar.exe");
+        } else {
+            assert_eq!(super::sidecar_exe_name(), "fincept-sidecar");
+        }
+    }
+
+    #[test]
     fn restart_budget_resets_after_window() {
         let mut b = RestartBudget::default();
         let t0 = Instant::now();

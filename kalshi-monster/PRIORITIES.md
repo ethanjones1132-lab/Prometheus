@@ -2,6 +2,12 @@
 
 Last updated: 2026-07-13
 
+## Maintenance notes (2026-07-13, cron) — KB-1 sync tests + release externalBin config
+
+- Shipped: unit tests for `sync_kalshi_client_from_app_config` (login gate + cache invalidation on credential change); `tauri.conf.release.json` with `externalBin: ["fincept-sidecar"]` (pairs with `scripts/build_fincept_sidecar.py` + `src-tauri/binaries/README.md`); Fincept bridge test for bundled exe name.
+- Health: `cargo check`, `tsc`, **220** lib tests (+3), vitest **40** green.
+- **Next:** KB-1 live credential verification on user machine; run `python scripts/build_fincept_sidecar.py` then `tauri build --config tauri.conf.release.json` for packaged sidecar; calibration flywheel.
+
 ## Maintenance notes (2026-07-13, cron 4pm) — KB-1 bootstrap config sync
 
 - Shipped: `sync_kalshi_client_from_app_config` on `kalshi_get_dashboard_bootstrap` (and shared with portfolio/refresh); empty-tape hints distinguish login vs public-catalog paths; +1 lib test.

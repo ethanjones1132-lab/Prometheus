@@ -259,6 +259,9 @@ pub async fn kalshi_refresh(
 
 mod kalshi_dashboard_bootstrap_tests {
     use super::build_kalshi_dashboard_data_quality_notes;
+    use super::sync_kalshi_client_from_app_config;
+    use crate::config::AppConfig;
+    use crate::kalshi::{KalshiClient, KalshiConfig, KalshiMarket};
 
     #[test]
     fn data_quality_notes_include_stale_and_fetch_hints() {
@@ -311,5 +314,30 @@ mod kalshi_dashboard_bootstrap_tests {
                 .any(|n| n.contains("does not require login")),
             "expected public-catalog hint, got {notes:?}"
         );
+    }
+
+    #[test]
+    fn sync_kalshi_reports_login_configured_only_with_both_fields() {
+        let client = KalshiClient::new(KalshiConfig::default(), None);
+        let cfg = AppConfig::default();
+        assert!(!sync_kalshi_client_from_app_config(&client, &cfg));
+        let mut partial = AppConfig::default();
+        partial.kalshi_email = "user@example.com".into();
+        assert!(!sync_kalshi_client_from_app_config(&client, &partial));
+        partial.kalshi_password = "secret".into();
+        assert!(sync_kalshi_client_from_app_config(&client, &partial));
+    }
+
+    #[tokio::test]
+    async fn sync_kalshi_clears_cache_when_credentials_change() {
+        let client = KalshiClient::new(KalshiConfig::default(), None);
+        client.seed_cache_for_test(1).await;
+        assert_eq!(client.cached_tape_market_count(), 1);
+
+        let mut cfg = AppConfig::default();
+        cfg.kalshi_email = "trader@kalshi.com".into();
+        cfg.kalshi_password = "pw".into();
+        sync_kalshi_client_from_app_config(&client, &cfg);
+        assert_eq!(client.cached_tape_market_count(), 0);
     }
 }
