@@ -758,9 +758,10 @@ async fn fetch_paper_bankroll_metrics(
 
     let paper_wins: i64 = sqlx::query_scalar(
         r#"
-        SELECT COALESCE(SUM(CASE WHEN realized_pnl > 0.0 THEN 1 ELSE 0 END), 0.0)
+        SELECT COUNT(*)
         FROM paper_lots
         WHERE status = 'Closed'
+          AND realized_pnl > 0.0
         "#,
     )
     .fetch_one(pool)
@@ -769,9 +770,10 @@ async fn fetch_paper_bankroll_metrics(
 
     let paper_losses: i64 = sqlx::query_scalar(
         r#"
-        SELECT COALESCE(SUM(CASE WHEN realized_pnl < 0.0 THEN 1 ELSE 0 END), 0.0)
+        SELECT COUNT(*)
         FROM paper_lots
         WHERE status = 'Closed'
+          AND realized_pnl < 0.0
         "#,
     )
     .fetch_one(pool)
@@ -1086,5 +1088,53 @@ mod tests {
         let (capped, warning) = apply_bankroll_cap(100.0, &summary);
         assert!((capped - 100.0).abs() < 0.001);
         assert!(warning.is_none());
+    }
+
+    /// Regression: `paper_wins` / `paper_losses` SQL must return INTEGER
+    /// (so it decodes as `i64`). Previously the query used
+    /// `SUM(CASE ... 0.0)` which coerced the column to REAL and broke
+    /// decoding under sqlx — surfaced as the Settings panel error
+    /// "Failed to fetch paper wins: ... Rust type `i64` ... not compatible
+    /// with SQL type `REAL`".
+    #[tokio::test]
+    async fn paper_wins_decodes_as_i64() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("in-memory sqlite");
+        sqlx::query(
+            r#"
+            CREATE TABLE paper_lots (
+                status TEXT NOT NULL,
+                realized_pnl REAL NOT NULL DEFAULT 0.0
+            )
+            "#,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO paper_lots (status, realized_pnl) VALUES \
+             ('Closed', 1.0), ('Closed', -2.0), ('Open', 3.0), ('Closed', 0.0), ('Closed', 4.5)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let wins: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM paper_lots WHERE status = 'Closed' AND realized_pnl > 0.0",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let losses: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM paper_lots WHERE status = 'Closed' AND realized_pnl < 0.0",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(wins, 2, "win = 1.0 + 4.5");
+        assert_eq!(losses, 1, "loss = -2.0");
     }
 }
