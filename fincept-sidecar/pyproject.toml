@@ -15,6 +15,8 @@ dependencies = [
 # Market-data endpoints need yfinance (Apache-2.0 — permissive path, plan §3 Rule 5b).
 market = ["yfinance>=0.2.40"]
 dev = ["pytest>=8", "httpx>=0.27"]
+# PyInstaller one-file bundle for Tauri externalBin (Windows needs pywin32-ctypes).
+bundle = ["pyinstaller>=6.21", "pywin32-ctypes>=0.2"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -2,6 +2,13 @@
 
 Last updated: 2026-07-14
 
+## Maintenance notes (2026-07-14, cron pass) — Phase 1 sidecar PyInstaller + Hermes-safe build
+
+- Shipped: `scripts/build_fincept_sidecar.py` always uses `fincept-sidecar/.venv` interpreter; strips Hermes `PYTHONPATH` pollution; `--check-env` + `--self-test`; `fincept-sidecar` optional `[bundle]` deps (`pyinstaller`, `pywin32-ctypes`); gitignore PyInstaller artifacts; binaries README cron notes.
+- Verified: `--check-env` green; `--self-test` green; full PyInstaller build staged `kalshi-monster/src-tauri/binaries/fincept-sidecar-x86_64-pc-windows-msvc.exe` (~42MB, gitignored).
+- Health: `cargo check`, `tsc`, **223** lib tests; tree was clean at start.
+- **Next:** KB-1 logged-in portfolio verify (user); `tauri build --config tauri.conf.release.json`; calibration flywheel.
+
 ## Maintenance notes (2026-07-14, cron pass) — stream token estimate + Phase 1 packaging test
 
 - Shipped: fix `unused_assignments` in `chat/openrouter.rs` (stream token estimate computed once after auto-continue loop); +1 lib test `staged_sidecar_artifact_name_matches_build_script` pins `build_fincept_sidecar.py` ↔ Tauri `binaries/` layout.

@@ -28,6 +28,11 @@ Thumbs.db
 kalshi-monster/release/
 kalshi-monster/src-tauri/binaries/
 
+# Fincept sidecar PyInstaller artifacts
+fincept-sidecar/build/
+fincept-sidecar/dist/
+fincept-sidecar/*.spec
+
 # One-off agent maintenance scripts (do not commit)
 kalshi-monster/scripts/check_corruption.py
 kalshi-monster/scripts/debug_test.py

@@ -3,10 +3,12 @@
 
 Usage:
     python scripts/build_fincept_sidecar.py
+    python scripts/build_fincept_sidecar.py --dry-run
+    python scripts/build_fincept_sidecar.py --check-env
 
 Requires PyInstaller in the fincept-sidecar virtualenv:
     cd fincept-sidecar
-    source .venv/bin/activate  # or .venv\\Scripts\\activate on Windows
+    .venv\\Scripts\\activate   # Windows
     pip install pyinstaller
     cd ..
     python scripts/build_fincept_sidecar.py
@@ -19,6 +21,7 @@ Tauri strips the target triple at bundle time and places the binary next to the 
 
 from __future__ import annotations
 
+import os
 import platform
 import shutil
 import subprocess
@@ -43,14 +46,116 @@ def exe_name(triple: str) -> str:
     return f"fincept-sidecar-{triple}{suffix}"
 
 
+def sidecar_python(repo_root: Path) -> Path:
+    """Always use the fincept-sidecar venv — never the caller's interpreter (e.g. Hermes cron)."""
+    sidecar_dir = repo_root / "fincept-sidecar"
+    if platform.system().lower() == "windows":
+        py = sidecar_dir / ".venv" / "Scripts" / "python.exe"
+    else:
+        py = sidecar_dir / ".venv" / "bin" / "python"
+    if not py.is_file():
+        raise FileNotFoundError(
+            f"fincept-sidecar venv python not found: {py}\n"
+            "Create the venv under fincept-sidecar/ and pip install -e '.[market,dev]' plus pyinstaller."
+        )
+    return py
+
+
+def isolated_build_env(sidecar_dir: Path) -> dict[str, str]:
+    """Drop Hermes/cron PYTHONPATH entries that poison PyInstaller (wrong numpy/torch wheels)."""
+    env = os.environ.copy()
+    raw = env.get("PYTHONPATH", "")
+    if raw:
+        cleaned: list[str] = []
+        for part in raw.split(os.pathsep):
+            if not part:
+                continue
+            norm = part.replace("\\", "/").lower()
+            if "hermes-agent" in norm or "/hermes/hermes-agent/" in norm:
+                continue
+            cleaned.append(part)
+        if cleaned:
+            env["PYTHONPATH"] = os.pathsep.join(cleaned)
+        else:
+            env.pop("PYTHONPATH", None)
+    env["VIRTUAL_ENV"] = str(sidecar_dir / ".venv")
+    return env
+
+
+def _self_test() -> int:
+    sidecar = Path("/tmp/fincept-sidecar-test")
+    env = {
+        "PYTHONPATH": os.pathsep.join(
+            [
+                r"C:\Users\ethan\AppData\Local\hermes\hermes-agent",
+                r"C:\Users\ethan\AppData\Local\hermes\hermes-agent\venv\Lib\site-packages",
+                r"D:\safe\lib",
+            ]
+        )
+    }
+    os.environ.update(env)
+    cleaned = isolated_build_env(sidecar)
+    assert "PYTHONPATH" in cleaned and cleaned["PYTHONPATH"] == r"D:\safe\lib", cleaned
+    print("self-test ok: hermes PYTHONPATH stripped")
+    return 0
+
+
+def check_sidecar_env(repo_root: Path) -> int:
+    py = sidecar_python(repo_root)
+    sidecar_dir = repo_root / "fincept-sidecar"
+    env = isolated_build_env(sidecar_dir)
+    probes = [
+        ("import fincept_sidecar", "fincept_sidecar package"),
+        ("import pydantic", "pydantic"),
+        ("import uvicorn", "uvicorn"),
+    ]
+    for code, label in probes:
+        r = subprocess.run(
+            [str(py), "-c", code],
+            cwd=sidecar_dir,
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+        if r.returncode != 0:
+            print(f"check-env FAIL: {label}\n{r.stderr or r.stdout}", file=sys.stderr)
+            return 1
+        print(f"check-env ok: {label}")
+    r = subprocess.run(
+        [str(py), "-c", "import PyInstaller"],
+        cwd=sidecar_dir,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    if r.returncode != 0:
+        print(
+            "check-env FAIL: PyInstaller not installed in fincept-sidecar venv "
+            "(pip install -e '.[bundle]' in fincept-sidecar/)",
+            file=sys.stderr,
+        )
+        if r.stderr or r.stdout:
+            print(r.stderr or r.stdout, file=sys.stderr)
+        return 1
+    print("check-env ok: PyInstaller")
+    print(f"check-env ok: interpreter={py}")
+    return 0
+
+
 def main() -> int:
+    if "--self-test" in sys.argv:
+        return _self_test()
     dry_run = "--dry-run" in sys.argv
+    check_env = "--check-env" in sys.argv
     repo_root = Path(__file__).resolve().parent.parent
     sidecar_dir = repo_root / "fincept-sidecar"
     entrypoint = sidecar_dir / "main.py"
     if not entrypoint.is_file():
         print(f"error: sidecar entrypoint not found: {entrypoint}", file=sys.stderr)
         return 1
+
+    if check_env:
+        return check_sidecar_env(repo_root)
 
     triple = target_triple()
     output_name = exe_name(triple)
@@ -62,19 +167,23 @@ def main() -> int:
         print(f"dry-run ok: entrypoint={entrypoint}")
         print(f"dry-run ok: target_triple={triple}")
         print(f"dry-run ok: staged_path={dest}")
+        try:
+            py = sidecar_python(repo_root)
+            print(f"dry-run ok: sidecar_python={py}")
+        except FileNotFoundError as e:
+            print(f"dry-run warn: {e}", file=sys.stderr)
         return 0
 
-    # Tauri externalBin expects the base name in the config and a file named
-    # <base>-<target-triple>[.exe] in src-tauri/binaries/.
-    tauri_bin_name = f"fincept-sidecar-{triple}{'.exe' if 'windows' in triple else ''}"
+    py = sidecar_python(repo_root)
+    env = isolated_build_env(sidecar_dir)
 
     dist_dir = sidecar_dir / "dist"
     if dist_dir.exists():
         shutil.rmtree(dist_dir)
 
-    print(f"Building Fincept sidecar for {triple} ...")
+    print(f"Building Fincept sidecar for {triple} with {py} ...")
     cmd = [
-        sys.executable,
+        str(py),
         "-m",
         "PyInstaller",
         "--onefile",
@@ -88,7 +197,7 @@ def main() -> int:
         str(sidecar_dir),
         str(entrypoint),
     ]
-    subprocess.run(cmd, cwd=sidecar_dir, check=True)
+    subprocess.run(cmd, cwd=sidecar_dir, env=env, check=True)
 
     built = dist_dir / ("fincept-sidecar.exe" if "windows" in triple else "fincept-sidecar")
     if not built.is_file():

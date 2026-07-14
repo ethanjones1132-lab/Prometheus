@@ -6,7 +6,7 @@ Tracks execution of `docs/fincept-integration-plan.md` (v2.1). Newest entry firs
 
 ---
 
-## Current next steps (reconciled 2026-07-13, post release externalBin config)
+## Current next steps (reconciled 2026-07-14, post sidecar PyInstaller staging)
 
 | # | Item | Why | Notes / acceptance |
 |---|------|------|---------------------|
@@ -14,7 +14,7 @@ Tracks execution of `docs/fincept-integration-plan.md` (v2.1). Newest entry firs
 | **2** | **Calibration flywheel (ongoing)** | Gate needs *resolved* rows | Auto-grade fills `forecasts.outcome`; accumulate ≥200 resolved + Brier + paper P&L. |
 | **3** | ~~**KB-2 Analyst UX**~~ | Shipped | Sessions, stream, paper, OpenCode providers, completion + retrieval fixes. |
 | **4** | **Phase 3 productization** | Ops path | Breaker persistence; reliability diagram; live-order guard; λ re-fit; full edge_config; keyring secrets; fee-aware paper + grading PnL. Polish as gate data accrues. |
-| **5** | **Phase 1 leftovers** | Sidecar ops / data breadth | Settings UI for bridge start/status shipped. **`tauri.conf.release.json` + `build_fincept_sidecar.py`** staged — next: run PyInstaller staging and `tauri build --config tauri.conf.release.json`. |
+| **5** | **Phase 1 leftovers** | Sidecar ops / data breadth | **`build_fincept_sidecar.py`** now Hermes-safe + `--check-env`; staged `fincept-sidecar-x86_64-pc-windows-msvc.exe` (~42MB) locally. **Next:** `tauri build --config tauri.conf.release.json` on release machine. |
 | **6** | **More agents (honest data only)** | p_model coverage | Fincept spike or native agents only with real data. |
 | **7** | **AGPL isolation hygiene** | Plan §3 Rule 1 | Split `fincept-sidecar` public repo before Fincept-derived code. |
 
