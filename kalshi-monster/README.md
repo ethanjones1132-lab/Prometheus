@@ -1,210 +1,283 @@
-# Kalshi Monster v0.8.0
+<div align="center">
 
-**AI-powered prediction market intelligence engine** — A Tauri 2 + Rust desktop application that connects to OpenRouter API to deliver probability-weighted market assessments with real-time Kalshi data, liquidity analysis, and risk-adjusted decision modeling.
+# Prometheus · Kalshi Monster
 
-> **Analytics and research only.** This app never places, sizes, sends, or
-> auto-submits a real order. It reads public market data and produces analysis.
+**AI-powered prediction market intelligence — on your desktop.**  
+Real-time markets · Smart analysis · Your money, your rules
 
-## What It Is
+[![License](https://img.shields.io/badge/license-MIT-green)](src-tauri/Cargo.toml)
+[![Version](https://img.shields.io/badge/version-0.8.0-blue)](src-tauri/Cargo.toml)
+[![Tests](https://img.shields.io/badge/tests-222%20lib%20|%2040%20vitest-success)](scripts/agent-healthcheck.ps1)
+[![Platform](https://img.shields.io/badge/platform-Windows%20|%20Linux%20|%20macOS-lightgrey)]()
 
-Kalshi Monster is a desktop app designed to give AI models deep analytical capabilities for prediction markets. Every assessment provides:
+</div>
 
-- **Real-time Kalshi market data** for sports, politics, economics, and finance
-- **Risk-adjusted expected value (EV) analysis** with Kelly criterion sizing
-- **Downside control** and overconfidence shrinkage modeling
-- **Market liquidity and bid-ask spread awareness**
-- **Structured prediction tracking** and performance calibration
-- **Multi-source market data** with automated failover
-- **Intelligent risk-flagging** for extreme probabilities or market friction
+---
 
-## Edge Validation & Calibration (frozen 2026-06-11)
+## What is this?
 
-Kalshi Monster shares the evaluation stack built for the Monster apps. Its edge
-math is the shared `../monster-edge-core` crate (it was byte-identical to
-prizepicks-monster's), and it consumes the same `../edge-eval` engine.
+**Kalshi Monster** is a desktop app that helps you analyze prediction markets on [Kalshi](https://kalshi.com/) — the regulated exchange where you can trade on events like "Will the Fed cut rates in September?" or "Will Team X win the Super Bowl?"
 
-**Market-calibration benchmark** — `eval-cli` fetches settled Kalshi markets
-from the public API for liquid series (weather dailies, Fed, CPI, payrolls),
-reconstructs each market's price path from candlesticks, and scores the
-**entry price as a forecast** over **1,008** resolved markets:
+Think of it as your personal market research assistant. It pulls live market data from Kalshi, runs it through AI analysis (via OpenRouter — your choice of model), and gives you structured, risk-aware assessments. It never places real trades — it's an analytics tool, not a trading bot.
 
-| Metric | Value |
-|---|---|
-| Brier score | 0.129 |
-| ECE (calibration error) | 0.037 |
-| Brier skill score | **+0.28** |
+> **Prometheus** is this GitHub repository. **Kalshi Monster** is the app. Same project, two names.
 
-The market's own price is well-calibrated — this is the **benchmark the app's
-own forecasts must beat**, and it exercises closing-line value (CLV) end to end
-(`closing_prob` = final candle). The market-prior calibrator is saved to
-`reports/market-calibrator.json`.
+---
 
-**The same calibration as PrizePicks** — `analyze_single_prop` applies the
-measured isotonic calibrator (override file
-`~/.openclaw/kalshi-monster/calibrator.json`, else the embedded artifact). The
-`predictions/tracker` Brier bug (graded `confidence_score` as a probability,
-counted pushes as losses) was fixed to use the shared engine.
+## Who is this for?
 
-**Current measurement status** — the app's own LLM forecasts have **no graded
-history yet** (the live DB holds only Pending rows). Once `predictions.db`
-accumulates resolved Win/Loss rows, the same engine scores them via
-`eval_adapter` — and unlike PrizePicks, Kalshi's public API makes a full year
-of resolved-market history retrievable for benchmarking.
+- **Prediction market enthusiasts** who want deeper analysis than Kalshi's own interface provides
+- **Traders** who want AI-assisted market scanning with risk calibration and Kelly sizing built-in
+- **Anyone curious about prediction markets** who wants to understand what the numbers actually mean
 
-Re-run (in-app, via `eval_adapter`):
-```bash
-cd src-tauri && cargo test eval_adapter::
-```
-Offline benchmark artifacts live in `reports/` (`backtest-report.md`, `market-calibrator.json`).
-The standalone `eval-cli` crate is not in this repo; calibration runs through the shared `edge-eval` library dependency.
+---
 
-## Architecture
+## What can it do?
+
+| What you see | What it means for you |
+|:---|---|
+| **Live market dashboard** | Browse Kalshi markets in real time — sports, politics, economics, finance, weather. See prices, volumes, and bid-ask spreads at a glance. |
+| **AI-powered analysis** | Ask questions in plain English: "What's the best value in political markets right now?" or "Analyze the Fed rate decision market." The AI reads live data and gives you a structured answer. |
+| **Smart risk calibration** | Every analysis includes expected value (EV), Kelly criterion sizing, and overconfidence shrinkage — so you don't bet more than the math supports. |
+| **Paper trading** | Track hypothetical trades to test your strategies. The system grades them when markets settle and shows you your running P&L, win rate, and calibration score. |
+| **ML prediction boost** | A machine learning model scores each pending market and injects its probabilities into the AI's prompt — you see when the ML disagrees with the AI's estimate, giving you a second opinion. |
+| **Calibration tracking** | See how well your predictions are performing over time — Brier score, reliability diagrams, calibration curves. Know if you're overconfident or underconfident. |
+| **Multi-model chat** | Compare the same question across different AI models. See which model gives you better analysis for different market types. |
+| **Line movement tracking** | Watch how market prices change over time with historical charts and filtering — spot trends before the crowd. |
+| **Your choice of AI** | Use any model available on OpenRouter — Claude, GPT, Gemini, DeepSeek. Switch any time. |
+| **Dark & light themes** | A "Gothic Maximalist" dark theme (or light mode if that's your style). |
+
+---
+
+## Quick look under the hood (the 30-second version)
 
 ```
-kalshi-monster/
-├── src-tauri/           # Rust backend
-│   ├── src/
-│   │   ├── lib.rs       # App entry, state management
-│   │   ├── config.rs    # App config, model list, API status
-│   │   ├── commands/    # Tauri command handlers
-│   │   ├── chat/        # Chat sessions + OpenRouter API
-│   │   ├── predictions/ # Prediction tracking + calibration
-│   │   └── kalshi/      # Kalshi market data API integration
-│   └── Cargo.toml
-├── src-ui/              # React + TypeScript frontend
-│   ├── src/
-│   │   ├── App.tsx              # Main app shell
-│   │   ├── components/
-│   │   │   ├── KalshiView.tsx       # Live Kalshi market dashboard
-│   │   │   ├── ChatView.tsx         # AI chat interface
-│   │   │   ├── KalshiPredictionsPanel.tsx  # Paper trade log + analytics
-│   │   │   └── ...
-│   │   └── ...
-│   └── package.json
-└── README.md
+You ask a question about a market
+        │
+        ▼
+  React UI ─────► Rust engine (Kalshi + AI)
+                        │
+                   ┌────┴────┐
+                   ▼         ▼
+             Kalshi API   OpenRouter
+            (live data)   (AI models)
 ```
 
-## Getting Started
+- **React UI** — The dashboard you see and interact with (chat, markets, predictions, calibration).
+- **Rust/Tauri engine** — The brain. Fetches live market data, runs AI analysis, manages your paper portfolio, tracks calibration, and stores everything in SQLite.
+- **Kalshi API** — Real-time market prices, order books, settled events, and trading history (read-only — no trades placed).
+- **OpenRouter** — Your choice of AI models for market analysis (Claude, GPT, Gemini, etc.).
 
-### Prerequisites
-- [Rust](https://rustup.rs/) (1.85+)
-- [Node.js](https://nodejs.org/) (18+)
-- [Tauri prerequisites](https://tauri.app/start/prerequisites/) for your OS
+---
 
-### Development
-1. Clone the repository.
-2. Install dependencies: `npm install --prefix src-ui`
-3. Run in dev mode: `npm run dev --prefix src-ui` (or `cargo tauri dev` from `src-tauri`)
+## What's been happening lately
+
+| Recent milestone | What it means |
+|:---|---|
+| **ML predictions in every chat** | The ML model's win probabilities are automatically injected into every AI analysis — you see its disagreement flag when it thinks differently from the LLM. |
+| **Fee-aware paper trades** | Paper trades now account for Kalshi's actual fee structure, so your simulated P&L is realistic. |
+| **Credentials stored securely** | Your API keys are now stored in your OS credential store (keyring), not in a plaintext config file. |
+| **Seamless market sync** | Credentials sync automatically between app config and the Kalshi client — log in once, the rest just works. |
+| **Edge calibration controls** | Manually override the shrinkage lambda to dial in your edge model's aggressiveness. |
+| **Session management** | Rename your chat sessions with an inline double-click — keep your analyses organized. |
+| **Fincept sidecar (phase 1)** | Settings panel manages the Fincept analysis engine as a bundled sidecar process. |
+| **Analyst settlement gates** | Markets can't auto-settle without analyst confirmation — prevents premature grading. |
+
+Full changelog with test counts and commit history: [`PRIORITIES.md`](PRIORITIES.md).
+
+---
+
+## Quick start (for developers)
 
 ```bash
+git clone https://github.com/ethanjones1132-lab/Prometheus.git
+cd Prometheus
+
 # Install frontend dependencies
-cd src-ui && npm install
+cd src-ui && npm install && cd ..
 
-# Run in development mode (from project root)
-npm run tauri dev
-
-# Build for production
-npm run tauri build
+# Run in development mode
+cd src-tauri && cargo tauri dev
 ```
 
-### First Run
+The dev server is at **http://localhost:1420** (Vite) — the Tauri window opens automatically.
+
+### What you need
+
+| Tool | For | Version |
+|------|-----|---------|
+| [Rust](https://rustup.rs/) | Building the native desktop engine | 1.85+ |
+| [Node.js](https://nodejs.org/) | Frontend | 18+ |
+| [OpenRouter API key](https://openrouter.ai/keys) | AI analysis (enter in app Settings) | — |
+
+---
+
+## First run
+
 1. Launch the app
 2. Go to **Settings** → Enter your [OpenRouter API key](https://openrouter.ai/keys)
 3. Click **Test Connection** to verify
-4. Select your preferred model (Claude Sonnet 4 recommended)
-5. Click **"+ New Prediction"** in the sidebar
-6. Start asking about player props!
+4. Pick your preferred model
+5. Browse live markets or start a chat and ask a question
 
-## Example Queries
+### Example questions
 
-- "What are today's best player prop picks?"
-- "Analyze Mahomes passing yards prop vs BUF"
-- "Give me your top 3 rushing yard props this week"
-- "Over/Under picks for TNF game"
-- "Highest confidence picks across all games today"
+- "What are the best value markets in politics right now?"
+- "Analyze the Fed rate decision for September"
+- "What's the implied probability of this market, and is there edge?"
+- "Give me a risk-adjusted portfolio across my top 5 markets"
+- "Show me markets where the ML disagrees with the crowd price"
 
-## Response Format
+---
 
-The AI responds with structured predictions:
+## Build & release
 
+```bash
+cd src-tauri && cargo tauri build
+# → Platform installer in target/release/bundle/
 ```
-🏈 PICK: Over 285.5 for Patrick Mahomes — Passing Yards
-📊 REASONING: Mahomes averages 280 yards/game this season...
-⚡ CONFIDENCE: Medium
-📈 PROBABILITY: 55% Over
-⚠️ RISK: Wind gusts up to 18 mph could suppress passing
+
+For release packaging with the Fincept sidecar:
+
+```bash
+python scripts/build_fincept_sidecar.py          # Build the sidecar binary
+cargo tauri build --config tauri.conf.release.json  # Bundle with externalBin
 ```
+
+---
 
 ## Configuration
 
-Config is stored at `~/.openclaw/kalshi-monster/config.json`:
+Settings are stored in two places:
 
-```json
-{
-  "openrouter_api_key": "sk-or-v1-...",
-  "openrouter_base_url": "https://openrouter.ai/api/v1",
-  "selected_model": "anthropic/claude-sonnet-4-20250514",
-  "system_prompt": "...",
-  "max_context_players": 50
-}
+| What | Where | Why |
+|------|-------|-----|
+| **API keys** | OS keyring (Windows Credential Manager / macOS Keychain / Linux libsecret) | Secure — no plaintext on disk |
+| **App settings** | `~/.openclaw/kalshi-monster/config.json` | Model selection, system prompt, risk config |
+
+| Setting | What it controls |
+|---------|-----------------|
+| `openrouter_api_key` | API key (migrated to keyring on save) |
+| `selected_model` | Which AI model to use for analysis |
+| `system_prompt` | Custom instructions for how the AI analyzes markets |
+| `shrinkage_lambda` | Overconfidence penalty strength — higher = more conservative |
+| `max_context_players` | Max markets to analyze in one pass |
+
+---
+
+## Verify it works
+
+```bash
+cargo check                                        # Rust lint
+cd src-ui && npx tsc --noEmit && npx vitest run    # UI typecheck + tests
+cargo test kalshi::                                 # Kalshi-specific tests
 ```
 
-## Tech Stack
+Or the full health check (from repo root):
 
-- **Desktop Framework:** Tauri 2 (Rust)
-- **Frontend:** React 18 + TypeScript + Tailwind CSS v4
-- **AI API:** OpenRouter (multi-model gateway)
-- **Styling:** Custom "Gothic Maximalist" dark theme
-- **State:** Tokio async runtime + Tauri managed state
+```powershell
+.\scripts\agent-healthcheck.ps1
+```
 
-## Roadmap
+Checks: Rust compile, UI typecheck, Kalshi tests, paper module presence, roadmap files.
 
-### Edge Validation milestone (2026-06-11) - Current
-- [x] **Shared `edge-eval` + `monster-edge-core`** — same evaluation engine and edge math as prizepicks-monster (one crate, one calibrator, no divergent copies).
-- [x] **Resolved-market backfill + CLV backtest** — 1,008 settled Kalshi markets scored; market entry price confirmed well-calibrated (Brier 0.129, BSS +0.28) as the benchmark.
-- [x] **Measured calibration wired into the live path** — isotonic calibrator applied in `analyze_single_prop`; `tracker` Brier bug fixed (Brier over stored probability, pushes/voids excluded).
-- [x] **Baseline hygiene** — git baseline established; pre-existing `&str + &str` compile error fixed; dead lib-test target resurrected (8 stale tests quarantined with reasons for follow-up).
+---
 
-### v0.8.0
-- [x] **ML predictions injected into AI chat prompt** — Trained ML model predictions are now automatically injected as system context in both streaming and non-streaming chat, giving the AI model ML-backed win probabilities for pending props
-- [x] **ML disagreement highlighting** — When ML model disagrees with the AI's original probability, the conflict is flagged in the prompt for sharper analysis
-- [x] **Feature importance tracking** — ML model feature importance displayed in the ML Predictions UI tab
+## How it's built
 
-### v0.7.0
-- [x] Historical prop line movement tracking — snapshot and track how prop lines change over time, with charts and filtering
+| Layer | What's inside |
+|-------|--------------|
+| **Rust engine** | Tauri 2, Tokio async, Kalshi API client, OpenRouter chat, SQLite persistence, edge engine (calibration, Kelly sizing, shrinkage) |
+| **React UI** | TypeScript, Tailwind CSS v4, Vite, custom Gothic Maximalist dark theme |
+| **AI** | OpenRouter gateway (Claude, GPT, Gemini, DeepSeek — your pick) with streaming responses |
+| **ML** | Injected prediction booster that flags disagreements with AI estimates |
+| **Persistence** | SQLite — sessions, predictions, edge config, calibration history, paper trades |
+| **Sidecar** | Fincept analysis engine as a bundled process for additional compute |
 
-### v0.6.0
-- [x] Live ESPN API integration for real-time schedule data
-- [x] Prediction extraction and tracking from AI responses
-- [x] Performance dashboard with confidence-level breakdowns
-- [x] 60+ player profiles with full splits (home/away, top-10/bottom-10 defense)
-- [x] 32 team offense and defense rankings
-- [x] Streaming chat responses (Server-Sent Events)
-- [x] Player prop comparison tool with visual charts
-- [x] Custom system prompts (risk tolerance, stat weighting, output format)
-- [x] Export predictions to text/image/social media
-- [x] Model comparison (same query to multiple models)
-- [x] Parlay builder with correlation detection and EV calculation
-- [x] Calibration metrics (Brier score, skill score, reliability diagram)
-- [x] Multi-source data fallback (OpticOdds → Apify → Mock)
-- [x] Live weather delta injection (Open-Meteo + OpenWeatherMap)
-- [x] Sleeper API integration for injuries and player stats
+---
 
-### In Progress
-- [x] SQLite-backed prediction storage (migrated from JSON files)
-- [x] Bankroll management / Kelly criterion calculator
-- [x] Multi-sport live data (NBA, MLB, NHL) — live scoreboard fetching implemented
-- [x] NFL knowledge base fully populated — 18 QBs, 15 RBs, 20 WRs, 12 TEs, 32 defenses, 32 offenses with full stats
-- [x] Multi-sport player databases — 25 NBA players, 20 MLB players, 20 NHL players with full stats
-- [x] Dark/light theme toggle
-- [x] Webhook notifications for game-day pick reminders
-- [x] Player prop trend tracking with charts in TrendsView
-- [x] Analysis engine — edge calculator, matchup analyzer, parlay correlation, prop scorer
+## Repository layout
 
-### Future
-- [x] Historical prop line movement tracking
-- [ ] Machine learning model for prop prediction training
+```
+Prometheus/
+├── src-tauri/               # Rust — engine, API clients, AI chat, predictions, calibration
+│   ├── src/
+│   │   ├── commands/        # Tauri command handlers
+│   │   ├── chat/            # Chat sessions + OpenRouter integration
+│   │   ├── predictions/     # Prediction tracking + calibration
+│   │   ├── kalshi/          # Kalshi market data API
+│   │   ├── paper/           # Paper trading engine
+│   │   ├── fincept/         # Fincept sidecar bridge
+│   │   └── config.rs        # App config management
+│   ├── binaries/            # Sidecar binary stubs
+│   └── Cargo.toml
+├── src-ui/                  # React TypeScript frontend
+│   ├── src/
+│   │   ├── components/      # Dashboard, chat, markets, predictions, calibration views
+│   │   └── App.tsx          # Main app shell
+│   └── package.json
+├── docs/                    # Plans and architecture decisions
+├── scripts/                 # Build and healthcheck scripts
+├── reports/                 # Calibration artifacts and evaluation reports
+├── AGENTS.md                # Rules for autonomous coding agents
+├── PRIORITIES.md            # Full changelog and improvement backlog
+└── ROADMAP.md               # Phased development plan
+```
+
+---
+
+## Technical architecture (the full picture)
+
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│  React UI (src-ui/) — Vite + TypeScript + Tailwind                    │
+│  Dashboard · Chat · Markets · Predictions · Calibration · Settings     │
+│  Tauri IPC ↔ Rust commands                                            │
+└────────────────────────────┬─────────────────────────────────────────┘
+                             │
+┌────────────────────────────▼─────────────────────────────────────────┐
+│  Tauri / Rust (src-tauri/)                                             │
+│  ┌─────────┐  ┌──────────┐  ┌────────────┐  ┌──────────────────┐     │
+│  │ Kalshi  │  │ Chat     │  │Predictions │  │ Paper trading    │     │
+│  │ Client  │  │ (OpenRtr)│  │+ Calib.    │  │ + Kelly sizing   │     │
+│  └────┬────┘  └────┬─────┘  └──────┬─────┘  └────────┬─────────┘     │
+│       │            │              │                  │               │
+│       ▼            ▼              ▼                  ▼               │
+│  ┌─────────────────────────────────────────────────────────┐        │
+│  │  SQLite — sessions · predictions · edge config · paper  │        │
+│  └─────────────────────────────────────────────────────────┘        │
+│  ┌─────────────────────────────────────────────────────────┐        │
+│  │  Fincept sidecar (bundled process)                      │        │
+│  └─────────────────────────────────────────────────────────┘        │
+└────────────────────────────┬─────────────────────────────────────────┘
+                             │
+                    ┌────────┴────────┐
+                    ▼                 ▼
+            Kalshi API          OpenRouter
+         (public markets)      (AI models)
+```
+
+**How a market analysis flows:**
+1. You type a question or browse a market in the dashboard
+2. The Rust engine fetches live data from Kalshi (price, volume, order book, settled history)
+3. The edge engine calculates expected value, Kelly sizing, and shrinkage-adjusted probabilities
+4. The ML prediction booster checks if its model has a probability estimate for this market
+5. Everything is packaged together and sent to the selected AI model via OpenRouter
+6. The AI returns a structured analysis — displayed in real time in the chat panel
+7. If you paper-trade based on the analysis, it's logged to SQLite and graded when the market settles
+
+---
 
 ## License
 
-MIT
+MIT — see [`Cargo.toml`](src-tauri/Cargo.toml).
+
+---
+
+<div align="center">
+
+**Prometheus / Kalshi Monster** — Built with Rust + TypeScript
+
+[GitHub](https://github.com/ethanjones1132-lab/Prometheus) · [Issues](https://github.com/ethanjones1132-lab/Prometheus/issues)
+
+</div>
