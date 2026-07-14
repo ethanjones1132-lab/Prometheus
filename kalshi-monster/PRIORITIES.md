@@ -1,6 +1,13 @@
 # Kalshi Monster — Priority Roadmap
 
-Last updated: 2026-07-13
+Last updated: 2026-07-14
+
+## Maintenance notes (2026-07-14, overnight) — fleet backlog updated; KB-2 marked complete
+
+- Documentation: updated `docs/fleet-backlog-2026-07-08.md` — KB-2 (Analyst tab) now marked ✅ Complete. All 5 slices shipped: KB-2a (context chip + structured status), KB-2b (session rename), KB-2c (paper hook from chat), KB-2d/e (streaming + error retry + live quick prompts).
+- Health: `cargo check`, `tsc`, **222** lib tests all green; working tree clean (auto-remediated last pass).
+- KB-1 status: 🟡 root cause fixed (dual-runtime blocking RwLock); remaining blocker is live credential verification on user machine — not automatable in a cron pass.
+- **Next:** KB-1 live credential verification (user); calibration flywheel (accumulate resolved forecasts); Phase 1 sidecar packaging.
 
 ## Maintenance notes (2026-07-13, cron pass) — KB-1 bootstrap tests + sidecar dry-run
 
