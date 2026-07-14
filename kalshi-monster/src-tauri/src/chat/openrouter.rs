@@ -777,7 +777,6 @@ pub async fn stream_message(
     }
 
     let mut assembled = String::new();
-    let mut tokens_used: Option<u64> = None;
     let mut cont = 0u32;
 
     loop {
@@ -904,8 +903,6 @@ pub async fn stream_message(
             }
         }
 
-        tokens_used = Some(assembled.len() as u64 / 4);
-
         if assembled.trim().is_empty() {
             let msg = "Model returned an empty streamed response. Try another model.";
             let _ = tx.send(format!("__STREAM_ERROR__:{msg}")).await;
@@ -924,10 +921,11 @@ pub async fn stream_message(
         cont += 1;
     }
 
+    let token_estimate = assembled.len() as u64 / 4;
     Ok(OpenRouterResponse {
         content: assembled,
         reasoning: None,
-        tokens_used,
+        tokens_used: Some(token_estimate),
         model: model_id,
     })
 }

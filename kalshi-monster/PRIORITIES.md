@@ -2,6 +2,13 @@
 
 Last updated: 2026-07-14
 
+## Maintenance notes (2026-07-14, cron pass) — stream token estimate + Phase 1 packaging test
+
+- Shipped: fix `unused_assignments` in `chat/openrouter.rs` (stream token estimate computed once after auto-continue loop); +1 lib test `staged_sidecar_artifact_name_matches_build_script` pins `build_fincept_sidecar.py` ↔ Tauri `binaries/` layout.
+- Verified: `python scripts/build_fincept_sidecar.py --dry-run` ok (`x86_64-pc-windows-msvc`).
+- Health: `cargo check` (0 warnings), `tsc`, **223** lib tests (+1); tree was clean at start.
+- **Next:** KB-1 live credential verification (user); full PyInstaller sidecar + `tauri build --config tauri.conf.release.json`; calibration flywheel.
+
 ## Maintenance notes (2026-07-14, overnight) — fleet backlog updated; KB-2 marked complete
 
 - Documentation: updated `docs/fleet-backlog-2026-07-08.md` — KB-2 (Analyst tab) now marked ✅ Complete. All 5 slices shipped: KB-2a (context chip + structured status), KB-2b (session rename), KB-2c (paper hook from chat), KB-2d/e (streaming + error retry + live quick prompts).

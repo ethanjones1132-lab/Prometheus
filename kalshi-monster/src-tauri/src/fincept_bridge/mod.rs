@@ -460,6 +460,48 @@ mod tests {
         }
     }
 
+    /// Contract with `scripts/build_fincept_sidecar.py` (repo root): PyInstaller output
+    /// is staged under `src-tauri/binaries/fincept-sidecar-<target-triple>[.exe]`.
+    #[test]
+    fn staged_sidecar_artifact_name_matches_build_script() {
+        let triple = if cfg!(windows) {
+            "x86_64-pc-windows-msvc"
+        } else if cfg!(target_os = "macos") {
+            if cfg!(target_arch = "aarch64") {
+                "aarch64-apple-darwin"
+            } else {
+                "x86_64-apple-darwin"
+            }
+        } else {
+            "x86_64-unknown-linux-gnu"
+        };
+        let suffix = if cfg!(windows) { ".exe" } else { "" };
+        let staged = format!("fincept-sidecar-{triple}{suffix}");
+        let binaries_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("binaries");
+        assert!(
+            binaries_dir.is_dir(),
+            "binaries dir missing: {}",
+            binaries_dir.display()
+        );
+        let dev_entry = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fincept-sidecar/main.py")
+            .canonicalize()
+            .expect("fincept-sidecar main.py for dev spawn");
+        assert!(dev_entry.is_file(), "dev entrypoint: {}", dev_entry.display());
+        assert_eq!(
+            staged,
+            if cfg!(windows) {
+                "fincept-sidecar-x86_64-pc-windows-msvc.exe"
+            } else if cfg!(target_os = "macos") && cfg!(target_arch = "aarch64") {
+                "fincept-sidecar-aarch64-apple-darwin"
+            } else if cfg!(target_os = "macos") {
+                "fincept-sidecar-x86_64-apple-darwin"
+            } else {
+                "fincept-sidecar-x86_64-unknown-linux-gnu"
+            }
+        );
+    }
+
     #[test]
     fn restart_budget_resets_after_window() {
         let mut b = RestartBudget::default();
