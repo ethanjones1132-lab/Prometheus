@@ -130,4 +130,23 @@ describe('CalibrationView', () => {
     });
     expect(screen.getByText(/Not enough resolved forecasts/i)).toBeInTheDocument();
   });
+
+  test('resolve settled forecasts refreshes report after IPC', async () => {
+    vi.mocked(kalshiApi.resolvePendingForecasts).mockResolvedValue(2);
+    render(<CalibrationView />);
+    await waitFor(() => expect(screen.getByText('LOCKED')).toBeInTheDocument());
+    const callsBefore = vi.mocked(kalshiApi.getForecastCalibrationReport).mock.calls.length;
+
+    fireEvent.click(screen.getByRole('button', { name: /Resolve settled forecasts/i }));
+
+    await waitFor(() => {
+      expect(kalshiApi.resolvePendingForecasts).toHaveBeenCalled();
+    });
+    expect(screen.getByText(/Resolved 2 forecast row/i)).toBeInTheDocument();
+    await waitFor(() => {
+      expect(vi.mocked(kalshiApi.getForecastCalibrationReport).mock.calls.length).toBeGreaterThan(
+        callsBefore,
+      );
+    });
+  });
 });

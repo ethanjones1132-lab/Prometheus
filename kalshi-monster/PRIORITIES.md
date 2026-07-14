@@ -2,6 +2,13 @@
 
 Last updated: 2026-07-14
 
+## Maintenance notes (2026-07-14, cron pass) — calibration flywheel vitest + binaries .gitkeep
+
+- Shipped: `CalibrationView.test.tsx` +1 test for **Resolve settled forecasts** (IPC + post-resolve report refresh); track empty `src-tauri/binaries/` via `.gitkeep` (exe remains gitignored).
+- Auto-remediation: committed untracked `.gitkeep` per `binaries/.gitignore` `!.gitkeep`.
+- Verified: `python scripts/build_fincept_sidecar.py --check-env` green; CalibrationView vitest **4/4**; `cargo check`, `tsc`, **223** lib tests.
+- **Next:** KB-1 logged-in portfolio verify (user); `tauri build --config tauri.conf.release.json`; accumulate resolved forecasts for calibration gate.
+
 ## Maintenance notes (2026-07-14, cron pass) — Phase 1 sidecar PyInstaller + Hermes-safe build
 
 - Shipped: `scripts/build_fincept_sidecar.py` always uses `fincept-sidecar/.venv` interpreter; strips Hermes `PYTHONPATH` pollution; `--check-env` + `--self-test`; `fincept-sidecar` optional `[bundle]` deps (`pyinstaller`, `pywin32-ctypes`); gitignore PyInstaller artifacts; binaries README cron notes.
