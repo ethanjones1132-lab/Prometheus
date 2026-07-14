@@ -26,7 +26,8 @@ Thumbs.db
 
 # Build output directories
 kalshi-monster/release/
-kalshi-monster/src-tauri/binaries/
+kalshi-monster/src-tauri/binaries/*
+!kalshi-monster/src-tauri/binaries/README.md
 
 # Fincept sidecar PyInstaller artifacts
 fincept-sidecar/build/
