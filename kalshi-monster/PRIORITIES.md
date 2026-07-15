@@ -2,6 +2,15 @@
 
 Last updated: 2026-07-15
 
+## Maintenance notes (2026-07-15) — Sprint 4+5 macro + calibration flywheel
+
+- **4.x** `fincept-sidecar/agents/macro.py`: FRED map (CPI/Fed/payrolls/GDP/UNRATE); null if unmapped/no key/no threshold; pytest `test_macro.py`
+- **4.3** Economic silent-weight note when macro null; orchestrator runs macro on standard/deep
+- **5.1–5.3** Calibration flywheel card; gate dashboard model-vs-market; λ sample bar (n/50)
+- **5.4** Settings: prefer stronger model for live TAKE (free tier ok for paper/WATCH)
+- Set `FRED_API_KEY` env for live macro opinions
+- **Next:** Sprint 6 paper product polish
+
 ## Maintenance notes (2026-07-15) — Sprint 3 depth tiers + sidecar ops
 
 - **3.1** `AnalysisDepth` on analyze input; board scan = quick (tape only); single Analyze = standard; Deep top 3 = deep + web

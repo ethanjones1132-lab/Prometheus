@@ -62,6 +62,14 @@
 - Sidecar orchestrator skips technical/news on quick; Settings shows latency / opining rate  
 - Release packaging: `tauri.conf.release.json` externalBin + cargo test guard  
 
+### Sprint 4 — Macro agent (done 2026-07-15)
+- `agents/macro.py`: CPI/Fed/payrolls/GDP/unemployment → FRED; threshold required; null if unmapped/no key  
+- Orchestrator runs macro on standard/deep; silent-weight reasons emphasize macro on economic  
+
+### Sprint 5 — Calibration flywheel product (done 2026-07-15)
+- Gate dashboard + flywheel copy; λ sample progress to 50; Settings live-TAKE model guidance  
+- Auto-grade + paper settle already background; UI documents the path  
+
 ---
 
 ## Master sequence (chronological from now)
@@ -75,8 +83,8 @@ Estimate bands are rough (1 = short pass, 3 = multi-day).
 | **1** | **P1 — Agent opinions that fire** ✅ | Technical coverage + news agent | 2 | Phase A done | Fincept B1–B2 |
 | **2** | **P2 — Edge Board v1** ✅ | Rank markets by edge; agent drawer | 2 | P1 helps | Fincept C1–C2 |
 | **3** | **P3 — Depth tiers + Settings ops** ✅ | quick/standard/deep; bridge metrics | 1–2 | P1 | Fincept C3–C4 |
-| **4** | **P4 — Macro agent (economic)** | FRED/public series, honest nulls | 2 | P1 | Fincept B3 |
-| **5** | **P5 — Calibration flywheel** | Accumulate resolved ≥200; λ re-fit ops | ongoing | settle/grade live | Progress / Phase 3 |
+| **4** | **P4 — Macro agent (economic)** ✅ | FRED/public series, honest nulls | 2 | P1 | Fincept B3 |
+| **5** | **P5 — Calibration flywheel** ✅ | Accumulate resolved ≥200; λ re-fit ops | ongoing | settle/grade live | Progress / Phase 3 |
 | **6** | **P6 — Paper product polish** | Bankroll vs cash clarity; Grade vs Settle UX | 1–2 | P0 | Paper audit M/L |
 | **7** | **P7 — AGPL + deep Fincept** | Sidecar public repo; optional module ports | 3+ | P1–P4 stable | Fincept D |
 
@@ -137,30 +145,28 @@ Estimate bands are rough (1 = short pass, 3 = multi-day).
 
 ---
 
-## Sprint 4 — Macro agent (economic contracts)
+## Sprint 4 — Macro agent (economic contracts) ✅ (done 2026-07-15)
 
-| ID | Task | Acceptance |
-|----|------|------------|
-| **4.1** | Map CPI/Fed/payrolls-style tickers → public series (FRED key optional) | Mapped econ contracts can opine |
-| **4.2** | Unmapped → `probability=None` + clear rationale | No fake macro edge |
-| **4.3** | Routing honesty when macro silent | Verdict reasons mention weight on null |
+| ID | Task | Status |
+|----|------|--------|
+| **4.1** | Map CPI/Fed/payrolls → FRED | ✅ `agents/macro.py` + series map |
+| **4.2** | Unmapped → null | ✅ caveats `no_series_mapping` / `missing:fred_api_key` |
+| **4.3** | Routing honesty when macro silent | ✅ economic silent threshold + macro note |
 
 **Defer:** full Fincept EconDB extract until Sprint 7 AGPL hygiene.
 
 ---
 
-## Sprint 5 — Calibration flywheel (ongoing, parallel after 0–1)
+## Sprint 5 — Calibration flywheel ✅ (product pass 2026-07-15)
 
-Not a single PR — operational + light product.
+| ID | Task | Status |
+|----|------|--------|
+| **5.1** | Auto-grade + paper settle | ✅ background tasks; Calibration flywheel card |
+| **5.2** | Gate dashboard | ✅ model vs market + paper P&L |
+| **5.3** | λ re-fit UX | ✅ n/50 progress; button copy |
+| **5.4** | Stronger model for live TAKE | ✅ Settings guidance card |
 
-| ID | Task | Acceptance |
-|----|------|------------|
-| **5.1** | Keep auto-grade + paper settle running on user machines | Resolved rows accumulate |
-| **5.2** | Gate dashboard: resolved count, Brier model vs market, paper equity | Clear LOCKED/OPEN state |
-| **5.3** | λ re-fit when n sufficient; persist edge_config | Already partly shipped; polish UX |
-| **5.4** | Prefer stronger model for live TAKE (settings guidance only) | Doc + Settings copy |
-
-**Target:** ≥200 resolved forecasts before treating paper/live edge as validated.
+**Target:** ≥200 resolved forecasts before treating paper/live edge as validated (operational).
 
 ---
 
@@ -246,4 +252,4 @@ The program is “ready for serious paper validation” when:
 | Long-range architecture | `docs/fincept-integration-plan.md` |
 | Chronology / ship log | `PRIORITIES.md` (notes only; not the order source) |
 
-**Default next implementation:** **Sprint 4** (macro agent), then Sprint 5/6 polish.
+**Default next implementation:** **Sprint 6** (paper product polish), then Sprint 7 AGPL hygiene.

@@ -238,4 +238,10 @@ describe('SettingsView', () => {
     expect(screen.getByText(/42 ms/)).toBeInTheDocument();
     expect(screen.getByText(/40%/)).toBeInTheDocument();
   });
+
+  test('shows live TAKE model guidance', async () => {
+    render(<SettingsView />);
+    expect(await screen.findByLabelText('Live TAKE model guidance')).toBeInTheDocument();
+    expect(screen.getByText(/Prefer a stronger model/i)).toBeInTheDocument();
+  });
 });

@@ -871,6 +871,21 @@ export function SettingsView() {
             </a>
             . Go requires an active Go subscription; Zen is pay-per-use (plus free models).
           </p>
+          <div
+            className="insightCard"
+            style={{ marginBottom: '0.75rem' }}
+            aria-label="Live TAKE model guidance"
+          >
+            <span>Live TAKE guidance (Sprint 5.4)</span>
+            <strong>Prefer a stronger model when you TAKE for real</strong>
+            <p className="muted" style={{ margin: '0.35rem 0 0' }}>
+              Free / :free tier models are fine for WATCH/PASS exploration and paper journal practice.
+              Before live orders (gate OPEN + breakers clear), switch to a paid or higher-quality model
+              with better instruction-following and JSON discipline. Sidecar agents (technical, news,
+              macro) are independent of this LLM — they still need FRED_API_KEY for macro and a healthy
+              Fincept bridge.
+            </p>
+          </div>
           <div className="formGrid">
             <label>
               Provider

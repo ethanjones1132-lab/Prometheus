@@ -159,6 +159,17 @@ export function CalibrationView() {
   const gateOk = report?.gate_passed === true;
   const progress =
     report != null ? Math.min(100, (report.resolved_count / 200) * 100) : 0;
+  const nModel = report?.n_model ?? 0;
+  const lambdaReady = nModel >= 50;
+  const lambdaProgress = Math.min(100, (nModel / 50) * 100);
+  const modelBeatsMarket =
+    report?.brier_model != null &&
+    report?.brier_market_on_model_rows != null &&
+    report.brier_model <= report.brier_market_on_model_rows;
+  const finalBeatsMarket =
+    report?.brier_final != null &&
+    report?.brier_market != null &&
+    report.brier_final <= report.brier_market;
 
   return (
     <section className="page kalshiPage" aria-label="Calibration surface">
@@ -168,7 +179,7 @@ export function CalibrationView() {
           <p className="muted">
             Forecast ledger, Brier scores, and the live-trading gate. Evidence only — never synthetic
             outcomes. Live orders stay locked until ≥200 resolved, Brier(p_final) ≤ Brier(p_market), and
-            paper P&amp;L &gt; 0.
+            paper P&amp;L &gt; 0. Background auto-grade + paper settle run on the Kalshi poll interval.
           </p>
         </div>
         <button type="button" className="primaryButton" onClick={() => void refresh()} disabled={loading}>
@@ -176,13 +187,25 @@ export function CalibrationView() {
         </button>
       </header>
 
+      <div className="insightCard" style={{ marginBottom: '1rem' }} aria-label="Flywheel status">
+        <span>Calibration flywheel (Sprint 5)</span>
+        <strong className={gateOk ? 'pos' : 'neg'}>
+          {gateOk ? 'Gate OPEN — paper/live edge validated path' : 'Gate LOCKED — accumulate resolved rows'}
+        </strong>
+        <p className="muted">
+          Auto-grade poller + paper settle run in the background whenever open lots / pending predictions /
+          unresolved forecasts exist. Use Resolve settled forecasts to force a pass. Target ≥200 resolved
+          before treating edge as validated.
+        </p>
+      </div>
+
       {bridge && (
         <div className={`insightCard ${bridge.online ? 'accent' : ''}`}>
           <span>Fincept agents</span>
           <strong>{bridge.online ? 'Online' : bridge.degraded ? 'Degraded' : 'Offline'}</strong>
           <p>
             {bridge.online
-              ? 'Analyze actions call technical + contract_tape agents, then Rust aggregate/evaluate.'
+              ? 'Agents: technical + contract_tape + news + macro (FRED when keyed). Board scan uses depth=quick.'
               : 'Sidecar offline — analyze still logs market-only rows (p_model null, p_final = p_market).'}
             {bridge.last_error ? ` — ${bridge.last_error}` : ''}
           </p>
@@ -288,8 +311,8 @@ export function CalibrationView() {
         </div>
       </div>
 
-      <section className="modalSection">
-        <h4>Brier summary (resolved rows only)</h4>
+      <section className="modalSection" aria-label="Gate dashboard">
+        <h4>Gate dashboard — model vs market</h4>
         <div className="mechanicsGrid">
           <div>
             <span>Brier(p_market)</span>
@@ -297,13 +320,17 @@ export function CalibrationView() {
           </div>
           <div>
             <span>Brier(p_final)</span>
-            <strong>{brier(report?.brier_final)}</strong>
+            <strong className={finalBeatsMarket ? 'pos' : undefined}>
+              {brier(report?.brier_final)}
+              {finalBeatsMarket ? ' ≤ mkt' : ''}
+            </strong>
           </div>
           <div>
             <span>Brier(p_model)</span>
-            <strong>
+            <strong className={modelBeatsMarket ? 'pos' : undefined}>
               {brier(report?.brier_model)}
               {report && report.n_model > 0 ? ` (n=${report.n_model})` : ''}
+              {modelBeatsMarket ? ' ≤ mkt' : ''}
             </strong>
           </div>
           <div>
@@ -311,6 +338,11 @@ export function CalibrationView() {
             <strong>{brier(report?.brier_market_on_model_rows)}</strong>
           </div>
         </div>
+        <p className="muted" style={{ marginTop: '0.5rem' }}>
+          Paper equity P&amp;L (realized): <strong>{money(report?.paper_pnl)}</strong>
+          {' · '}
+          Gate needs paper P&amp;L &gt; 0 after fees.
+        </p>
         {report?.gate_reasons && report.gate_reasons.length > 0 && (
           <ul className="muted" style={{ marginTop: '0.75rem', paddingLeft: '1.2rem' }}>
             {report.gate_reasons.map((r) => (
@@ -332,6 +364,33 @@ export function CalibrationView() {
             </>
           ) : null}
         </p>
+        <div
+          className="insightCard"
+          style={{ marginBottom: '0.75rem' }}
+          aria-label="Lambda sample progress"
+        >
+          <span>Model-opinion sample for re-fit</span>
+          <strong>
+            {nModel} / 50 {lambdaReady ? '· ready' : '· keep resolving'}
+          </strong>
+          <div
+            style={{
+              marginTop: '0.5rem',
+              height: 8,
+              borderRadius: 4,
+              background: 'var(--border, #333)',
+              overflow: 'hidden',
+            }}
+          >
+            <div
+              style={{
+                width: `${lambdaProgress}%`,
+                height: '100%',
+                background: lambdaReady ? 'var(--ok, #3d9a5f)' : 'var(--accent, #4a7dff)',
+              }}
+            />
+          </div>
+        </div>
         {lambdaFit && (
           <div className="mechanicsGrid" style={{ marginBottom: '0.75rem' }}>
             <div>
@@ -357,8 +416,17 @@ export function CalibrationView() {
           className="secondaryButton"
           disabled={actionBusy != null}
           onClick={() => void runLambdaRefit()}
+          title={
+            lambdaReady
+              ? 'Re-fit shrinkage λ from resolved model rows and persist to edge config'
+              : `Need ≥50 resolved rows with p_model (have ${nModel})`
+          }
         >
-          {actionBusy === 'lambda' ? 'Fitting…' : 'Re-fit λ from ledger'}
+          {actionBusy === 'lambda'
+            ? 'Fitting…'
+            : lambdaReady
+              ? 'Re-fit λ from ledger'
+              : `Re-fit λ (need ${Math.max(0, 50 - nModel)} more model rows)`}
         </button>
       </section>
 

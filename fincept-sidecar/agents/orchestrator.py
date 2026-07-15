@@ -3,12 +3,11 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
 # Depth tiers (Sprint 3 / plan §7):
-#   quick    — contract_tape only (board scan; no yfinance / news)
-#   standard — technical + contract_tape + news (default Analyze / chat)
-#   deep     — same live agents + full history path (technical always runs)
+#   quick    — contract_tape only (board scan; no yfinance / news / macro)
+#   standard — technical + contract_tape + news + macro (default Analyze / chat)
+#   deep     — same live agents + full history path
 #
-# Explicitly NOT shipped yet (no honest data path right now):
-#   - macro (needs EconDB / release calendars — not installed)
+# Explicitly NOT shipped yet:
 #   - sentiment (need social/news sentiment feeds)
 #   - valuation / fundamentals (need fundamentals DB for company events)
 
@@ -24,7 +23,7 @@ from fincept_sidecar.schemas import (
     MarketOpinionResponse,
 )
 
-from . import contract_tape, news, technical
+from . import contract_tape, macro, news, technical
 
 
 def _depth(req: MarketOpinionRequest) -> str:
@@ -54,7 +53,7 @@ async def collect_market_opinion(req: MarketOpinionRequest) -> MarketOpinionResp
     depth = _depth(req)
 
     if depth == "quick":
-        # Board scan: tape only — skip yfinance technical + news.
+        # Board scan: tape only — skip yfinance / news / macro.
         signals.append(
             _null_signal(
                 "technical",
@@ -68,41 +67,36 @@ async def collect_market_opinion(req: MarketOpinionRequest) -> MarketOpinionResp
                 "depth=quick: news agent skipped (no web fetch on board scan).",
             )
         )
+        signals.append(
+            _null_signal(
+                "macro",
+                "depth=quick: macro (FRED) skipped for board scan latency.",
+            )
+        )
     else:
         # standard + deep: full live estimators
         signals.append(await technical.estimate(req))
         signals.append(await contract_tape.estimate(req))
         signals.append(await news.estimate(req))
+        signals.append(await macro.estimate(req))
 
-    # Placeholder no-opinion rows for agents that exist in the plan but have
-    # no live data path here — honest None, never a fake probability.
-    for name, reason in (
-        (
-            "macro",
-            "Macro agent requires EconDB (or equivalent) release series; not available in this sidecar build."
-            if depth != "quick"
-            else "depth=quick: macro skipped.",
-        ),
-        (
-            "sentiment",
-            "Sentiment agent requires social/news sentiment feeds; not wired."
-            if depth != "quick"
-            else "depth=quick: sentiment skipped.",
-        ),
-    ):
-        signals.append(
-            AgentSignal(
-                agent=name,
-                probability=None,
-                confidence=0.0,
-                rationale=reason,
-                inputs_used=[],
-                caveats=["data_source_unavailable" if depth != "quick" else "depth_skipped"],
-            )
+    # Sentiment still stubbed (no free non-AGPL feed wired).
+    signals.append(
+        AgentSignal(
+            agent="sentiment",
+            probability=None,
+            confidence=0.0,
+            rationale=(
+                "depth=quick: sentiment skipped."
+                if depth == "quick"
+                else "Sentiment agent requires social/news sentiment feeds; not wired."
+            ),
+            inputs_used=[],
+            caveats=["depth_skipped" if depth == "quick" else "data_source_unavailable"],
         )
+    )
 
     catalysts: list[CatalystEvent] = []
-    # Surface close_time as a known catalyst boundary (not a news scrape).
     catalysts.append(
         CatalystEvent(
             description="Contract close / resolution window end (from Kalshi close_time)",
@@ -121,5 +115,4 @@ async def collect_market_opinion(req: MarketOpinionRequest) -> MarketOpinionResp
     )
 
 
-# Silence unused import warning if timezone needed later
 _ = datetime, timezone

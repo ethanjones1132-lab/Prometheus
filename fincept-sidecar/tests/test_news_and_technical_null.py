@@ -121,7 +121,7 @@ def test_horizon_days_from_context_preferred():
     assert abs(tau - 3.0 / 365.25) < 1e-9
 
 
-def test_quick_depth_skips_technical_and_news():
+def test_quick_depth_skips_technical_news_macro():
     """Sprint 3.1 — board scan depth only runs contract_tape for live signal."""
     import asyncio
     from agents.orchestrator import collect_market_opinion
@@ -137,4 +137,5 @@ def test_quick_depth_skips_technical_and_news():
         "technical"
     ].caveats
     assert by_name["news"].probability is None
+    assert by_name["macro"].probability is None
     assert by_name["contract_tape"].probability is not None

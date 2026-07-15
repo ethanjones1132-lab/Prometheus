@@ -29,12 +29,13 @@ pure-Python tree.
 | **technical** | `technical.py` | yfinance via `engines/market_data.py` | Lognormal binary `P(S_T>K)` from realized vol + optional micro-momentum μ. Series prefixes (`KXBTCD`…), barrier strike, `horizon_days`. Opines only when underlying+strike+horizon are known. |
 | **contract_tape** | `contract_tape.py` | `context.contract_mids` from Rust (Kalshi) | Momentum + mild longshot-bias adjustment on the contract's own mid path. `probability=None` without a real series. |
 | **news** | `news.py` | `context.web_snippets` from Rust (Brave/Tavily/DDG) | Heuristic lean over grounded snippets only. `probability=None` without snippets or when language is inconclusive — never invents p. |
+| **macro** | `macro.py` | FRED public API (`FRED_API_KEY` optional) | Maps CPI/Fed/payrolls/GDP/unemployment tickers → series; opines only with threshold + data. Null when unmapped or key missing. |
 
 ### Explicitly not implemented (no honest data path yet)
 
-- **macro** — needs EconDB / official release series (Sprint 4)
 - **sentiment** — need social/news sentiment feeds
 - **valuation / fundamentals** — need fundamentals DB
+- Full Fincept EconDB extract (deferred to Sprint 7 AGPL hygiene)
 - Risk / portfolio / explainability shape sizing & reporting in Rust, not `p_model`
 
 Orchestrator: `orchestrator.py` → `POST /api/v1/agents/market-opinion`.

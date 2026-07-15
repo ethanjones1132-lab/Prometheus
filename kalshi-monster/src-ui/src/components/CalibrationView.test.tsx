@@ -102,7 +102,9 @@ describe('CalibrationView', () => {
     });
     expect(screen.getByText('3 / 200')).toBeInTheDocument();
     expect(screen.getByText('0.2100')).toBeInTheDocument();
-    expect(screen.getByText('0.1900')).toBeInTheDocument();
+    expect(screen.getAllByText((_, el) => el?.textContent?.includes('0.1900') === true).length).toBeGreaterThan(0);
+    expect(screen.getByLabelText('Flywheel status')).toBeInTheDocument();
+    expect(screen.getByLabelText('Gate dashboard')).toBeInTheDocument();
     expect(screen.getByText(/Online/)).toBeInTheDocument();
     expect(screen.getByLabelText('p_final vs outcomes reliability chart')).toBeInTheDocument();
   });
@@ -174,12 +176,13 @@ describe('CalibrationView', () => {
     render(<CalibrationView />);
     await waitFor(() => expect(screen.getByText('LOCKED')).toBeInTheDocument());
 
-    fireEvent.click(screen.getByRole('button', { name: /Re-fit λ from ledger/i }));
+    fireEvent.click(screen.getByRole('button', { name: /Re-fit λ/i }));
 
     await waitFor(() => {
       expect(kalshiApi.refitLambda).toHaveBeenCalled();
     });
     expect(screen.getByText(/Not enough resolved forecasts/i)).toBeInTheDocument();
+    expect(screen.getByLabelText('Lambda sample progress')).toBeInTheDocument();
   });
 
   test('resolve settled forecasts refreshes report after IPC', async () => {

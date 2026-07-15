@@ -325,17 +325,32 @@ pub async fn analyze_and_log_forecast(
     let opinion: Option<ModelOpinion> = aggregate(&signals, &weights);
     let signals_opining = signals.iter().filter(|s| s.probability.is_some()).count();
 
-    // Sprint 1.3: surface routing weight on silent agents (macro/news often null).
+    // Sprint 1.3 / 4.3: surface routing weight on silent agents (macro/news often null).
+    // Lower threshold for economic categories so a silent 50% macro always shows.
+    let silent_threshold =
+        if sidecar_category(&input.category) == "economic" {
+            0.15
+        } else {
+            0.25
+        };
     let silent_note = silent_agent_weight_report(&signals, &weights).and_then(|(frac, names)| {
-        if frac < 0.25 {
+        if frac < silent_threshold {
             return None;
         }
+        let macro_note = if names.iter().any(|n| n == "macro")
+            && sidecar_category(&input.category) == "economic"
+        {
+            " macro is 50% of economic routing when mapped FRED data is absent."
+        } else {
+            ""
+        };
         Some(format!(
-            "silent agent weight {:.0}% of routing ({}) — p_model thin when only {} of {} agents opine",
+            "silent agent weight {:.0}% of routing ({}) — p_model thin when only {} of {} agents opine.{}",
             frac * 100.0,
             names.join(", "),
             signals_opining,
-            signals.len()
+            signals.len(),
+            macro_note
         ))
     });
 
