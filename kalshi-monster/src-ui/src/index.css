@@ -1919,6 +1919,28 @@ button {
   /* completed messages */
 }
 
+.streamThought {
+  margin: 0 0 4px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  background: rgba(15, 23, 42, 0.35);
+  font-size: 12px;
+}
+
+.streamThought summary {
+  cursor: pointer;
+  user-select: none;
+}
+
+.streamThoughtBody {
+  max-height: 180px;
+  overflow-y: auto;
+  opacity: 0.85;
+  font-size: 12px;
+  margin-top: 6px;
+}
+
 .messageContent {
   white-space: pre-wrap;
   overflow-wrap: break-word;

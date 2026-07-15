@@ -7,6 +7,7 @@ pub mod decision_schema;
 pub mod decision_extract;
 pub mod market_gate;
 pub mod web_context;
+pub mod track_record;
 
 pub use openrouter::OpenRouterResponse;
 pub use session::{ChatMessage, ChatSession, ChatState};

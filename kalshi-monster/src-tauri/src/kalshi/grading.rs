@@ -106,9 +106,10 @@ fn entry_price_decimal(pred: &KalshiPrediction, side: KalshiBetSide) -> f64 {
 }
 
 pub fn bet_won(side: KalshiBetSide, actual_outcome: &str) -> Option<bool> {
+    let actual = normalize_settlement_result(actual_outcome);
     match side {
-        KalshiBetSide::Yes => Some(actual_outcome == "Yes"),
-        KalshiBetSide::No => Some(actual_outcome == "No"),
+        KalshiBetSide::Yes => Some(actual == "Yes"),
+        KalshiBetSide::No => Some(actual == "No"),
         KalshiBetSide::Pass | KalshiBetSide::Unknown => None,
     }
 }
@@ -179,6 +180,10 @@ pub async fn grade_pending_predictions(
     let mut total_pnl = 0.0;
 
     for (ticker, preds) in by_ticker {
+        if crate::chat::decision_schema::KalshiTradeDecision::is_placeholder_ticker(&ticker) {
+            tracing::debug!("kalshi grade: skip placeholder ticker {ticker}");
+            continue;
+        }
         let market = match client.fetch_market(&ticker).await {
             Ok(m) => m,
             Err(e) => {
@@ -190,7 +195,11 @@ pub async fn grade_pending_predictions(
             continue;
         }
 
-        let actual = market.result.clone();
+        let actual = normalize_settlement_result(&market.result);
+        if actual != "Yes" && actual != "No" {
+            tracing::debug!("kalshi grade: skip {ticker} — non-binary result {:?}", market.result);
+            continue;
+        }
         let resolved_at = chrono::Utc::now().to_rfc3339();
 
         if let Err(e) =
@@ -267,6 +276,25 @@ fn empty_summary() -> KalshiGradingSummary {
     }
 }
 
+/// Normalize Kalshi settlement result strings to `Yes` / `No` / other.
+pub fn normalize_settlement_result(raw: &str) -> String {
+    let t = raw.trim().to_ascii_lowercase();
+    match t.as_str() {
+        "yes" | "y" | "true" | "1" => "Yes".to_string(),
+        "no" | "n" | "false" | "0" => "No".to_string(),
+        _ => {
+            // Preserve original capitalization if already Yes/No-like
+            if raw.eq_ignore_ascii_case("yes") {
+                "Yes".to_string()
+            } else if raw.eq_ignore_ascii_case("no") {
+                "No".to_string()
+            } else {
+                raw.trim().to_string()
+            }
+        }
+    }
+}
+
 /// Resolve forecast ledger rows whose markets have settled on Kalshi (no prediction rows required).
 pub async fn resolve_pending_forecasts(
     pool: &Pool<Sqlite>,
@@ -287,6 +315,9 @@ pub async fn resolve_pending_forecasts(
     let mut total = 0u32;
 
     for ticker in tickers {
+        if crate::chat::decision_schema::KalshiTradeDecision::is_placeholder_ticker(&ticker) {
+            continue;
+        }
         let market = match client.fetch_market(&ticker).await {
             Ok(m) => m,
             Err(e) => {
@@ -297,13 +328,11 @@ pub async fn resolve_pending_forecasts(
         if market.result.is_empty() {
             continue;
         }
-        total += forecast::resolve_forecasts_for_market(
-            pool,
-            &ticker,
-            &market.result,
-            &resolved_at,
-        )
-        .await?;
+        let actual = normalize_settlement_result(&market.result);
+        if actual != "Yes" && actual != "No" {
+            continue;
+        }
+        total += forecast::resolve_forecasts_for_market(pool, &ticker, &actual, &resolved_at).await?;
     }
 
     Ok(total)
@@ -528,5 +557,20 @@ mod tests {
     fn zero_fee_multiplier_preserves_gross_pnl() {
         let pnl = contract_pnl(100.0, 0.50, true, 0.0);
         assert!((pnl - 100.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn normalize_settlement_yes_no_case_insensitive() {
+        assert_eq!(normalize_settlement_result("yes"), "Yes");
+        assert_eq!(normalize_settlement_result("NO"), "No");
+        assert_eq!(normalize_settlement_result("Yes"), "Yes");
+        assert_eq!(normalize_settlement_result("  y  "), "Yes");
+    }
+
+    #[test]
+    fn bet_won_accepts_lowercase_outcome() {
+        assert_eq!(bet_won(KalshiBetSide::Yes, "yes"), Some(true));
+        assert_eq!(bet_won(KalshiBetSide::No, "no"), Some(true));
+        assert_eq!(bet_won(KalshiBetSide::Yes, "no"), Some(false));
     }
 }

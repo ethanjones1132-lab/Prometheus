@@ -196,15 +196,17 @@ impl PredictionTracker {
     pub fn extract_predictions(&self, session_id: &str, text: &str) -> Vec<Prediction> {
         let mut predictions = Vec::new();
         let now = chrono::Utc::now().to_rfc3339();
+        // Prefer deliverable body so monologue does not poison raw_text storage.
+        let text = crate::chat::openrouter::prefer_deliverable_content(text);
 
         // First, try to extract predictions from JSON blocks
-        let json_predictions = self.extract_json_predictions(session_id, text, &now);
+        let json_predictions = self.extract_json_predictions(session_id, &text, &now);
         if !json_predictions.is_empty() {
             predictions.extend(json_predictions);
         }
 
         // Then, also try the emoji-text format as fallback/supplement
-        let emoji_predictions = self.extract_emoji_predictions(session_id, text, &now);
+        let emoji_predictions = self.extract_emoji_predictions(session_id, &text, &now);
         for ep in emoji_predictions {
             let is_dup = predictions.iter().any(|jp: &Prediction| {
                 jp.player_name == ep.player_name
@@ -216,32 +218,87 @@ impl PredictionTracker {
             }
         }
 
+        // Dedupe Kalshi tickets by ticker — keep the last (most refined) revision.
+        Self::dedupe_predictions_keep_last(&mut predictions);
         predictions
+    }
+
+    /// When free models emit several JSON revisions, keep the last row per ticker.
+    fn dedupe_predictions_keep_last(predictions: &mut Vec<Prediction>) {
+        use std::collections::HashMap;
+        let mut last_idx: HashMap<String, usize> = HashMap::new();
+        for (i, p) in predictions.iter().enumerate() {
+            if let Some(ref name) = p.player_name {
+                if name.starts_with("KX") {
+                    last_idx.insert(name.to_uppercase(), i);
+                }
+            }
+        }
+        if last_idx.is_empty() {
+            return;
+        }
+        let keep: std::collections::HashSet<usize> = last_idx.values().copied().collect();
+        let mut i = 0;
+        predictions.retain(|p| {
+            let idx = i;
+            i += 1;
+            match &p.player_name {
+                Some(n) if n.starts_with("KX") => keep.contains(&idx),
+                _ => true,
+            }
+        });
     }
 
     fn extract_json_predictions(&self, session_id: &str, text: &str, now: &str) -> Vec<Prediction> {
         let mut predictions = Vec::new();
-        let mut search_start = 0;
 
+        // Prefer the robust decision extractor (repairs JSON, quality rails, last-valid).
+        if let Ok(decision) = decision_extract::find_kalshi_decision_in_text(text) {
+            if let Some(pred) =
+                self.prediction_from_kalshi_decision(session_id, &decision, now, text)
+            {
+                predictions.push(pred);
+            }
+        }
+
+        let mut search_start = 0;
         while let Some(block_start) = text[search_start..].find("```json") {
             let abs_start = search_start + block_start + 7;
             if let Some(block_end) = text[abs_start..].find("```") {
                 let json_str = &text[abs_start..abs_start + block_end];
-                let trimmed = json_str.trim();
+                let repaired = decision_extract::repair_json(json_str.trim());
 
-                if let Ok(val) = serde_json::from_str::<serde_json::Value>(trimmed) {
-                    if let Some(pred) = self.parse_kalshi_json_prediction(session_id, &val, now, text) {
-                        predictions.push(pred);
-                    } else if let Some(pred) = self.parse_json_prediction(session_id, &val, now, text) {
+                if let Ok(val) = serde_json::from_str::<serde_json::Value>(&repaired) {
+                    if let Some(pred) =
+                        self.parse_kalshi_json_prediction(session_id, &val, now, text)
+                    {
+                        // Avoid duplicating the preferred last decision already captured.
+                        let dup = predictions.iter().any(|p| {
+                            p.player_name == pred.player_name
+                                && p.full_decision_json.is_some()
+                        });
+                        if !dup {
+                            predictions.push(pred);
+                        }
+                    } else if let Some(pred) =
+                        self.parse_json_prediction(session_id, &val, now, text)
+                    {
                         predictions.push(pred);
                     }
                 }
 
-                if let Ok(val) = serde_json::from_str::<Vec<serde_json::Value>>(trimmed) {
+                if let Ok(val) = serde_json::from_str::<Vec<serde_json::Value>>(&repaired) {
                     for item in &val {
-                        if let Some(pred) = self.parse_kalshi_json_prediction(session_id, item, now, text) {
-                            predictions.push(pred);
-                        } else if let Some(pred) = self.parse_json_prediction(session_id, item, now, text) {
+                        if let Some(pred) =
+                            self.parse_kalshi_json_prediction(session_id, item, now, text)
+                        {
+                            let dup = predictions.iter().any(|p| p.player_name == pred.player_name);
+                            if !dup {
+                                predictions.push(pred);
+                            }
+                        } else if let Some(pred) =
+                            self.parse_json_prediction(session_id, item, now, text)
+                        {
                             predictions.push(pred);
                         }
                     }
@@ -258,10 +315,15 @@ impl PredictionTracker {
             for line in text.lines() {
                 let trimmed = line.trim();
                 if trimmed.starts_with('{') && trimmed.ends_with('}') {
-                    if let Ok(val) = serde_json::from_str::<serde_json::Value>(trimmed) {
-                        if let Some(pred) = self.parse_kalshi_json_prediction(session_id, &val, now, text) {
+                    let repaired = decision_extract::repair_json(trimmed);
+                    if let Ok(val) = serde_json::from_str::<serde_json::Value>(&repaired) {
+                        if let Some(pred) =
+                            self.parse_kalshi_json_prediction(session_id, &val, now, text)
+                        {
                             predictions.push(pred);
-                        } else if let Some(pred) = self.parse_json_prediction(session_id, &val, now, text) {
+                        } else if let Some(pred) =
+                            self.parse_json_prediction(session_id, &val, now, text)
+                        {
                             predictions.push(pred);
                         }
                     }
@@ -341,11 +403,24 @@ impl PredictionTracker {
             return None;
         }
         let decision = decision_extract::parse_kalshi_trade_decision_from_value(val).ok()?;
-        let full_json = serde_json::to_string(&decision).ok()?;
+        self.prediction_from_kalshi_decision(session_id, &decision, now, raw_text)
+    }
+
+    fn prediction_from_kalshi_decision(
+        &self,
+        session_id: &str,
+        decision: &KalshiTradeDecision,
+        now: &str,
+        raw_text: &str,
+    ) -> Option<Prediction> {
+        if KalshiTradeDecision::is_placeholder_ticker(&decision.ticker) {
+            return None;
+        }
+        let full_json = serde_json::to_string(decision).ok()?;
         let pick_type = match decision.contract_side {
             ContractSide::YES => Some("Over".to_string()),
             ContractSide::NO => Some("Under".to_string()),
-            ContractSide::PASS => None,
+            ContractSide::PASS => Some("PASS".to_string()),
         };
         let confidence_score = match decision.confidence_tier {
             crate::chat::decision_schema::ConfidenceTier::High => Some(85u8),
@@ -389,7 +464,11 @@ impl PredictionTracker {
             risk,
             created_at: now.to_string(),
             full_decision_json: Some(full_json),
-            entry_price: Some(decision.market_price_pct / 100.0),
+            entry_price: if decision.price_to_enter > 0.0 {
+                Some(decision.price_to_enter)
+            } else {
+                Some((decision.market_price_pct / 100.0).clamp(0.0, 1.0))
+            },
             model_disagreement: decision.model_disagreement,
         })
     }
@@ -1025,7 +1104,9 @@ impl PredictionTracker {
             .or_else(|| Self::extract_ticker_from_text(&r.prediction.raw_text))
             .unwrap_or_default();
 
-        if ticker.is_empty() {
+        if ticker.is_empty()
+            || KalshiTradeDecision::is_placeholder_ticker(&ticker)
+        {
             return None;
         }
 

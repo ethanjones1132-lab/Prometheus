@@ -3,7 +3,7 @@ import { useChat } from '../hooks/useChat';
 import { kalshiApi } from '../services/kalshi';
 import type { ChatMessage } from '../types';
 import type { KalshiCategoryStat } from '../types/kalshi';
-import { extractPaperDecision } from '../utils/paperFromChat';
+import { extractPaperDecision, preferDeliverableContent } from '../utils/paperFromChat';
 
 const FALLBACK_PROMPTS = [
   {
@@ -371,15 +371,32 @@ export function ChatView({
             <div className="messageBubble assistantBubble streamingBubble">
               <div className="streamingToolbar">
                 <span className="streamingDots" aria-live="polite">
-                  {streamingText ? 'Streaming…' : 'Waiting for model…'}
+                  {streamingText
+                    ? 'Streaming…'
+                    : streamingThought
+                      ? 'Model thinking…'
+                      : 'Waiting for model…'}
                 </span>
                 <button type="button" className="ghostBtn" onClick={cancelStream}>
                   Stop
                 </button>
               </div>
+              {/* Keep monologue out of the main ticket body when content arrives. */}
+              {streamingThought && !streamingText && (
+                <details className="streamThought" open>
+                  <summary className="muted">Internal reasoning (not a ticket)</summary>
+                  <pre className="streamBody streamThoughtBody">{streamingThought}</pre>
+                </details>
+              )}
+              {streamingThought && streamingText && (
+                <details className="streamThought">
+                  <summary className="muted">Internal reasoning (collapsed)</summary>
+                  <pre className="streamBody streamThoughtBody">{streamingThought}</pre>
+                </details>
+              )}
               {/* Plain pre: no markdown re-parse per token (that caused lag + broken wrap). */}
               <pre className="streamBody">
-                {streamingText || streamingThought || ''}
+                {streamingText || (streamingThought ? '' : '')}
                 <span className="streamCaret" aria-hidden>
                   ▍
                 </span>
@@ -459,7 +476,11 @@ function MessageBubble({
 }) {
   const isUser = message.role === 'user';
   // Some models (OpenCode free/thinking) return only reasoning — never hide that.
-  const body = (message.content || '').trim() || (message.reasoning || '').trim();
+  const rawBody = (message.content || '').trim() || (message.reasoning || '').trim();
+  // Strip free-model monologue so historical sessions still show the ticket first.
+  const body = isUser ? rawBody : preferDeliverableContent(rawBody) || rawBody;
+  const monologueStripped =
+    !isUser && body !== rawBody && rawBody.length > body.length + 200;
   const hasSeparateReasoning =
     Boolean(message.reasoning?.trim()) && Boolean(message.content?.trim());
   const canPaper = !isUser && onRecordPaper && extractPaperDecision(body) != null;
@@ -470,6 +491,12 @@ function MessageBubble({
         <details className="reasoning">
           <summary>Reasoning</summary>
           <pre className="streamBody streamBody--static">{message.reasoning}</pre>
+        </details>
+      )}
+      {monologueStripped && (
+        <details className="streamThought">
+          <summary className="muted">Full model monologue (stripped from ticket view)</summary>
+          <pre className="streamBody streamThoughtBody">{rawBody}</pre>
         </details>
       )}
       {body ? (

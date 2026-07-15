@@ -152,6 +152,158 @@ export function sanitizeDecisionUnitsAndCaps(
   };
 }
 
+/** Schema placeholders the backend also rejects (must never paper-trade). */
+export function isPlaceholderTicker(ticker: string): boolean {
+  const t = (ticker || '').trim().toUpperCase();
+  if (!t) return true;
+  if (
+    t === 'KXEVENT-TICKER' ||
+    t === 'KX-EVENT-TICKER' ||
+    t === 'KXEVENT' ||
+    t === 'TICKER' ||
+    t === 'KX-TICKER' ||
+    t === 'KXTEST' ||
+    t.endsWith('-TICKER') ||
+    t.includes('PLACEHOLDER') ||
+    t.includes('EXAMPLE')
+  ) {
+    return true;
+  }
+  if (!t.startsWith('KX') || !t.includes('-') || t.length < 6) return true;
+  return false;
+}
+
+/**
+ * Prefer the JSON deliverable portion of a free-model monologue (UI mirror of
+ * backend prefer_deliverable_content — presentation only).
+ */
+export function preferDeliverableContent(text: string): string {
+  const t = (text || '').trim();
+  if (!t) return '';
+  const jsonIdx = t.indexOf('```json');
+  if (jsonIdx >= 0 && t.length - jsonIdx >= 80) return t.slice(jsonIdx).trim();
+  const fenceIdx = t.indexOf('```');
+  if (fenceIdx >= 0) {
+    const body = t.slice(fenceIdx + 3).trimStart();
+    if (body.startsWith('{') && body.includes('"ticker"') && t.length - fenceIdx >= 80) {
+      return t.slice(fenceIdx).trim();
+    }
+  }
+  const brace = t.indexOf('{');
+  if (
+    brace >= 0 &&
+    t.includes('"ticker"') &&
+    t.includes('"decision"') &&
+    (brace > 400 || /^thinking/i.test(t) || t.includes('Analyze the Request'))
+  ) {
+    return t.slice(brace).trim();
+  }
+  return t;
+}
+
+/**
+ * Policy rails mirroring backend enforce_prediction_quality_rails (no math changes).
+ */
+export function enforcePredictionQualityRails(d: KalshiTradeDecision): KalshiTradeDecision {
+  const risk_flags = [...(d.risk_flags ?? [])];
+  let thesis = d.thesis ?? '';
+  let decision = d.decision;
+  let confidence_tier = d.confidence_tier;
+  let recommended_stake_dollars = d.recommended_stake_dollars;
+  let max_position_dollars = d.max_position_dollars;
+  let fractional_kelly_pct = d.fractional_kelly_pct;
+  let raw_kelly_pct = d.raw_kelly_pct;
+  let contract_side = d.contract_side;
+
+  if (isPlaceholderTicker(d.ticker)) {
+    return {
+      ...d,
+      decision: 'PASS',
+      contract_side: 'PASS',
+      recommended_stake_dollars: 0,
+      max_position_dollars: 0,
+      fractional_kelly_pct: 0,
+      raw_kelly_pct: 0,
+      confidence_tier: 'None',
+      risk_flags: risk_flags.includes('StaleData') ? risk_flags : [...risk_flags, 'StaleData'],
+      thesis: thesis.includes('[quality rail: placeholder')
+        ? thesis
+        : `${thesis} [quality rail: placeholder/invalid ticker — forced PASS]`.trim(),
+    };
+  }
+
+  if (
+    confidence_tier === 'High' &&
+    ['Inferential', 'Speculative', 'Stale'].includes(String(d.data_quality))
+  ) {
+    confidence_tier = 'Low';
+    if (!thesis.includes('[quality rail: High confidence')) {
+      thesis = `${thesis} [quality rail: High confidence requires Live/Fresh data — demoted]`.trim();
+    }
+  }
+
+  const absEdge = Math.abs(d.edge_points ?? 0);
+  if (d.spread_cents > 0 && absEdge > 0 && d.spread_cents > absEdge) {
+    if (!risk_flags.includes('SpreadExceedsEdge')) risk_flags.push('SpreadExceedsEdge');
+    if (decision === 'TAKE') {
+      decision = 'PASS';
+      recommended_stake_dollars = 0;
+      max_position_dollars = 0;
+      fractional_kelly_pct = 0;
+      raw_kelly_pct = 0;
+      confidence_tier = 'None';
+      if (!thesis.includes('[quality rail: spread exceeds')) {
+        thesis = `${thesis} [quality rail: spread exceeds edge — forced PASS]`.trim();
+      }
+    }
+  }
+
+  const mkt = d.market_price_pct;
+  const fair = d.fair_probability_pct;
+  if (mkt > 0 && mkt < 5 && fair > mkt * 5) {
+    if (!risk_flags.includes('ExtremeProbability')) risk_flags.push('ExtremeProbability');
+    if (!risk_flags.includes('ModelDisagreement')) risk_flags.push('ModelDisagreement');
+    const weak = ['Inferential', 'Speculative', 'Stale'].includes(String(d.data_quality));
+    if (decision === 'TAKE' && weak) {
+      decision = 'WATCH';
+      recommended_stake_dollars = 0;
+      max_position_dollars = 0;
+      fractional_kelly_pct = 0;
+      if (confidence_tier === 'High' || confidence_tier === 'Medium') confidence_tier = 'Low';
+      if (!thesis.includes('[quality rail: longshot')) {
+        thesis =
+          `${thesis} [quality rail: longshot fair≫market without Live data — demoted to WATCH]`.trim();
+      }
+    }
+  }
+
+  if (decision === 'TAKE' && d.spread_cents >= 25 && (d.liquidity_score ?? 0) < 20) {
+    if (!risk_flags.includes('InsufficientLiquidity')) risk_flags.push('InsufficientLiquidity');
+    decision = 'PASS';
+    recommended_stake_dollars = 0;
+    max_position_dollars = 0;
+    fractional_kelly_pct = 0;
+    raw_kelly_pct = 0;
+    confidence_tier = 'None';
+    if (!thesis.includes('[quality rail: wide illiquid')) {
+      thesis = `${thesis} [quality rail: wide illiquid book — forced PASS]`.trim();
+    }
+  }
+
+  return {
+    ...d,
+    decision,
+    contract_side,
+    confidence_tier,
+    recommended_stake_dollars,
+    max_position_dollars,
+    fractional_kelly_pct,
+    raw_kelly_pct,
+    risk_flags,
+    thesis,
+  };
+}
+
 /**
  * Extract a paper-trade decision from an analyst message.
  * Prefers a fenced JSON object matching KalshiTradeDecision fields;
@@ -163,8 +315,12 @@ export function extractPaperDecision(
   fallback?: { ticker?: string; title?: string; category?: string },
   policy?: SizingPolicy,
 ): KalshiTradeDecision | null {
-  const fromJson = tryParseJsonDecision(content);
-  if (fromJson) return sanitizeDecisionUnitsAndCaps(fromJson, policy);
+  const cleaned = preferDeliverableContent(content);
+  const fromJson = tryParseJsonDecision(cleaned);
+  if (fromJson) {
+    if (isPlaceholderTicker(fromJson.ticker)) return null;
+    return enforcePredictionQualityRails(sanitizeDecisionUnitsAndCaps(fromJson, policy));
+  }
 
   const ticker =
     content.match(/\b(KX[A-Z0-9][A-Z0-9\-]{4,})\b/i)?.[1]?.toUpperCase() ??
@@ -240,23 +396,34 @@ function numFrom(text: string, re: RegExp, unitInterval = false): number | null 
 }
 
 function tryParseJsonDecision(content: string): KalshiTradeDecision | null {
-  const fence = content.match(/```(?:json)?\s*([\s\S]*?)```/i);
   const candidates: string[] = [];
-  if (fence?.[1]) candidates.push(fence[1].trim());
-  // bare object with ticker
+  const fenceRe = /```(?:json)?\s*([\s\S]*?)```/gi;
+  let m: RegExpExecArray | null;
+  while ((m = fenceRe.exec(content)) !== null) {
+    if (m[1]?.trim()) candidates.push(m[1].trim());
+  }
+  // bare object with ticker (greedy enough for multi-line)
   const bare = content.match(/\{[\s\S]*?"ticker"\s*:\s*"[^"]+"[\s\S]*?\}/);
   if (bare) candidates.push(bare[0]);
 
+  // Prefer last valid candidate (refined revision after monologue).
+  let last: KalshiTradeDecision | null = null;
   for (const raw of candidates) {
     try {
-      const obj = JSON.parse(raw) as Record<string, unknown>;
+      const cleaned = raw.replace(/,\s*([}\]])/g, '$1');
+      const obj = JSON.parse(cleaned) as Record<string, unknown>;
       if (typeof obj.ticker !== 'string') continue;
+      if (isPlaceholderTicker(obj.ticker)) continue;
       const side = String(obj.contract_side ?? obj.side ?? 'PASS').toUpperCase();
       if (side !== 'YES' && side !== 'NO' && side !== 'PASS') continue;
       const market_price_pct = Number(obj.market_price_pct ?? obj.market_price ?? 50);
-      const fair_probability_pct = Number(obj.fair_probability_pct ?? obj.fair_probability ?? market_price_pct);
+      const fair_probability_pct = Number(
+        obj.fair_probability_pct ?? obj.fair_probability ?? market_price_pct,
+      );
       const stake = Number(obj.recommended_stake_dollars ?? obj.stake ?? 0);
-      const decision = String(obj.decision ?? (side === 'PASS' ? 'PASS' : stake > 0 ? 'TAKE' : 'WATCH')).toUpperCase();
+      const decision = String(
+        obj.decision ?? (side === 'PASS' ? 'PASS' : stake > 0 ? 'TAKE' : 'WATCH'),
+      ).toUpperCase();
       const d: KalshiTradeDecision = {
         ticker: obj.ticker,
         market_title: String(obj.market_title ?? obj.title ?? obj.ticker),
@@ -286,10 +453,10 @@ function tryParseJsonDecision(content: string): KalshiTradeDecision | null {
         data_quality: String(obj.data_quality ?? 'ChatExtract'),
         price_to_enter: Number(obj.price_to_enter ?? market_price_pct),
       };
-      return d;
+      last = d;
     } catch {
       // try next candidate
     }
   }
-  return null;
+  return last;
 }

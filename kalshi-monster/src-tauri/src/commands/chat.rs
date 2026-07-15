@@ -86,6 +86,8 @@ pub async fn send_message(
             &message,
         )
         .await;
+        // Local graded history — confidence tempering only (no math change).
+        ctx.push_str(&crate::chat::track_record::track_record_prompt_block(&db_pool).await);
         ctx
     };
 
@@ -134,11 +136,12 @@ pub async fn send_message(
     };
     let _ = session::save_session_messages(&session_id, &all_messages);
 
-    // Auto-extract predictions from AI response
+    // Auto-extract predictions + mirror TAKE/WATCH into the forecast ledger
     {
         let t = tracker.lock().await;
         let extracted = t.extract_predictions(&session_id, &response.content);
         for pred in extracted {
+            let _ = persist_chat_forecast_from_prediction(&db_pool, &pred, &kalshi).await;
             let record = PredictionRecord {
                 prediction: pred,
                 outcome: PredictionOutcome::Pending,
@@ -251,6 +254,7 @@ pub async fn send_message_stream(
             &message,
         )
         .await;
+        ctx.push_str(&crate::chat::track_record::track_record_prompt_block(&db_pool).await);
         ctx
     };
 
@@ -311,11 +315,12 @@ pub async fn send_message_stream(
     };
     let _ = session::save_session_messages(&session_id, &all_messages);
 
-    // Auto-extract predictions
+    // Auto-extract predictions + forecast ledger mirror
     {
         let t = tracker.lock().await;
         let extracted = t.extract_predictions(&session_id, &response.content);
         for pred in extracted {
+            let _ = persist_chat_forecast_from_prediction(&db_pool, &pred, &kalshi).await;
             let record = PredictionRecord {
                 prediction: pred,
                 outcome: PredictionOutcome::Pending,
@@ -328,6 +333,112 @@ pub async fn send_message_stream(
     }
 
     Ok(())
+}
+
+/// When chat extracts a Kalshi decision, also write a forecast ledger row so
+/// calibration / resolve pollers can grade model opinions (not only paper lots).
+async fn persist_chat_forecast_from_prediction(
+    pool: &Pool<Sqlite>,
+    pred: &crate::predictions::tracker::Prediction,
+    kalshi: &KalshiState,
+) -> Option<i64> {
+    let blob = pred.full_decision_json.as_deref()?;
+    let decision = crate::chat::decision_extract::parse_kalshi_decision_blob(blob).ok()?;
+    if crate::chat::decision_schema::KalshiTradeDecision::is_placeholder_ticker(&decision.ticker)
+    {
+        return None;
+    }
+    // Skip pure PASS with zero edge journal noise — still keep TAKE/WATCH and
+    // PASS with explicit model disagreement for calibration.
+    let keep = matches!(
+        decision.decision,
+        crate::chat::decision_schema::DecisionAction::TAKE
+            | crate::chat::decision_schema::DecisionAction::WATCH
+    ) || decision.model_disagreement
+        || decision.edge_points.abs() >= 3.0;
+    if !keep {
+        return None;
+    }
+
+    let p_market = (decision.market_price_pct / 100.0).clamp(0.0, 1.0);
+    let p_model = (decision.fair_probability_pct / 100.0).clamp(0.0, 1.0);
+    // Ledger p_final starts as model fair; edge engine can re-shrink later.
+    // This is storage of the LLM opinion — not a change to Kelly math.
+    let p_final = p_model;
+    let verdict = match (&decision.decision, &decision.contract_side) {
+        (
+            crate::chat::decision_schema::DecisionAction::TAKE,
+            crate::chat::decision_schema::ContractSide::YES,
+        ) => "trade_yes",
+        (
+            crate::chat::decision_schema::DecisionAction::TAKE,
+            crate::chat::decision_schema::ContractSide::NO,
+        ) => "trade_no",
+        (crate::chat::decision_schema::DecisionAction::WATCH, _) => "pass",
+        _ => "pass",
+    };
+    let reasons = serde_json::json!([
+        format!("source=chat_extract"),
+        format!("decision={:?}", decision.decision),
+        format!("side={:?}", decision.contract_side),
+        format!("edge_points={:.2}", decision.edge_points),
+        format!("confidence={:?}", decision.confidence_tier),
+        format!("data_quality={:?}", decision.data_quality),
+    ])
+    .to_string();
+
+    let close_time = {
+        let client = kalshi.as_ref();
+        client
+            .find_cached_market(&decision.ticker)
+            .and_then(|m| m.close_time.clone())
+            .or_else(|| {
+                // Best-effort live fetch is intentionally skipped here to keep chat fast.
+                None
+            })
+            .unwrap_or_else(|| chrono::Utc::now().to_rfc3339())
+    };
+    let created = chrono::Utc::now().to_rfc3339();
+    let stake = if decision.recommended_stake_dollars > 0.0 {
+        Some(decision.recommended_stake_dollars)
+    } else {
+        None
+    };
+    let breakdown = serde_json::json!({
+        "source": "chat_llm",
+        "ticker": decision.ticker,
+        "thesis": decision.thesis,
+        "risk_flags": decision.risk_flags,
+    })
+    .to_string();
+
+    match crate::kalshi::forecast::insert_forecast(
+        pool,
+        &decision.ticker,
+        &created,
+        &close_time,
+        p_market,
+        Some(p_model),
+        p_final,
+        verdict,
+        &reasons,
+        stake,
+        Some(&breakdown),
+    )
+    .await
+    {
+        Ok(id) => {
+            tracing::info!(
+                "chat forecast ledger: id={id} ticker={} verdict={verdict}",
+                decision.ticker
+            );
+            Some(id)
+        }
+        Err(e) => {
+            tracing::warn!("chat forecast ledger insert failed: {e}");
+            None
+        }
+    }
 }
 
 #[tauri::command]

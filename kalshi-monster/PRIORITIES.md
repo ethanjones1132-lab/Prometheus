@@ -2,13 +2,14 @@
 
 Last updated: 2026-07-15
 
-## Maintenance notes (2026-07-15) — model session audit + prediction quality (no math)
+## Maintenance notes (2026-07-15) — comprehensive model performance (no math)
 
-- Analyzed latest Analyst sessions + `predictions.db`: free DeepSeek graded **D+** on process (Thinking dumps, ask$/mid% confusion, placeholder `KXEVENT-TICKER`, longshot overconfidence); edge ledger 35/35 PASS; graded track record 1 Loss / 14 Pending.
-- Shipped (strictly no Kelly/EV formula changes): bid/ask/mid context labels; retrieval prefers tight liquid books; prompt JSON-first + calibration judgment; `prefer_deliverable_content`; resend follow-up mode; last-valid JSON extract; `enforce_prediction_quality_rails` (placeholder / spread>edge / longshot×); paper path rails.
+- Analyzed latest Analyst sessions + `predictions.db`: free DeepSeek **D+** process grade; edge ledger 35/35 PASS; graded track record thin (1 Loss / 14 Pending).
+- **Wave 1:** bid/ask/mid labels; retrieval; JSON-first prompts; deliverable strip; resend mode; last-valid JSON; quality rails; paper rails.
+- **Wave 2 (comprehensive):** `chat/track_record` prompt card; free-tier model note; stream thoughts separate from content; chat→forecast ledger; extract dedupe/repair; grade Yes/No normalize + skip placeholders; UI collapsible thinking; paperFromChat quality rails + preferDeliverable.
 - Report: `reports/model-session-performance-2026-07-14.md`.
-- Verified: `cargo test --lib chat::` → **60 passed**.
-- **Next:** accumulate resolved forecasts for calibration card; prefer stronger model for live TAKE; auto-grade Kalshi settlements.
+- Verified: `cargo test --lib chat::` **63**; `kalshi::grading` **7**; `predictions::tracker` **6**.
+- **Next:** run resolve poller on user machine to grade open markets; stronger model for live TAKE; optional agent fill rates.
 
 ## Maintenance notes (2026-07-14, cron pass) — calibration flywheel vitest + binaries .gitkeep
 

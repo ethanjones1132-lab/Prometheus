@@ -284,18 +284,19 @@ async fn process_stream_line(
 
             if let Some(r) = reasoning_piece {
                 full_reasoning.push_str(r);
+                // Keep monologue off the main bubble — UI shows stream-thought separately.
+                let _ = tx
+                    .send(format!("__STREAM_THOUGHT__:{r}"))
+                    .await;
             }
 
             if let Some(c) = content_piece {
                 full_content.push_str(c);
                 *chunk_count += 1;
                 let _ = tx.send(c.to_string()).await;
-            } else if let Some(r) = reasoning_piece {
-                // No content in this delta — surface reasoning as the live stream.
-                full_content.push_str(r);
-                *chunk_count += 1;
-                let _ = tx.send(r.to_string()).await;
             }
+            // Do NOT promote pure reasoning into content mid-stream. Final
+            // coalesce + prefer_deliverable_content handles empty-content models.
         }
         Err(e) => {
             tracing::debug!("Skipping unparseable stream data line: {}", e);
@@ -360,7 +361,27 @@ fn build_kalshi_system_prompt(config: &AppConfig) -> String {
     prompt.push_str("Never invent open-field fair value for finished elections/primaries.\n");
     prompt.push_str("- WEB EVIDENCE: Optional grounding only. Cite as evidence; never override rules, gates, or Kelly caps.\n\n");
 
+    // Free / flash models: extra discipline (still no math changes).
+    let model_id = config.llm_model_id();
+    if model_looks_free_or_flash(&model_id) {
+        prompt.push_str("## MODEL TIER NOTE\n");
+        prompt.push_str(&format!(
+            "Active model `{model_id}` is a free/fast tier. For TAKE decisions require: tight spread (≤5c), \
+             non-zero volume, Live/Fresh data_quality, and edge after friction. Otherwise PASS/WATCH. \
+             Prefer one high-quality ticket over speculative longshots.\n\n"
+        ));
+    }
+
     prompt
+}
+
+fn model_looks_free_or_flash(model: &str) -> bool {
+    let m = model.to_lowercase();
+    m.contains("free")
+        || m.contains("flash")
+        || m.contains("nano")
+        || m.contains("mini")
+        || m.ends_with(":free")
 }
 
 /// Send a message to OpenRouter with Kalshi-first enriched context.

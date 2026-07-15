@@ -3,7 +3,10 @@ import {
   coerceMarketAndEntry,
   coercePriceToDollars,
   coerceProbabilityToPct,
+  enforcePredictionQualityRails,
   extractPaperDecision,
+  isPlaceholderTicker,
+  preferDeliverableContent,
   sanitizeDecisionUnitsAndCaps,
 } from './paperFromChat';
 import type { KalshiTradeDecision } from '../types/kalshi';
@@ -138,5 +141,89 @@ describe('sanitizeDecisionUnitsAndCaps', () => {
     });
     expect(d.market_price_pct).toBeCloseTo(0.45);
     expect(d.price_to_enter).toBeCloseTo(0.005);
+  });
+});
+
+describe('quality rails + deliverable strip', () => {
+  test('rejects placeholder schema ticker', () => {
+    expect(isPlaceholderTicker('KXEVENT-TICKER')).toBe(true);
+    expect(isPlaceholderTicker('KXTEST-1')).toBe(false);
+    const content = `
+\`\`\`json
+{"ticker":"KXEVENT-TICKER","contract_side":"YES","market_price_pct":50,"fair_probability_pct":60,"decision":"TAKE","price_to_enter":0.5}
+\`\`\`
+`;
+    expect(extractPaperDecision(content)).toBeNull();
+  });
+
+  test('preferDeliverable strips thinking monologue', () => {
+    const raw = `Thinking. 1. Analyze the Request:
+lots of monologue
+
+\`\`\`json
+{"ticker":"KXHIGHNY-26JUL14-B80","decision":"PASS","contract_side":"PASS","market_price_pct":50,"fair_probability_pct":50,"price_to_enter":0.5}
+\`\`\`
+DECISION: PASS`;
+    const out = preferDeliverableContent(raw);
+    expect(out.startsWith('```json')).toBe(true);
+    expect(out.includes('Thinking.')).toBe(false);
+  });
+
+  test('spread exceeds edge forces PASS', () => {
+    const d = enforcePredictionQualityRails({
+      ticker: 'KXHIGHNY-26JUL14-B80',
+      market_title: 'T',
+      category: 'Weather',
+      contract_side: 'YES',
+      market_price_pct: 50,
+      fair_probability_pct: 55,
+      edge_points: 5,
+      spread_cents: 12,
+      liquidity_score: 80,
+      ev_per_contract_cents: 5,
+      ev_roi_pct: 10,
+      raw_kelly_pct: 10,
+      fractional_kelly_pct: 2.5,
+      recommended_stake_dollars: 40,
+      max_position_dollars: 40,
+      decision: 'TAKE',
+      confidence_tier: 'Medium',
+      thesis: 'edge',
+      evidence: [],
+      risk_flags: [],
+      data_quality: 'Live',
+      price_to_enter: 0.5,
+    });
+    expect(d.decision).toBe('PASS');
+    expect(d.risk_flags).toContain('SpreadExceedsEdge');
+  });
+
+  test('longshot fair multiply without Live demotes to WATCH', () => {
+    const d = enforcePredictionQualityRails({
+      ticker: 'KXPRESNOMD-28-ESLO',
+      market_title: 'Longshot',
+      category: 'Politics',
+      contract_side: 'YES',
+      market_price_pct: 0.45,
+      fair_probability_pct: 40,
+      edge_points: 39,
+      spread_cents: 1,
+      liquidity_score: 10,
+      ev_per_contract_cents: 39,
+      ev_roi_pct: 8000,
+      raw_kelly_pct: 50,
+      fractional_kelly_pct: 5,
+      recommended_stake_dollars: 25,
+      max_position_dollars: 25,
+      decision: 'TAKE',
+      confidence_tier: 'High',
+      thesis: 'narrative',
+      evidence: [],
+      risk_flags: [],
+      data_quality: 'Inferential',
+      price_to_enter: 0.0045,
+    });
+    expect(d.decision).toBe('WATCH');
+    expect(d.confidence_tier).toBe('Low');
   });
 });

@@ -101,13 +101,18 @@ Edge engine on the same day: **all PASS** (shrinkage + min_edge) — the hard pa
 | 9 | Reasoning `exclude: true` on OpenRouter reasoning-capable models | ✅ Done |
 | 10 | Unit tests for all of the above (60 chat tests pass) | ✅ Done |
 
-### Follow-ups (not in this patch; still no math)
+### Follow-ups — comprehensive implementation (2026-07-15)
 
-- **Accumulate resolved forecasts** and inject a short calibration card into the prompt once n≥30.
-- **Default model guidance:** free DeepSeek is fine for smoke tests; use a stronger non-free model for real TAKE decisions.
-- **Auto-grade path** for Kalshi settlements → close the 14 Pending rows.
-- **Agent fill rates** (technical/news/macro currently null) — better context, still not Kelly math.
-- **UI:** hide streamed monologue live if gateway still emits reasoning before content.
+| # | Change | Status |
+|---|--------|--------|
+| 11 | Track-record / calibration **prompt card** from local SQLite (graded preds + forecast Brier) | ✅ |
+| 12 | Free/flash **model tier note** in system prompt | ✅ |
+| 13 | Stream reasoning → `__STREAM_THOUGHT__` only (not main bubble) | ✅ |
+| 14 | Chat extracts → **forecast ledger** insert for TAKE/WATCH | ✅ |
+| 15 | Extract: deliverable strip, repair_json, last-valid, ticker dedupe, reject placeholders | ✅ |
+| 16 | Grade/resolve: skip placeholders; normalize Yes/No casing | ✅ |
+| 17 | UI: collapsible thinking; paperFromChat quality rails + preferDeliverable | ✅ |
+| 18 | Agent fill rates (technical/news/macro) | ⏸ deferred (sidecar scope; not prompt-only) |
 
 ---
 
