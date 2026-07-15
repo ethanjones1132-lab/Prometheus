@@ -401,6 +401,14 @@ pub async fn kalshi_record_paper_decision(
         bankroll.kelly_fraction,
         bankroll.max_bet_pct,
     );
+    // Quality rails (no math changes): placeholder tickers, spread>edge, longshot multiplies.
+    decision.enforce_prediction_quality_rails();
+    if crate::chat::decision_schema::KalshiTradeDecision::is_placeholder_ticker(&decision.ticker) {
+        return Err(
+            "Invalid/placeholder ticker — refuse to record paper decision (use a real KX… ticker from tape)"
+                .into(),
+        );
+    }
 
     // Hard settlement rail: tape SETTLED/CLOSED (incl. embedded ticker dates) → force PASS.
     // Re-applied after Kelly recompute so stake cannot reappear.
@@ -518,6 +526,8 @@ pub async fn kalshi_record_paper_decision(
     );
     // Kelly recompute must not resurrect a TAKE on a settled market.
     decision.enforce_settlement_gate(&settlement_gate);
+    // Re-apply quality rails after Kelly so stakes stay zero on demoted decisions.
+    decision.enforce_prediction_quality_rails();
 
     if let Some(summary) = &bankroll_summary {
         let (capped_stake, warning) =

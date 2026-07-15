@@ -1,6 +1,14 @@
 # Kalshi Monster — Priority Roadmap
 
-Last updated: 2026-07-14
+Last updated: 2026-07-15
+
+## Maintenance notes (2026-07-15) — model session audit + prediction quality (no math)
+
+- Analyzed latest Analyst sessions + `predictions.db`: free DeepSeek graded **D+** on process (Thinking dumps, ask$/mid% confusion, placeholder `KXEVENT-TICKER`, longshot overconfidence); edge ledger 35/35 PASS; graded track record 1 Loss / 14 Pending.
+- Shipped (strictly no Kelly/EV formula changes): bid/ask/mid context labels; retrieval prefers tight liquid books; prompt JSON-first + calibration judgment; `prefer_deliverable_content`; resend follow-up mode; last-valid JSON extract; `enforce_prediction_quality_rails` (placeholder / spread>edge / longshot×); paper path rails.
+- Report: `reports/model-session-performance-2026-07-14.md`.
+- Verified: `cargo test --lib chat::` → **60 passed**.
+- **Next:** accumulate resolved forecasts for calibration card; prefer stronger model for live TAKE; auto-grade Kalshi settlements.
 
 ## Maintenance notes (2026-07-14, cron pass) — calibration flywheel vitest + binaries .gitkeep
 

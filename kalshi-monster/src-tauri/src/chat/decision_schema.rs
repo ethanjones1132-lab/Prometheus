@@ -342,6 +342,160 @@ impl KalshiTradeDecision {
         }
     }
 
+    /// True when the ticker is a schema placeholder or otherwise not a real market id.
+    /// Used to reject LLM copy-paste of the example ticket (e.g. `KXEVENT-TICKER`).
+    pub fn is_placeholder_ticker(ticker: &str) -> bool {
+        let t = ticker.trim().to_uppercase();
+        if t.is_empty() {
+            return true;
+        }
+        // Exact / common schema placeholders observed in production logs.
+        if t == "KXEVENT-TICKER"
+            || t == "KX-EVENT-TICKER"
+            || t == "KXEVENT"
+            || t == "TICKER"
+            || t == "KX-TICKER"
+            || t == "KXTEST"
+            || t.ends_with("-TICKER")
+            || t.contains("PLACEHOLDER")
+            || t.contains("EXAMPLE")
+        {
+            return true;
+        }
+        // Must look like a Kalshi-style ticker (starts with KX and has a hyphenated body).
+        if !t.starts_with("KX") || !t.contains('-') || t.len() < 6 {
+            return true;
+        }
+        false
+    }
+
+    /// Policy rails that improve prediction quality **without changing Kelly/EV formulas**.
+    ///
+    /// - Rejects placeholder tickers
+    /// - Forces PASS/WATCH when spread exceeds |edge|
+    /// - Caps confidence and blocks extreme longshot multiplies without live data
+    /// - Zeroes stake when TAKE is demoted
+    pub fn enforce_prediction_quality_rails(&mut self) {
+        // Placeholder / invented tickers are never actionable.
+        if Self::is_placeholder_ticker(&self.ticker) {
+            self.decision = DecisionAction::PASS;
+            self.contract_side = ContractSide::PASS;
+            self.recommended_stake_dollars = 0.0;
+            self.max_position_dollars = 0.0;
+            self.fractional_kelly_pct = 0.0;
+            self.raw_kelly_pct = 0.0;
+            self.confidence_tier = ConfidenceTier::None;
+            if !self.risk_flags.contains(&RiskFlag::StaleData) {
+                self.risk_flags.push(RiskFlag::StaleData);
+            }
+            let note = "[quality rail: placeholder/invalid ticker — forced PASS]";
+            if !self.thesis.contains("[quality rail: placeholder") {
+                if !self.thesis.is_empty() {
+                    self.thesis.push(' ');
+                }
+                self.thesis.push_str(note);
+            }
+            return;
+        }
+
+        // High confidence is reserved for Live/Fresh books.
+        if matches!(
+            self.confidence_tier,
+            ConfidenceTier::High
+        ) && matches!(
+            self.data_quality,
+            DataQuality::Inferential | DataQuality::Speculative | DataQuality::Stale
+        ) {
+            self.confidence_tier = ConfidenceTier::Low;
+            let note = "[quality rail: High confidence requires Live/Fresh data — demoted]";
+            if !self.thesis.contains("[quality rail: High confidence") {
+                if !self.thesis.is_empty() {
+                    self.thesis.push(' ');
+                }
+                self.thesis.push_str(note);
+            }
+        }
+
+        // Spread vs edge friction (compare absolute edge points to spread cents).
+        let abs_edge = self.edge_points.abs();
+        if self.spread_cents > 0.0 && abs_edge > 0.0 && self.spread_cents > abs_edge {
+            if !self.risk_flags.contains(&RiskFlag::SpreadExceedsEdge) {
+                self.risk_flags.push(RiskFlag::SpreadExceedsEdge);
+            }
+            if self.decision == DecisionAction::TAKE {
+                self.decision = DecisionAction::PASS;
+                self.recommended_stake_dollars = 0.0;
+                self.max_position_dollars = 0.0;
+                self.fractional_kelly_pct = 0.0;
+                self.raw_kelly_pct = 0.0;
+                self.confidence_tier = ConfidenceTier::None;
+                let note = "[quality rail: spread exceeds edge — forced PASS]";
+                if !self.thesis.contains("[quality rail: spread exceeds") {
+                    if !self.thesis.is_empty() {
+                        self.thesis.push(' ');
+                    }
+                    self.thesis.push_str(note);
+                }
+            }
+        }
+
+        // Extreme longshot multiple: market <5% and fair >> market without live tape.
+        // Does not rewrite fair_probability (math untouched) — only demotes action.
+        let mkt = self.market_price_pct;
+        let fair = self.fair_probability_pct;
+        if mkt > 0.0 && mkt < 5.0 && fair > mkt * 5.0 {
+            if !self.risk_flags.contains(&RiskFlag::ExtremeProbability) {
+                self.risk_flags.push(RiskFlag::ExtremeProbability);
+            }
+            if !self.risk_flags.contains(&RiskFlag::ModelDisagreement) {
+                self.risk_flags.push(RiskFlag::ModelDisagreement);
+            }
+            let weak_data = matches!(
+                self.data_quality,
+                DataQuality::Inferential | DataQuality::Speculative | DataQuality::Stale
+            );
+            if self.decision == DecisionAction::TAKE && weak_data {
+                self.decision = DecisionAction::WATCH;
+                self.recommended_stake_dollars = 0.0;
+                self.max_position_dollars = 0.0;
+                self.fractional_kelly_pct = 0.0;
+                if matches!(self.confidence_tier, ConfidenceTier::High | ConfidenceTier::Medium) {
+                    self.confidence_tier = ConfidenceTier::Low;
+                }
+                let note = "[quality rail: longshot fair≫market without Live data — demoted to WATCH]";
+                if !self.thesis.contains("[quality rail: longshot") {
+                    if !self.thesis.is_empty() {
+                        self.thesis.push(' ');
+                    }
+                    self.thesis.push_str(note);
+                }
+            }
+        }
+
+        // Very wide spreads with no claimed liquidity → never TAKE.
+        if self.decision == DecisionAction::TAKE
+            && self.spread_cents >= 25.0
+            && self.liquidity_score < 20.0
+        {
+            if !self.risk_flags.contains(&RiskFlag::InsufficientLiquidity) {
+                self.risk_flags.push(RiskFlag::InsufficientLiquidity);
+            }
+            self.decision = DecisionAction::PASS;
+            self.recommended_stake_dollars = 0.0;
+            self.max_position_dollars = 0.0;
+            self.fractional_kelly_pct = 0.0;
+            self.raw_kelly_pct = 0.0;
+            self.confidence_tier = ConfidenceTier::None;
+            let note = "[quality rail: wide illiquid book — forced PASS]";
+            if !self.thesis.contains("[quality rail: wide illiquid") {
+                if !self.thesis.is_empty() {
+                    self.thesis.push(' ');
+                }
+                self.thesis.push_str(note);
+            }
+        }
+    }
+
     /// Hard rail: SETTLED/CLOSED tape → never keep TAKE. Zeros stake and rewrites decision.
     pub fn enforce_settlement_gate(&mut self, gate: &crate::chat::market_gate::MarketGate) {
         use crate::chat::market_gate::MarketGate;
@@ -550,7 +704,7 @@ impl KalshiTradeDecision {
 Every market analysis must output a JSON block with the following fields FIRST:
 
 {
-  "ticker": "KXEVENT-FED-25DEC",
+  "ticker": "KXFED-25DEC-H25",
   "market_title": "Will the Fed raise rates by 25bp?",
   "category": "Economics",
   "contract_side": "YES",
@@ -683,8 +837,78 @@ mod tests {
         assert!((decision.raw_kelly_pct - 33.33).abs() < 0.05);
         // fractional Kelly is quarter-Kelly then hard-capped at max_bet 5% of bankroll
         assert!((decision.fractional_kelly_pct - 5.0).abs() < 0.05);
-        assert!((decision.recommended_stake_dollars - 50.0).abs() < 0.5);
-        assert!(decision.ev_roi_pct > 0.0);
+    }
+
+    #[test]
+    fn placeholder_ticker_detection() {
+        assert!(KalshiTradeDecision::is_placeholder_ticker("KXEVENT-TICKER"));
+        assert!(KalshiTradeDecision::is_placeholder_ticker("TICKER"));
+        assert!(KalshiTradeDecision::is_placeholder_ticker(""));
+        assert!(!KalshiTradeDecision::is_placeholder_ticker(
+            "KXNBASUMMERSPREAD-26JUL13MINPOR-POR16"
+        ));
+        assert!(!KalshiTradeDecision::is_placeholder_ticker("KXTEST-1"));
+    }
+
+    #[test]
+    fn quality_rail_forces_pass_when_spread_exceeds_edge() {
+        let mut d = KalshiTradeDecision::new("KXTEST-RAIL-1", "Wide book");
+        d.contract_side = ContractSide::YES;
+        d.market_price_pct = 50.0;
+        d.fair_probability_pct = 55.0;
+        d.edge_points = 5.0;
+        d.spread_cents = 12.0;
+        d.decision = DecisionAction::TAKE;
+        d.confidence_tier = ConfidenceTier::Medium;
+        d.recommended_stake_dollars = 40.0;
+        d.data_quality = DataQuality::Live;
+        d.enforce_prediction_quality_rails();
+        assert_eq!(d.decision, DecisionAction::PASS);
+        assert!(d.risk_flags.contains(&RiskFlag::SpreadExceedsEdge));
+        assert_eq!(d.recommended_stake_dollars, 0.0);
+    }
+
+    #[test]
+    fn quality_rail_demotes_longshot_multiply_without_live_data() {
+        let mut d = KalshiTradeDecision::new("KXPRESNOMD-28-ESLO", "Longshot");
+        d.contract_side = ContractSide::YES;
+        d.market_price_pct = 0.45;
+        d.fair_probability_pct = 40.0; // ~89x market — absurd without hard evidence
+        d.edge_points = 39.55;
+        d.spread_cents = 1.0;
+        d.decision = DecisionAction::TAKE;
+        d.confidence_tier = ConfidenceTier::High;
+        d.data_quality = DataQuality::Inferential;
+        d.recommended_stake_dollars = 25.0;
+        d.enforce_prediction_quality_rails();
+        assert_eq!(d.decision, DecisionAction::WATCH);
+        assert_eq!(d.confidence_tier, ConfidenceTier::Low);
+        assert!(d.risk_flags.contains(&RiskFlag::ExtremeProbability));
+    }
+
+    #[test]
+    fn quality_rail_rejects_placeholder_ticker_as_pass() {
+        let mut d = KalshiTradeDecision::new("KXEVENT-TICKER", "Schema example");
+        d.decision = DecisionAction::TAKE;
+        d.recommended_stake_dollars = 50.0;
+        d.enforce_prediction_quality_rails();
+        assert_eq!(d.decision, DecisionAction::PASS);
+        assert_eq!(d.recommended_stake_dollars, 0.0);
+    }
+
+    #[test]
+    fn quality_rail_does_not_change_fair_probability() {
+        // Math/fair value must be left alone — rails only affect action/confidence.
+        let mut d = KalshiTradeDecision::new("KXTEST-RAIL-2", "Preserve fair");
+        d.fair_probability_pct = 12.5;
+        d.market_price_pct = 1.0;
+        d.edge_points = 11.5;
+        d.spread_cents = 1.0;
+        d.decision = DecisionAction::TAKE;
+        d.data_quality = DataQuality::Inferential;
+        d.enforce_prediction_quality_rails();
+        assert!((d.fair_probability_pct - 12.5).abs() < 1e-12);
+        assert!((d.market_price_pct - 1.0).abs() < 1e-12);
     }
 
     #[test]

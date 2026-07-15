@@ -145,6 +145,57 @@ pub fn assess_kalshi_chat_context(client: &KalshiClient) -> KalshiChatContextSta
 /// Max characters of resolution rules injected per market (full rules preferred over vague summary).
 const RULES_INJECT_MAX_CHARS: usize = 2500;
 
+/// Format one retrieved-market row for the analyst prompt.
+/// Always prints bid / ask / mid dollars separately from mid-implied percent.
+pub fn format_retrieved_market_line(
+    m: &crate::kalshi::KalshiMarketSummary,
+    status: &str,
+    result: &str,
+    gate: &MarketGate,
+) -> String {
+    let mid = if m.yes_bid > 0.0 && m.yes_ask > 0.0 {
+        (m.yes_bid + m.yes_ask) / 2.0
+    } else if m.yes_ask > 0.0 {
+        m.yes_ask
+    } else if m.yes_bid > 0.0 {
+        m.yes_bid
+    } else {
+        m.yes_prob_pct / 100.0
+    };
+    let spread_c = m.spread * 100.0;
+    let wide = if spread_c > 10.0 {
+        " ⚠ WIDE_SPREAD"
+    } else {
+        ""
+    };
+    let thin = if m.volume_24h <= 0.0 && m.liquidity <= 0.0 {
+        " ⚠ THIN/NO_VOLUME"
+    } else {
+        ""
+    };
+    format!(
+        "- [{}] {} — Event: {}, Cat: {}, Status: {}, Result: {}, \
+         Yes bid ${:.4} / ask ${:.4} / mid ${:.4} (mid-implied {:.2}%), \
+         Spread: {:.1}c, Vol24h: ${:.0}, Liq: ${:.0}, GATE={}{}{}\n",
+        m.ticker,
+        m.title,
+        m.event_ticker,
+        m.category,
+        status,
+        result,
+        m.yes_bid,
+        m.yes_ask,
+        mid,
+        m.yes_prob_pct,
+        spread_c,
+        m.volume_24h,
+        m.liquidity,
+        gate.label(),
+        wide,
+        thin,
+    )
+}
+
 /// Format resolution rules for prompt injection (truncate long legal text safely).
 pub fn format_resolution_rules(rules: &str, max_chars: usize) -> String {
     let trimmed = rules.trim();
@@ -289,19 +340,14 @@ pub async fn build_kalshi_context_full(
                     if gate.allows_take() {
                         open_markets.push((m.ticker.clone(), m.title.clone()));
                     }
-                    ctx.push_str(&format!(
-                        "- [{}] {} — Event: {}, Cat: {}, Status: {}, Result: {}, Yes: ${:.4} ({:.2}%), Spread: {:.1}c, Vol24h: ${:.0}, GATE={}\n",
-                        m.ticker,
-                        m.title,
-                        m.event_ticker,
-                        m.category,
+                    // Never pair YES *ask* dollars with *mid* percent — wide books
+                    // (e.g. bid $0.01 / ask $0.94 / mid 48%) used to print as
+                    // "Yes: $0.9400 (48.00%)" and derail the model into data-bug debates.
+                    ctx.push_str(&format_retrieved_market_line(
+                        m,
                         status,
                         if result.is_empty() { "—" } else { result },
-                        m.yes_ask.max(m.yes_prob_pct / 100.0),
-                        m.yes_prob_pct,
-                        m.spread * 100.0,
-                        m.volume_24h,
-                        gate.label(),
+                        &gate,
                     ));
                     // Collect top matches for rules injection (selected ticker first)
                     if rule_tickers.len() < 3 {
@@ -503,6 +549,14 @@ pub async fn build_kalshi_context_full(
     ctx.push_str("- Outcomes are probabilistic, never guaranteed.\n");
     ctx.push_str("- App post-process caps fractional Kelly and stake (default ≤5% bankroll); do not recommend full-Kelly long-shots.\n");
     ctx.push_str("- price_to_enter must be dollars on [0,1]; market_price_pct is percent 0–100 of $1.\n");
+    ctx.push_str(
+        "- PRICE LABELS: bid/ask/mid are dollars; mid-implied % is from the mid only. \
+         A wide book (e.g. bid $0.01 / ask $0.94 / mid ~$0.48) is NOT a data bug — it is unexecutable friction. Prefer PASS/WATCH.\n",
+    );
+    ctx.push_str(
+        "- EXECUTABILITY: Do not TAKE when spread > edge, volume is zero, or the book is flagged WIDE_SPREAD. \
+         Prefer tight-spread, non-zero volume markets for any TAKE.\n",
+    );
     ctx.push_str("- WEB EVIDENCE (if present) is optional grounding only — never overrides GATE or rules.\n\n");
 
     KalshiContextBuild {
@@ -637,21 +691,32 @@ fn select_markets_for_query(
                 score += 5; // mild boost when longshot mode
             }
 
-            // Tight spread bonus / wide spread penalty (spread is in dollars 0–1)
+            // Tight spread bonus / wide spread penalty (spread is in dollars 0–1).
+            // Unexecutable books (50c+ spreads) must not surface as "mispriced" candidates.
             let spread_c = m.spread * 100.0;
             if spread_c <= 2.0 {
-                score += 8;
+                score += 12;
             } else if spread_c <= 5.0 {
-                score += 3;
-            } else if spread_c > 10.0 {
-                score -= 12;
+                score += 5;
+            } else if spread_c <= 10.0 {
+                score -= 5;
+            } else if spread_c <= 25.0 {
+                score -= 25;
+            } else {
+                score -= 50;
             }
 
-            // Liquidity / volume priors (mild)
+            // Liquidity / volume priors — zero-volume rows are noise for fair-value work
+            if m.volume_24h <= 0.0 {
+                score -= 20;
+            } else {
+                score += (m.volume_24h.log10().max(0.0) as i32).min(10);
+            }
             if m.liquidity > 0.0 {
                 score += (m.liquidity.log10().max(0.0) as i32).min(6);
+            } else {
+                score -= 8;
             }
-            score += (m.volume_24h.log10().max(0.0) as i32).min(8);
 
             if !gate.allows_take() {
                 score -= 100; // explicit ticker settled still ranks low
@@ -702,8 +767,8 @@ fn inject_sibling_field_context(
         ));
         // Include primary first for sum context
         block.push_str(&format!(
-            "- [{}] {} — Yes {:.1}%  [selected]\n",
-            m.ticker, m.title, m.yes_prob_pct
+            "- [{}] {} — mid-implied {:.1}% (bid ${:.4} / ask ${:.4})  [selected]\n",
+            m.ticker, m.title, m.yes_prob_pct, m.yes_bid, m.yes_ask
         ));
         let mut field_sum = m.yes_prob_pct;
         for s in &sibs {
@@ -720,10 +785,12 @@ fn inject_sibling_field_context(
             }
             field_sum += s.yes_prob_pct;
             block.push_str(&format!(
-                "- [{}] {} — Yes {:.1}%, Spread {:.1}c, GATE={}\n",
+                "- [{}] {} — mid-implied {:.1}% (bid ${:.4} / ask ${:.4}), Spread {:.1}c, GATE={}\n",
                 s.ticker,
                 s.title,
                 s.yes_prob_pct,
+                s.yes_bid,
+                s.yes_ask,
                 s.spread * 100.0,
                 gate.label()
             ));
@@ -835,6 +902,103 @@ mod tests {
     fn longshot_scan_flag() {
         assert!(wants_longshot_scan("show me longshot misprices"));
         assert!(!wants_longshot_scan("most mispriced markets today"));
+    }
+
+    #[test]
+    fn retrieved_line_separates_ask_dollars_from_mid_pct() {
+        use crate::kalshi::KalshiMarketSummary;
+        let m = KalshiMarketSummary {
+            ticker: "KXATP-NED".into(),
+            event_ticker: "EV".into(),
+            title: "Nedic wins".into(),
+            category: "Sports".into(),
+            status: "active".into(),
+            yes_prob_pct: 48.0,
+            yes_ask: 0.94,
+            yes_bid: 0.02,
+            no_ask: 0.98,
+            no_bid: 0.06,
+            last_price: 0.50,
+            volume_24h: 0.0,
+            total_volume: 0.0,
+            liquidity: 0.0,
+            spread: 0.92,
+            close_time: Some("2028-01-01T00:00:00Z".into()),
+            expiration_time: None,
+            result: String::new(),
+            can_close_early: false,
+            is_provisional: false,
+        };
+        let line = format_retrieved_market_line(&m, "active", "—", &MarketGate::Open);
+        // Must NOT look like "Yes: $0.9400 (48.00%)"
+        assert!(!line.contains("Yes: $0.9400 (48"));
+        assert!(line.contains("bid $0.0200"));
+        assert!(line.contains("ask $0.9400"));
+        assert!(line.contains("mid-implied 48.00%"));
+        assert!(line.contains("WIDE_SPREAD"));
+        assert!(line.contains("THIN/NO_VOLUME"));
+    }
+
+    #[test]
+    fn retrieval_penalizes_wide_spread_zero_volume() {
+        use crate::kalshi::KalshiMarketSummary;
+        let tight = KalshiMarketSummary {
+            ticker: "KX-TIGHT".into(),
+            event_ticker: "EV".into(),
+            title: "tight politics".into(),
+            category: "Politics".into(),
+            status: "open".into(),
+            yes_prob_pct: 45.0,
+            yes_ask: 0.46,
+            yes_bid: 0.44,
+            no_ask: 0.56,
+            no_bid: 0.54,
+            last_price: 0.45,
+            volume_24h: 50_000.0,
+            total_volume: 50_000.0,
+            liquidity: 10_000.0,
+            spread: 0.02,
+            close_time: Some("2028-01-01T00:00:00Z".into()),
+            expiration_time: None,
+            result: String::new(),
+            can_close_early: false,
+            is_provisional: false,
+        };
+        let wide = KalshiMarketSummary {
+            ticker: "KX-WIDE".into(),
+            event_ticker: "EV".into(),
+            title: "wide tennis".into(),
+            category: "Sports".into(),
+            status: "open".into(),
+            yes_prob_pct: 48.0,
+            yes_ask: 0.94,
+            yes_bid: 0.02,
+            no_ask: 0.98,
+            no_bid: 0.06,
+            last_price: 0.50,
+            volume_24h: 0.0,
+            total_volume: 0.0,
+            liquidity: 0.0,
+            spread: 0.92,
+            close_time: Some("2028-01-01T00:00:00Z".into()),
+            expiration_time: None,
+            result: String::new(),
+            can_close_early: false,
+            is_provisional: false,
+        };
+        let now = chrono::Utc::now();
+        let selected = select_markets_for_query(
+            &[wide.clone(), tight.clone()],
+            &[],
+            None,
+            2,
+            false,
+            now,
+        );
+        assert!(!selected.is_empty());
+        assert_eq!(selected[0].ticker, "KX-TIGHT");
+        // Wide zero-volume book should rank out of a default non-longshot scan
+        assert!(!selected.iter().any(|m| m.ticker == "KX-WIDE"));
     }
 
     #[test]

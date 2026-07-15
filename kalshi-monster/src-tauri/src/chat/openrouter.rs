@@ -156,6 +156,84 @@ pub fn response_looks_incomplete(text: &str) -> bool {
     last.is_alphanumeric() || last == ',' || last == ':' || t.ends_with("...") || t.len() > 1500
 }
 
+/// Strip free-model monologue so stored/displayed content starts at the deliverable.
+///
+/// DeepSeek-style free models often emit `Thinking. …` (or a full chain-of-thought)
+/// then one or more JSON decision blocks. Keeping the monologue bloats history,
+/// confuses extraction (placeholder tickers), and forces users to ask "resend".
+///
+/// Does **not** change any probability/Kelly math — presentation only.
+pub fn prefer_deliverable_content(text: &str) -> String {
+    let t = text.trim();
+    if t.is_empty() {
+        return String::new();
+    }
+
+    // Prefer the first fenced ```json block through end-of-text (summary follows).
+    if let Some(idx) = t.find("```json") {
+        let deliverable = t[idx..].trim();
+        if deliverable.len() >= 80 {
+            return deliverable.to_string();
+        }
+    }
+
+    // Plain ``` fence whose body is a JSON object with a ticker.
+    if let Some(idx) = t.find("```") {
+        let after = &t[idx + 3..];
+        let body = after.trim_start();
+        if body.starts_with('{') && body.contains("\"ticker\"") {
+            let deliverable = t[idx..].trim();
+            if deliverable.len() >= 80 {
+                return deliverable.to_string();
+            }
+        }
+    }
+
+    // Unfenced JSON object containing a Kalshi-like ticker.
+    if let Some(idx) = t.find('{') {
+        let slice = &t[idx..];
+        if slice.contains("\"ticker\"") && slice.contains("\"decision\"") {
+            // Only strip a long thinking prefix — keep short prose before JSON.
+            if idx > 400
+                || t.to_lowercase().starts_with("thinking")
+                || t.contains("Analyze the Request")
+            {
+                return slice.trim().to_string();
+            }
+        }
+    }
+
+    t.to_string()
+}
+
+/// Soft rewrite for "resend / again / shorter" follow-ups so the model replays
+/// the last deliverable instead of inventing a reconstruction monologue.
+pub fn is_resend_or_summarize_request(user_message: &str) -> bool {
+    let q = user_message.to_lowercase();
+    [
+        "resend",
+        "re-send",
+        "send again",
+        "repeat the",
+        "final response",
+        "final answer",
+        "easier to read",
+        "shorter summary",
+        "readable summary",
+        "just the summary",
+        "just the json",
+    ]
+    .iter()
+    .any(|k| q.contains(k))
+}
+
+fn resend_followup_instruction() -> &'static str {
+    "FOLLOW-UP MODE: The user wants the prior deliverable again (or a cleaner summary). \
+     Do NOT re-analyze markets and do NOT invent a reconstruction. \
+     Copy the last assistant JSON decision block (or the best complete one from history) \
+     and a short DECISION summary only. No chain-of-thought. No 'Thinking.' monologue."
+}
+
 fn continue_user_prompt() -> &'static str {
     "Continue EXACTLY where you left off. Do not restart the analysis. \
      Finish any open thought, then output the required JSON decision block \
@@ -264,10 +342,20 @@ fn build_kalshi_system_prompt(config: &AppConfig) -> String {
     prompt.push_str("Only provide sports-focused detail when the user explicitly asks for it.\n");
     prompt.push_str("- COMPLETENESS: Always finish with the JSON decision block and DECISION summary. ");
     prompt.push_str("If context is large, analyze fewer markets thoroughly rather than stalling mid-thought.\n");
+    prompt.push_str("- OUTPUT DISCIPLINE: Put the ```json decision block FIRST. Then a short DECISION summary. ");
+    prompt.push_str("Do NOT emit chain-of-thought, 'Thinking.' outlines, or step-by-step scratch work in the user-visible reply. ");
+    prompt.push_str("Internal reasoning is private — only the ticket + summary are allowed.\n");
     prompt.push_str("- FACT GROUNDING: Only cite spot/futures prices that appear in CROSS-ASSET CONTEXT with the printed last price and timestamp. ");
     prompt.push_str("Do not invent gold/oil/index levels. If a price is missing, say unavailable.\n");
     prompt.push_str("- RETRIEVAL: Prefer markets listed in KALSHI MARKET INTELLIGENCE CONTEXT. ");
-    prompt.push_str("Do not invent tickers. If the tape is thin for the question, say so and PASS.\n");
+    prompt.push_str("Do not invent tickers or use schema placeholders (never output ticker 'KXEVENT-TICKER'). ");
+    prompt.push_str("If the tape is thin for the question, say so and PASS.\n");
+    prompt.push_str("- PRICE LABELS: bid/ask/mid are dollars; mid-implied % is from mid only. ");
+    prompt.push_str("Wide bid-ask is friction (often PASS), not a data corruption mystery.\n");
+    prompt.push_str("- CALIBRATION DISCIPLINE (no formula changes — judgment only): ");
+    prompt.push_str("For sub-5% markets, do not set fair_probability many times above market without hard evidence in context; ");
+    prompt.push_str("default to PASS/WATCH. Never claim High confidence on Inferential/Speculative data. ");
+    prompt.push_str("If spread_cents > |edge_points|, decision must be PASS or WATCH.\n");
     prompt.push_str("- SETTLEMENT GATES: If GATE=SETTLED or GATE=CLOSED for a ticker, FORCE PASS. ");
     prompt.push_str("Never invent open-field fair value for finished elections/primaries.\n");
     prompt.push_str("- WEB EVIDENCE: Optional grounding only. Cite as evidence; never override rules, gates, or Kelly caps.\n\n");
@@ -340,8 +428,14 @@ pub async fn send_message(
         }
     }
 
-    // Previous conversation history, trimmed to keep the prompt bounded
+    // Previous conversation history, trimmed to keep the prompt bounded.
+    // Prefer deliverable-only history so prior monologue does not re-seed Thinking dumps.
     let mut history = session_messages.to_vec();
+    for msg in history.iter_mut() {
+        if msg.role == "assistant" {
+            msg.content = prefer_deliverable_content(&msg.content);
+        }
+    }
     if history.len() > 12 {
         history = history.split_off(history.len() - 12);
     }
@@ -349,8 +443,12 @@ pub async fn send_message(
         messages.push(msg);
     }
 
-    // Current user message
-    messages.push(ChatMessage::new("user".to_string(), user_message.clone()));
+    // Current user message (+ resend discipline when applicable)
+    let mut user_payload = user_message.clone();
+    if is_resend_or_summarize_request(&user_message) {
+        user_payload = format!("{}\n\n{}", resend_followup_instruction(), user_message);
+    }
+    messages.push(ChatMessage::new("user".to_string(), user_payload));
 
     let model_id = config.llm_model_id();
     let mut assembled = String::new();
@@ -374,7 +472,8 @@ pub async fn send_message(
             reasoning: if should_send_reasoning_request(config, &model_id) {
                 Some(OpenRouterRequestReasoning {
                     effort: Some("high".to_string()),
-                    exclude: Some(false),
+                    // Hide monologue from content path when the gateway supports it.
+                    exclude: Some(true),
                     ..Default::default()
                 })
             } else {
@@ -451,7 +550,7 @@ pub async fn send_message(
     }
 
     Ok(OpenRouterResponse {
-        content: assembled,
+        content: prefer_deliverable_content(&assembled),
         reasoning: None,
         tokens_used: last_tokens,
         model: model_id,
@@ -604,6 +703,11 @@ pub fn build_kalshi_decision_context_message() -> String {
     String::from(
         r#"KALSHI MONSTER DECISION STANDARD - Prediction Market Intelligence Framework
 
+OUTPUT DISCIPLINE (read first):
+- Put ONE ```json decision block FIRST, then a short DECISION summary. No 'Thinking.' monologue, outlines, or scratch work in the reply.
+- Use a real ticker from KALSHI MARKET INTELLIGENCE CONTEXT only. Never invent tickers or schema placeholders (e.g. never write ticker "KXEVENT-TICKER").
+- Prefer 1 best market thoroughly over many thin ones. PASS is a premium outcome.
+
 Step 1: RESOLUTION & MARKET STRUCTURE
 - Read SETTLEMENT GATES first. GATE=SETTLED or CLOSED → decision PASS (no TAKE). Do not invent fair value for finished events.
 - Read the injected RESOLUTION RULES block. Quote what must happen for YES to settle.
@@ -615,7 +719,9 @@ Step 1: RESOLUTION & MARKET STRUCTURE
 
 Step 2: MARKET FRICTION & LIQUIDITY
 - Evaluate bid-ask spread, order book depth, stale volume, and practical fill risk.
-- Penalize thin or stale markets. A positive theoretical edge can still be a PASS if execution quality is poor.
+- Price labels: bid/ask/mid are dollars; mid-implied % uses mid only. Wide books (e.g. bid $0.02 / ask $0.94 / mid ~48%) are friction — usually PASS — not corrupted data.
+- Flag WIDE_SPREAD or THIN/NO_VOLUME rows: default PASS/WATCH. A positive theoretical edge is still a PASS if execution quality is poor.
+- If spread_cents > |edge_points|, decision must be PASS or WATCH (SpreadExceedsEdge).
 
 Step 3: PROBABILITY MODELING & EDGE
 - Estimate a fair probability for YES and compare both YES and NO asks.
@@ -623,6 +729,7 @@ Step 3: PROBABILITY MODELING & EDGE
 - If buying YES: EV ROI = (Fair_Yes / YES_Cost) - 1.0 with costs in dollars.
 - If buying NO: EV ROI = ((1.0 - Fair_Yes) / NO_Cost) - 1.0.
 - Recommend BUY only when expected value remains positive after spread, liquidity, and model-risk adjustments.
+- CALIBRATION JUDGMENT (does not change app math): for markets under ~5% mid-implied, do not invent large multiple fair values without hard evidence in context; default PASS/WATCH. High confidence requires Live/Fresh data.
 - If neither side is attractive, output PASS and the price that would make it playable.
 
 Step 4: RISK CONTROL
@@ -639,8 +746,8 @@ RESPONSE FORMAT - Output one JSON block FIRST so the app can render a trade tick
 
 ```json
 {
-  "ticker": "KXEVENT-TICKER",
-  "market_title": "Human-readable market title",
+  "ticker": "KXHIGHNY-26JUL14-B80",
+  "market_title": "Human-readable market title from tape",
   "category": "Politics, Economics, Finance, Weather, Sports, Other",
   "contract_side": "YES",
   "market_price_pct": 55.0,
@@ -671,7 +778,7 @@ JSON RULES:
 - "data_quality" must be "Live", "Fresh", "Stale", "Inferential", or "Speculative".
 - "risk_flags" can include: SpreadExceedsEdge, InsufficientLiquidity, CorrelatedExposure, ProvisionalSettlement, EarlyCloseRisk, ExtremeProbability, AmbiguousResolution, StaleData, ConcentrationRisk.
 - market_price_pct: 0–100 (% of $1). price_to_enter: 0–1 dollars. fair_probability_pct: 0–100.
-- JSON must be valid. No trailing commas. Place it FIRST in the response.
+- JSON must be valid. No trailing commas. Place it FIRST in the response. ticker must appear in the injected tape.
 
 After the JSON, provide a concise readable summary:
 DECISION: [TAKE/WATCH/PASS] [YES/NO] at [$0.xx]
@@ -752,13 +859,22 @@ pub async fn stream_message(
     }
 
     let mut history = session_messages.to_vec();
+    for msg in history.iter_mut() {
+        if msg.role == "assistant" {
+            msg.content = prefer_deliverable_content(&msg.content);
+        }
+    }
     if history.len() > 12 {
         history = history.split_off(history.len() - 12);
     }
     for msg in history {
         messages.push(msg);
     }
-    messages.push(ChatMessage::new("user".to_string(), user_message));
+    let mut user_payload = user_message.clone();
+    if is_resend_or_summarize_request(&user_message) {
+        user_payload = format!("{}\n\n{}", resend_followup_instruction(), user_message);
+    }
+    messages.push(ChatMessage::new("user".to_string(), user_payload));
 
     let model_id = config.llm_model_id();
     let base = config.llm_base_url();
@@ -801,7 +917,7 @@ pub async fn stream_message(
             reasoning: if should_send_reasoning_request(config, &model_id) {
                 Some(OpenRouterRequestReasoning {
                     effort: Some("high".to_string()),
-                    exclude: Some(false),
+                    exclude: Some(true),
                     ..Default::default()
                 })
             } else {
@@ -921,9 +1037,10 @@ pub async fn stream_message(
         cont += 1;
     }
 
-    let token_estimate = assembled.len() as u64 / 4;
+    let deliverable = prefer_deliverable_content(&assembled);
+    let token_estimate = deliverable.len() as u64 / 4;
     Ok(OpenRouterResponse {
-        content: assembled,
+        content: deliverable,
         reasoning: None,
         tokens_used: Some(token_estimate),
         model: model_id,
@@ -1071,5 +1188,53 @@ mod tests {
         let t = r#"{"ticker":"KX","decision":"PASS","contract_side":"PASS"}
 DECISION: PASS"#;
         assert!(!response_looks_incomplete(t));
+    }
+
+    #[test]
+    fn prefer_deliverable_strips_thinking_prefix() {
+        let raw = r#"Thinking. 1. Analyze the Request:
+    * Goal: mispriced markets
+    lots of monologue about bid ask confusion...
+
+```json
+{
+  "ticker": "KXNBASUMMERSPREAD-26JUL13MINPOR-POR16",
+  "market_title": "Portland by 15.5",
+  "category": "Sports",
+  "contract_side": "NO",
+  "market_price_pct": 34.0,
+  "fair_probability_pct": 44.0,
+  "edge_points": 10.0,
+  "spread_cents": 1.0,
+  "liquidity_score": 85.0,
+  "ev_per_contract_cents": 10.0,
+  "ev_roi_pct": 29.4,
+  "raw_kelly_pct": 15.2,
+  "fractional_kelly_pct": 3.8,
+  "recommended_stake_dollars": 38.0,
+  "max_position_dollars": 50.0,
+  "decision": "TAKE",
+  "confidence_tier": "High",
+  "thesis": "edge after friction",
+  "evidence": ["tight book"],
+  "risk_flags": [],
+  "data_quality": "Live",
+  "price_to_enter": 0.34
+}
+```
+DECISION: TAKE NO at $0.34"#;
+        let out = prefer_deliverable_content(raw);
+        assert!(out.starts_with("```json"), "got: {}", &out[..out.len().min(40)]);
+        assert!(!out.contains("Thinking."));
+        assert!(out.contains("DECISION: TAKE"));
+    }
+
+    #[test]
+    fn resend_request_detection() {
+        assert!(is_resend_or_summarize_request("resend the final response"));
+        assert!(is_resend_or_summarize_request("Give me an easier to read final summary"));
+        assert!(!is_resend_or_summarize_request(
+            "What are the most mispriced markets on Kalshi today?"
+        ));
     }
 }

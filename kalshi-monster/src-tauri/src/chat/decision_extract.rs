@@ -208,20 +208,38 @@ pub fn parse_kalshi_trade_decision(json: &str) -> Result<KalshiTradeDecision, De
     // Normalize units and cap sizing before any downstream use. Use conservative
     // defaults; the UI/command path can re-sanitize with the user's actual bankroll.
     decision.sanitize_units_and_caps(10_000.0, 0.25, 0.05);
+    // Quality rails (no math changes): placeholder tickers, spread>edge, longshot multiplies.
+    decision.enforce_prediction_quality_rails();
+    if KalshiTradeDecision::is_placeholder_ticker(&decision.ticker) {
+        return Err(DecisionExtractError::NotAKalshiDecision);
+    }
     Ok(decision)
 }
 
-/// Convenience: scan `text` for the first valid Kalshi trade decision.
+/// Convenience: scan `text` for the best valid Kalshi trade decision.
+///
+/// Free models often emit several JSON revisions after a monologue. Prefer the
+/// **last** valid non-placeholder decision (refined ticket) rather than the first
+/// scratch copy that may still use schema examples.
 pub fn find_kalshi_decision_in_text(text: &str) -> Result<KalshiTradeDecision, DecisionExtractError> {
+    let mut last_ok: Option<KalshiTradeDecision> = None;
+    let mut last_err = DecisionExtractError::NoJsonObject;
     for candidate in extract_json_candidates(text) {
         match parse_kalshi_trade_decision(&candidate) {
-            Ok(d) => return Ok(d),
+            Ok(d) => {
+                last_ok = Some(d);
+            }
             Err(e) => {
-                tracing::debug!("kalshi decision candidate failed: {} | json: {}", e, candidate.chars().take(200).collect::<String>());
+                last_err = e.clone();
+                tracing::debug!(
+                    "kalshi decision candidate failed: {} | json: {}",
+                    e,
+                    candidate.chars().take(200).collect::<String>()
+                );
             }
         }
     }
-    Err(DecisionExtractError::NoJsonObject)
+    last_ok.ok_or(last_err)
 }
 
 /// Parse a decision that was stored as a plain JSON blob (e.g. from the database).
@@ -245,6 +263,10 @@ pub fn parse_kalshi_trade_decision_from_value(val: &Value) -> Result<KalshiTrade
         return Err(DecisionExtractError::MissingTicker);
     }
     decision.sanitize_units_and_caps(10_000.0, 0.25, 0.05);
+    decision.enforce_prediction_quality_rails();
+    if KalshiTradeDecision::is_placeholder_ticker(&decision.ticker) {
+        return Err(DecisionExtractError::NotAKalshiDecision);
+    }
     Ok(decision)
 }
 
@@ -370,5 +392,48 @@ mod tests {
         json = json.replace("\"fractional_kelly_pct\": 2.8", "\"fractional_kelly_pct\": 99.8");
         let d = parse_kalshi_trade_decision(&json).unwrap();
         assert!(d.fractional_kelly_pct <= 5.0 + 1e-9);
+    }
+
+    #[test]
+    fn rejects_placeholder_schema_ticker() {
+        let mut json = minimal_valid();
+        json = json.replace("KXTEST-1", "KXEVENT-TICKER");
+        let err = parse_kalshi_trade_decision(&json).unwrap_err();
+        assert!(matches!(err, DecisionExtractError::NotAKalshiDecision));
+    }
+
+    #[test]
+    fn prefers_last_valid_decision_block() {
+        let first = r#"```json
+{
+  "ticker": "KXEVENT-TICKER",
+  "market_title": "placeholder",
+  "category": "Other",
+  "contract_side": "YES",
+  "market_price_pct": 50.0,
+  "fair_probability_pct": 60.0,
+  "edge_points": 10.0,
+  "spread_cents": 1.0,
+  "liquidity_score": 80.0,
+  "ev_per_contract_cents": 10.0,
+  "ev_roi_pct": 20.0,
+  "raw_kelly_pct": 20.0,
+  "fractional_kelly_pct": 5.0,
+  "recommended_stake_dollars": 50.0,
+  "max_position_dollars": 50.0,
+  "decision": "TAKE",
+  "confidence_tier": "High",
+  "thesis": "bad",
+  "evidence": [],
+  "risk_flags": [],
+  "data_quality": "Live",
+  "price_to_enter": 0.5,
+  "model_disagreement": false
+}
+```"#;
+        let second = minimal_valid();
+        let text = format!("{first}\n\n```json\n{second}\n```");
+        let d = find_kalshi_decision_in_text(&text).unwrap();
+        assert_eq!(d.ticker, "KXTEST-1");
     }
 }
