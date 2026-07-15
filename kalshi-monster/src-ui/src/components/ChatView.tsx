@@ -1,10 +1,15 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { useChat } from '../hooks/useChat';
 import { kalshiApi } from '../services/kalshi';
-import { finceptApi } from '../services/tauri';
+import { bankrollApi, configApi, finceptApi } from '../services/tauri';
 import type { ChatMessage } from '../types';
 import type { KalshiCategoryStat } from '../types/kalshi';
-import { extractPaperDecision, preferDeliverableContent } from '../utils/paperFromChat';
+import {
+  extractPaperDecision,
+  preferDeliverableContent,
+  type SizingPolicy,
+} from '../utils/paperFromChat';
+import { notifyPaperUpdated } from '../utils/paperEvents';
 
 const FALLBACK_PROMPTS = [
   {
@@ -79,8 +84,28 @@ export function ChatView({
   const [deepBusy, setDeepBusy] = useState(false);
   const [deepMsg, setDeepMsg] = useState<string | null>(null);
   const [lastOpining, setLastOpining] = useState<number | null>(null);
+  const [paperSizingPolicy, setPaperSizingPolicy] = useState<SizingPolicy>({});
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([bankrollApi.getConfig(), configApi.get()])
+      .then(([bankroll, appConfig]) => {
+        if (cancelled) return;
+        setPaperSizingPolicy({
+          bankrollDollars: bankroll.total_bankroll,
+          kellyFraction: bankroll.kelly_fraction,
+          maxBetPct: appConfig.max_bet_pct ?? bankroll.max_bet_pct,
+        });
+      })
+      .catch(() => {
+        if (!cancelled) setPaperSizingPolicy({});
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     void initSession().then(() => refreshSessions());
@@ -190,13 +215,30 @@ export function ChatView({
   };
 
   const recordPaper = async (message: ChatMessage) => {
-    const decision = extractPaperDecision(message.content, {
-      ticker: activeContext?.ticker,
-      title: activeContext?.title,
-    });
+    const decision = extractPaperDecision(
+      message.content,
+      {
+        ticker: activeContext?.ticker,
+        title: activeContext?.title,
+      },
+      paperSizingPolicy,
+    );
     if (!decision) {
       setPaperMsg('Could not parse a YES/NO decision + ticker from this reply. Ask the model for a structured JSON decision.');
       return;
+    }
+    const bankroll = paperSizingPolicy.bankrollDollars ?? 0;
+    const maxPct = paperSizingPolicy.maxBetPct ?? 0.05;
+    const stake = decision.recommended_stake_dollars ?? 0;
+    const largeStake =
+      decision.decision === 'TAKE' &&
+      stake > 0 &&
+      (stake >= 250 || (bankroll > 0 && stake >= bankroll * maxPct * 0.75));
+    if (largeStake) {
+      const ok = window.confirm(
+        `Record paper TAKE on ${decision.ticker} with ~$${stake.toFixed(0)} stake? (Sized from bankroll.json caps — paper cash must cover the lot.)`,
+      );
+      if (!ok) return;
     }
     setPaperBusy(message.id);
     setPaperMsg(null);
@@ -212,6 +254,7 @@ export function ChatView({
           ? `Paper TAKE ${res.contract_side} ${res.ticker} @ $${res.price_to_enter.toFixed(2)} · stake ~$${res.stake.toFixed(0)} · lot ${res.lot_id?.slice(0, 8) ?? 'opened'} (pred ${idShort}…). Auto-settles when Kalshi resolves.${notes}`
           : `Logged ${res.final_decision} on ${res.ticker} (pred ${idShort}…) — journal only, no cash lot.${notes}`,
       );
+      notifyPaperUpdated();
     } catch (e) {
       setPaperMsg(e instanceof Error ? e.message : String(e));
     } finally {
@@ -439,6 +482,7 @@ export function ChatView({
               key={msg.id}
               message={msg}
               paperBusy={paperBusy === msg.id}
+              paperSizingPolicy={paperSizingPolicy}
               onRecordPaper={msg.role === 'assistant' ? () => void recordPaper(msg) : undefined}
             />
           ))}
@@ -545,10 +589,12 @@ function MessageBubble({
   message,
   onRecordPaper,
   paperBusy,
+  paperSizingPolicy,
 }: {
   message: ChatMessage;
   onRecordPaper?: () => void;
   paperBusy?: boolean;
+  paperSizingPolicy?: SizingPolicy;
 }) {
   const isUser = message.role === 'user';
   // Some models (OpenCode free/thinking) return only reasoning — never hide that.
@@ -559,7 +605,10 @@ function MessageBubble({
     !isUser && body !== rawBody && rawBody.length > body.length + 200;
   const hasSeparateReasoning =
     Boolean(message.reasoning?.trim()) && Boolean(message.content?.trim());
-  const canPaper = !isUser && onRecordPaper && extractPaperDecision(body) != null;
+  const canPaper =
+    !isUser &&
+    onRecordPaper &&
+    extractPaperDecision(body, undefined, paperSizingPolicy) != null;
 
   return (
     <div className={`messageBubble ${isUser ? 'userBubble' : 'assistantBubble'}`}>

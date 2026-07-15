@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { kalshiApi } from '../services/kalshi';
 import type { KalshiPrediction, PaperAnalytics, PaperPosition } from '../types/kalshi';
 import { kalshiBetWon } from '../types/kalshi';
+import { KALSHI_PAPER_UPDATED } from '../utils/paperEvents';
 
 function formatDollars(value?: number | null): string {
   if (value == null || !Number.isFinite(value)) return '-';
@@ -22,18 +23,27 @@ export function KalshiPredictionsPanel() {
   const [settling, setSettling] = useState(false);
   const [resetting, setResetting] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [analyticsError, setAnalyticsError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
+    setAnalyticsError(null);
     try {
-      const [data, paper, openPositions] = await Promise.all([
-        kalshiApi.getPredictions(),
-        kalshiApi.getPaperAnalytics().catch(() => null),
-        kalshiApi.getPaperPositions().catch(() => []),
-      ]);
+      const data = await kalshiApi.getPredictions();
       setPredictions(data);
-      setAnalytics(paper);
-      setPositions(openPositions);
+      try {
+        const paper = await kalshiApi.getPaperAnalytics();
+        setAnalytics(paper);
+      } catch (e) {
+        setAnalytics(null);
+        setAnalyticsError(e instanceof Error ? e.message : String(e));
+      }
+      try {
+        const openPositions = await kalshiApi.getPaperPositions();
+        setPositions(openPositions);
+      } catch {
+        setPositions([]);
+      }
     } catch (e) {
       setMessage(e instanceof Error ? e.message : String(e));
     } finally {
@@ -43,6 +53,14 @@ export function KalshiPredictionsPanel() {
 
   useEffect(() => {
     void load();
+  }, [load]);
+
+  useEffect(() => {
+    const onPaperUpdated = () => {
+      void load();
+    };
+    window.addEventListener(KALSHI_PAPER_UPDATED, onPaperUpdated);
+    return () => window.removeEventListener(KALSHI_PAPER_UPDATED, onPaperUpdated);
   }, [load]);
 
   const gradePending = async () => {
@@ -107,6 +125,21 @@ export function KalshiPredictionsPanel() {
           {resetting ? 'Resetting...' : 'Reset paper'}
         </button>
       </div>
+
+      <p className="muted small paperLedgerNote">
+        <strong>Cash</strong> (SQLite <code>paper_account</code>) debits when you open TAKE lots.{' '}
+        <strong>Kelly caps</strong> use <code>bankroll.json</code> in Settings — not the same number as paper cash.
+      </p>
+      <p className="muted small">
+        <strong>Grade pending</strong> — score prediction journal rows for calibration / ML when Kalshi has settled.{' '}
+        <strong>Settle paper</strong> — close open paper lots and credit cash (auto-grade also runs this in the background).
+      </p>
+
+      {analyticsError && !analytics && (
+        <div className="banner error" role="alert">
+          Paper analytics unavailable: {analyticsError}
+        </div>
+      )}
 
       {analytics && (
         <div className="paperSummary">

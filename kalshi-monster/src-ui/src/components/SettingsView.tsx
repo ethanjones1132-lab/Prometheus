@@ -462,6 +462,11 @@ export function SettingsView() {
 
       <div className="card settingsWide">
         <h3>Bankroll & cap sync</h3>
+        <p className="muted" style={{ marginTop: 0 }}>
+          Kelly sizing and daily/weekly caps read <code>bankroll.json</code> (local file under{' '}
+          <code>.openclaw/kalshi-monster</code>). Paper <strong>cash</strong> lives in SQLite and is shown on the Paper
+          portfolio tab — keep both in mind when stakes look capped but cash is low.
+        </p>
         {bankrollLoading ? (
           <div className="state">Loading bankroll sync…</div>
         ) : bankrollError ? (

@@ -54,6 +54,26 @@ vi.mock('../services/kalshi', () => ({
 }));
 
 vi.mock('../services/tauri', () => ({
+  bankrollApi: {
+    getConfig: vi.fn().mockResolvedValue({
+      total_bankroll: 1000,
+      initial_bankroll: 1000,
+      kelly_fraction: 0.25,
+      max_bet_pct: 0.05,
+      min_bet: 5,
+      default_odds: -110,
+      strategy: 'Kelly',
+      player_risk_multipliers: {},
+      daily_bet_limit: 200,
+      weekly_bet_limit: 500,
+      historical_brier: 0,
+    }),
+  },
+  configApi: {
+    get: vi.fn().mockResolvedValue({
+      max_bet_pct: 0.05,
+    }),
+  },
   finceptApi: {
     getBridgeStatus: vi.fn().mockResolvedValue({
       online: true,
