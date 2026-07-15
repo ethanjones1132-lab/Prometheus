@@ -119,6 +119,28 @@ pub struct PaperPosition {
     pub lots_count: i64,
 }
 
+/// Structured result of `kalshi_record_paper_decision` (Sprint 0.1).
+/// Lets the UI show whether a cash lot opened vs journal-only, and any demotions.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PaperRecordResult {
+    pub prediction_id: String,
+    /// True only when a `paper_lots` row was opened and cash was debited.
+    pub lot_opened: bool,
+    /// Optional lot id when `lot_opened`.
+    pub lot_id: Option<String>,
+    /// Final decision after rails/gates (TAKE / WATCH / PASS).
+    pub final_decision: String,
+    pub contract_side: String,
+    pub ticker: String,
+    /// Final recommended stake after caps/breakers (0 if no lot).
+    pub stake: f64,
+    pub price_to_enter: f64,
+    /// Human-readable demotion / rail notes for the UI.
+    pub demotion_notes: Vec<String>,
+    /// True when breakers blocked opening a new lot (daily pause / hard disable).
+    pub paper_lots_blocked: bool,
+}
+
 /// Result of a settlement run.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PaperSettlementSummary {
@@ -499,12 +521,12 @@ pub struct PaperDecisionContext {
 }
 
 /// Atomically record a paper decision: prediction, forecast, edge-field update,
-/// and (if not PASS) paper lot + balance change all commit together.
-/// Returns the prediction id.
+/// and (if TAKE) paper lot + balance change all commit together.
+/// Returns prediction id and optional opened lot id.
 pub async fn record_paper_decision(
     pool: &Pool<Sqlite>,
     ctx: PaperDecisionContext,
-) -> Result<String, String> {
+) -> Result<(String, Option<String>), String> {
     let prediction_id = ctx.prediction.prediction.id.clone();
     let breakdown_slice = ctx.agent_breakdown.as_deref();
     let fee_multiplier = edge_fee_multiplier(pool).await;
@@ -552,25 +574,26 @@ pub async fn record_paper_decision(
     .map_err(|e| format!("prediction edge update: {e}"))?;
 
     // 4. Optional paper lot (PASS/WATCH do not open a position).
+    let mut opened_lot_id: Option<String> = None;
     if let Some(mut input) = ctx.trade_input {
         // Always link the lot to this prediction for settle → grade sync.
         if input.prediction_id.is_none() {
             input.prediction_id = Some(prediction_id.clone());
         }
-        place_trade_tx(&mut txn, &input, fee_multiplier)
+        let lot = place_trade_tx(&mut txn, &input, fee_multiplier)
             .await
             .map_err(|e| format!("paper lot: {e}"))?;
+        opened_lot_id = Some(lot.id);
     }
 
     txn.commit()
         .await
         .map_err(|e| format!("commit paper decision: {e}"))?;
 
-    // Equity snapshot is recorded after commit because it requires a
-    // mark-to-market read that should not hold the write transaction open.
+    // Equity snapshot after commit — cost-basis fallback when no live marks.
     record_equity_snapshot(pool, None).await.ok();
 
-    Ok(prediction_id)
+    Ok((prediction_id, opened_lot_id))
 }
 
 /// Exit price in cents for the *held side* given Kalshi YES/NO settlement.
@@ -1056,10 +1079,11 @@ pub async fn get_analytics(
     } else {
         0.0
     };
+    // Cap PF so JSON never emits Infinity (breaks serde_json / UI).
     let profit_factor = if gross_losses > 0.0 {
         gross_wins / gross_losses
     } else if gross_wins > 0.0 {
-        f64::INFINITY
+        999.0
     } else {
         0.0
     };
@@ -1070,11 +1094,11 @@ pub async fn get_analytics(
     let positions = aggregate_positions(pool, client).await?;
     let open_market_value: f64 = positions
         .iter()
-        .filter_map(|p| p.market_value_dollars)
+        .map(|p| p.market_value_dollars.unwrap_or(p.cost_basis_dollars))
         .sum();
     let unrealized_pnl: f64 = positions
         .iter()
-        .filter_map(|p| p.unrealized_pnl_dollars)
+        .map(|p| p.unrealized_pnl_dollars.unwrap_or(0.0))
         .sum();
 
     let equity = account.balance_dollars + open_market_value;
@@ -1149,13 +1173,20 @@ pub async fn record_equity_snapshot(
 ) -> Result<(), String> {
     let account = get_account(pool).await?;
     let positions = aggregate_positions(pool, client).await?;
+    // Sprint 0.3: never treat open inventory as $0 MV when marks are missing —
+    // fall back to cost basis so post-open equity ≈ cash + open cost (not fake DD).
     let open_market_value: f64 = positions
         .iter()
-        .filter_map(|p| p.market_value_dollars)
+        .map(|p| p.market_value_dollars.unwrap_or(p.cost_basis_dollars))
         .sum();
     let unrealized: f64 = positions
         .iter()
-        .filter_map(|p| p.unrealized_pnl_dollars)
+        .map(|p| {
+            p.unrealized_pnl_dollars.unwrap_or_else(|| {
+                // When MV fell back to cost basis, unrealized is ~0 before fees nuance.
+                0.0
+            })
+        })
         .sum();
     let equity = account.balance_dollars + open_market_value;
 
@@ -1467,6 +1498,42 @@ mod tests {
         let expected_balance = if successes == 1 { 10_000.0 - total_cost } else { 10000.0 };
         assert!((account.balance_dollars - expected_balance).abs() < 0.001);
         assert_eq!(lots.len(), successes);
+    }
+
+    #[tokio::test]
+    async fn equity_snapshot_uses_cost_basis_when_no_marks() {
+        let pool = Pool::<Sqlite>::connect("sqlite::memory:").await.unwrap();
+        init_paper_tables(&pool).await.unwrap();
+        let input = PaperTradeInput {
+            ticker: "KXTEST-EQ".into(),
+            title: "Eq".into(),
+            category: "Other".into(),
+            side: "YES".into(),
+            qty: 100.0,
+            entry_price_cents: 50.0,
+            source: PaperTradeSource::Manual,
+            decision_json: None,
+            prediction_id: None,
+        };
+        let lot = place_trade(&pool, input).await.unwrap();
+        // place_trade already recorded a snapshot with cost-basis fallback
+        let snaps = get_equity_snapshots(&pool, 5).await.unwrap();
+        assert!(!snaps.is_empty());
+        let s = &snaps[0];
+        // Cash debited by stake; open MV should be ~cost basis, not zero
+        assert!(
+            s.open_market_value > 0.0,
+            "expected cost-basis open MV > 0, got {}",
+            s.open_market_value
+        );
+        // Equity ≈ starting balance minus fee (not cash-only crash)
+        assert!(
+            s.equity_dollars > s.balance_dollars,
+            "equity {} should exceed cash {} when open inventory valued",
+            s.equity_dollars,
+            s.balance_dollars
+        );
+        assert!(lot.stake_dollars > 0.0);
     }
 
     #[test]

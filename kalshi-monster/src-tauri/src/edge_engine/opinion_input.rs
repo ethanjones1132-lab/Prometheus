@@ -22,17 +22,72 @@ pub fn infer_underlying_and_strike(
 ) -> (Option<String>, Option<f64>) {
     let hay = format!("{market_ticker} {title} {rules}").to_uppercase();
     let underlying = infer_underlying_ticker(&hay, market_ticker);
-    let strike = infer_strike_from_text(&format!("{title} {rules}"));
+    let strike = infer_strike_from_ticker(market_ticker)
+        .or_else(|| infer_strike_from_text(&format!("{title} {rules}")));
     (underlying, strike)
 }
 
+/// Horizon in days from close_time ISO string (fractional OK). None if past/invalid.
+pub fn horizon_days_from_close(close_time: &str) -> Option<f64> {
+    let close = chrono::DateTime::parse_from_rfc3339(close_time)
+        .ok()
+        .map(|d| d.with_timezone(&chrono::Utc))
+        .or_else(|| {
+            chrono::NaiveDateTime::parse_from_str(close_time, "%Y-%m-%dT%H:%M:%S%.fZ")
+                .ok()
+                .map(|n| n.and_utc())
+        })
+        .or_else(|| {
+            chrono::NaiveDateTime::parse_from_str(close_time, "%Y-%m-%dT%H:%M:%SZ")
+                .ok()
+                .map(|n| n.and_utc())
+        })?;
+    let secs = (close - chrono::Utc::now()).num_seconds();
+    if secs <= 0 {
+        return None;
+    }
+    Some(secs as f64 / 86_400.0)
+}
+
 fn infer_underlying_ticker(hay: &str, market_ticker: &str) -> Option<String> {
-    // Series prefixes first (Kalshi naming).
+    // Series prefixes first (Kalshi naming — Sprint 1.1).
     let t = market_ticker.to_uppercase();
-    if t.starts_with("KXBTCD") || t.starts_with("KXBTC") || t.contains("BITCOIN") {
+    let series: &[(&str, &str)] = &[
+        ("KXBTCD", "BTC-USD"),
+        ("KXBTC", "BTC-USD"),
+        ("KXETHD", "ETH-USD"),
+        ("KXETH", "ETH-USD"),
+        ("KXSOL", "SOL-USD"),
+        ("KXXRP", "XRP-USD"),
+        ("KXINX", "^GSPC"),
+        ("INXD", "^GSPC"),
+        ("KXNASDAQ", "^NDX"),
+        ("NASDAQ100", "^NDX"),
+        ("KXNDX", "^NDX"),
+        ("KXRUT", "^RUT"),
+        ("KXGOLD", "GC=F"),
+        ("KXSILVER", "SI=F"),
+        ("KXWTI", "CL=F"),
+        ("KXOIL", "CL=F"),
+        ("KXEURUSD", "EURUSD=X"),
+        ("KXDXY", "DX-Y.NYB"),
+        ("KXAAPL", "AAPL"),
+        ("KXTSLA", "TSLA"),
+        ("KXNVDA", "NVDA"),
+        ("KXMSFT", "MSFT"),
+        ("KXAMZN", "AMZN"),
+        ("KXGOOG", "GOOGL"),
+        ("KXMETA", "META"),
+    ];
+    for (prefix, yf) in series {
+        if t.starts_with(prefix) || t.contains(prefix) {
+            return Some((*yf).into());
+        }
+    }
+    if t.contains("BITCOIN") {
         return Some("BTC-USD".into());
     }
-    if t.starts_with("KXETHD") || t.starts_with("KXETH") || t.contains("ETHEREUM") {
+    if t.contains("ETHEREUM") {
         return Some("ETH-USD".into());
     }
     if t.contains("INX") || t.contains("SPX") || t.contains("SPY") {
@@ -49,9 +104,13 @@ fn infer_underlying_ticker(hay: &str, market_ticker: &str) -> Option<String> {
         ("NASDAQ-100", "^NDX"),
         ("BITCOIN", "BTC-USD"),
         ("ETHEREUM", "ETH-USD"),
+        ("SOLANA", "SOL-USD"),
+        ("RUSSELL 2000", "^RUT"),
         ("RUSSELL", "^RUT"),
         ("NASDAQ", "^IXIC"),
+        ("CRUDE OIL", "CL=F"),
         ("GOLD", "GC=F"),
+        ("SILVER", "SI=F"),
         ("WTI", "CL=F"),
         ("OIL", "CL=F"),
         ("SPX", "^GSPC"),
@@ -63,6 +122,7 @@ fn infer_underlying_ticker(hay: &str, market_ticker: &str) -> Option<String> {
         ("IWM", "IWM"),
         ("BTC", "BTC-USD"),
         ("ETH", "ETH-USD"),
+        ("SOL", "SOL-USD"),
         ("AAPL", "AAPL"),
         ("TSLA", "TSLA"),
         ("MSFT", "MSFT"),
@@ -73,7 +133,18 @@ fn infer_underlying_ticker(hay: &str, market_ticker: &str) -> Option<String> {
     ];
     let mut best: Option<(usize, &str)> = None;
     for (token, yf) in pairs {
-        if let Some(idx) = hay.find(&token.to_uppercase()) {
+        let tok = token.to_uppercase();
+        // Short alpha tokens (BTC, ETH, SOL) need word boundaries so
+        // "something" does not match ETH.
+        let matched = if tok.len() <= 4 && tok.chars().all(|c| c.is_ascii_alphabetic()) {
+            let re = format!(r"(?i)\b{}\b", regex::escape(&tok));
+            regex::Regex::new(&re)
+                .ok()
+                .and_then(|r| r.find(&hay).map(|m| m.start()))
+        } else {
+            hay.find(&tok)
+        };
+        if let Some(idx) = matched {
             let score = token.len() * 1000 + (1000 - idx.min(999));
             if best.map(|(s, _)| score > s).unwrap_or(true) {
                 best = Some((score, yf));
@@ -83,12 +154,26 @@ fn infer_underlying_ticker(hay: &str, market_ticker: &str) -> Option<String> {
     best.map(|(_, yf)| yf.to_string())
 }
 
+/// Kalshi barrier tickers often encode strike as `-B95000` / `-T100000`.
+fn infer_strike_from_ticker(market_ticker: &str) -> Option<f64> {
+    let re = regex::Regex::new(r"(?i)[-_](?:B|T|C)(\d{3,7})(?:\b|$)").ok()?;
+    if let Some(caps) = re.captures(market_ticker) {
+        let cleaned = caps.get(1)?.as_str();
+        if let Ok(v) = cleaned.parse::<f64>() {
+            if v > 0.0 {
+                return Some(v);
+            }
+        }
+    }
+    None
+}
+
 fn infer_strike_from_text(text: &str) -> Option<f64> {
     // Number token: 5500 | 5,500 | 100,000 | 100000.5
     let num = r"([0-9]{1,3}(?:,[0-9]{3})+|[0-9]+(?:\.[0-9]+)?)";
     let patterns = [
-        format!(r"(?i)(?:above|over|exceed(?:s|ing)?|greater than|>\s*)\$?\s*{num}"),
-        format!(r"(?i)(?:close\s+(?:at|above)|settle\s+above)\s+\$?\s*{num}"),
+        format!(r"(?i)(?:above|over|exceed(?:s|ing)?|greater than|at least|below|under|less than|<\s*)\$?\s*{num}"),
+        format!(r"(?i)(?:close\s+(?:at|above|below)|settle\s+(?:above|below))\s+\$?\s*{num}"),
         format!(r"(?i)\$\s*{num}"),
     ];
     for pat in patterns {
@@ -172,9 +257,11 @@ pub fn analyze_input_from_market(
     let close_time = market
         .close_time
         .clone()
+        .or_else(|| market.expiration_time.clone())
         .unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
     let (underlying_ticker, strike) =
         infer_underlying_and_strike(&market.ticker, &title, &rules);
+    let horizon_days = horizon_days_from_close(&close_time);
 
     let mut flags = flags;
     if contract_mids.is_empty() {
@@ -182,6 +269,12 @@ pub fn analyze_input_from_market(
     }
     if underlying_ticker.is_some() {
         flags.push("underlying_inferred".into());
+    }
+    if strike.is_some() {
+        flags.push("strike_inferred".into());
+    }
+    if horizon_days.is_some() {
+        flags.push("horizon_from_close".into());
     }
 
     AnalyzeMarketInput {
@@ -195,6 +288,8 @@ pub fn analyze_input_from_market(
         contract_mids,
         underlying_ticker,
         strike,
+        horizon_days,
+        web_snippets: Vec::new(),
         flags,
     }
 }
@@ -264,8 +359,16 @@ mod tests {
 
     #[test]
     fn infers_btc_from_ticker() {
-        let (u, _) = infer_underlying_and_strike("KXBTCD-26JUL15-B100000", "Bitcoin above", "");
+        let (u, k) = infer_underlying_and_strike("KXBTCD-26JUL15-B100000", "Bitcoin above", "");
         assert_eq!(u.as_deref(), Some("BTC-USD"));
+        assert_eq!(k, Some(100_000.0));
+    }
+
+    #[test]
+    fn infers_eth_series_prefix() {
+        let (u, k) = infer_underlying_and_strike("KXETHD-26JUL15-T3500", "ETH above 3500", "");
+        assert_eq!(u.as_deref(), Some("ETH-USD"));
+        assert_eq!(k, Some(3500.0));
     }
 
     #[test]
@@ -285,6 +388,13 @@ mod tests {
         let k = infer_strike_from_text("Will Bitcoin be above $100,000 on July 15?");
         assert!(k.is_some());
         assert!((k.unwrap() - 100_000.0).abs() < 1.0);
+    }
+
+    #[test]
+    fn horizon_days_future_close() {
+        let future = (chrono::Utc::now() + chrono::Duration::days(3)).to_rfc3339();
+        let h = horizon_days_from_close(&future).expect("horizon");
+        assert!(h > 2.0 && h < 4.0, "got {h}");
     }
 
     #[test]

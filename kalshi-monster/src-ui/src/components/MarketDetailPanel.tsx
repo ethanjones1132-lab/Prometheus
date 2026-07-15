@@ -244,8 +244,17 @@ export function MarketDetailPanel({ market, onClose, onAnalyzeMarket }: Props) {
     setMessage(null);
     try {
       const decision = buildDecision(side, action);
-      const id = await kalshiApi.recordPaperDecision('paper-sim', decision);
-      setMessage(`${action === 'TAKE' ? 'Paper trade' : action} recorded (${id.slice(0, 8)}...)`);
+      const res = await kalshiApi.recordPaperDecision('paper-sim', decision);
+      const idShort = res.prediction_id.slice(0, 8);
+      const notes =
+        res.demotion_notes?.length > 0
+          ? ` — ${res.demotion_notes.slice(0, 2).join('; ')}`
+          : '';
+      setMessage(
+        res.lot_opened
+          ? `Paper lot opened: ${res.contract_side} ${res.ticker} ~$${res.stake.toFixed(0)} (pred ${idShort}…)${notes}`
+          : `${res.final_decision} logged on ${res.ticker} (pred ${idShort}…) — no cash lot${notes}`,
+      );
     } catch (e) {
       setMessage(e instanceof Error ? e.message : String(e));
     } finally {

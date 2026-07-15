@@ -113,7 +113,18 @@ describe('MarketDetailPanel', () => {
       ticker: market.ticker,
       snapshots: [],
     });
-    vi.mocked(kalshiApi.recordPaperDecision).mockResolvedValue('paper-123');
+    vi.mocked(kalshiApi.recordPaperDecision).mockResolvedValue({
+      prediction_id: 'paper-123',
+      lot_opened: true,
+      lot_id: 'lot-abc',
+      final_decision: 'TAKE',
+      contract_side: 'YES',
+      ticker: market.ticker,
+      stake: 25,
+      price_to_enter: 0.55,
+      demotion_notes: [],
+      paper_lots_blocked: false,
+    });
     vi.mocked(kalshiApi.analyzeMarketEdge).mockResolvedValue({
       forecast_id: 42,
       market_ticker: market.ticker,

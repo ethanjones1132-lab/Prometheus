@@ -16,6 +16,7 @@ import type {
   PaperAccount,
   PaperAnalytics,
   PaperPosition,
+  PaperRecordResult,
   PaperSettlementSummary,
   StakeAdjustment,
 } from '../types/kalshi';
@@ -86,9 +87,10 @@ export const kalshiApi = {
   analyzeMarketEdge: (ticker: string) =>
     invoke<EdgeAnalysisResult>('kalshi_analyze_market_edge', { ticker }),
 
-  analyzeTopMarketsEdge: (limit?: number) =>
+  analyzeTopMarketsEdge: (limit?: number, deep?: boolean) =>
     invoke<EdgeAnalysisResult[]>('kalshi_analyze_top_markets_edge', {
       limit: limit ?? 10,
+      deep: deep ?? false,
     }),
 
   resolvePendingForecasts: () => invoke<number>('kalshi_resolve_pending_forecasts'),
@@ -130,7 +132,10 @@ export const kalshiApi = {
     invoke<KalshiPriceHistory>('kalshi_get_price_history', { ticker, limit: limit ?? 200 }),
 
   recordPaperDecision: (sessionId: string, decision: KalshiTradeDecision) =>
-    invoke<string>('kalshi_record_paper_decision', { sessionId, decision }),
+    invoke<PaperRecordResult>('kalshi_record_paper_decision', {
+      sessionId,
+      decision,
+    }),
 
   getPaperAnalytics: () => invoke<PaperAnalytics>('paper_get_analytics'),
 

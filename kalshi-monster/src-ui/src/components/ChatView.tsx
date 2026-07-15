@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { useChat } from '../hooks/useChat';
 import { kalshiApi } from '../services/kalshi';
+import { finceptApi } from '../services/tauri';
 import type { ChatMessage } from '../types';
 import type { KalshiCategoryStat } from '../types/kalshi';
 import { extractPaperDecision, preferDeliverableContent } from '../utils/paperFromChat';
@@ -74,6 +75,10 @@ export function ChatView({
   const [paperMsg, setPaperMsg] = useState<string | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState('');
+  const [sidecarOnline, setSidecarOnline] = useState<boolean | null>(null);
+  const [deepBusy, setDeepBusy] = useState(false);
+  const [deepMsg, setDeepMsg] = useState<string | null>(null);
+  const [lastOpining, setLastOpining] = useState<number | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -112,6 +117,45 @@ export function ChatView({
       cancelled = true;
     };
   }, [kalshiContextStatus?.tape_market_count]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const poll = () => {
+      finceptApi
+        .getBridgeStatus()
+        .then((st) => {
+          if (!cancelled) setSidecarOnline(st.online);
+        })
+        .catch(() => {
+          if (!cancelled) setSidecarOnline(false);
+        });
+    };
+    poll();
+    const id = window.setInterval(poll, 15_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, []);
+
+  const deepAnalyzeTop3 = async () => {
+    setDeepBusy(true);
+    setDeepMsg(null);
+    try {
+      const rows = await kalshiApi.analyzeTopMarketsEdge(3, true);
+      const opining = rows.reduce((n, r) => n + (r.signals_opining ?? 0), 0);
+      setLastOpining(opining);
+      setDeepMsg(
+        rows.length === 0
+          ? 'Deep analyze: no markets (empty tape or all failed).'
+          : `Deep analyze: ${rows.length} market(s), ${opining} agent opinion(s). Ranked by |edge| — see Calibration → Edge Board.`,
+      );
+    } catch (e) {
+      setDeepMsg(e instanceof Error ? e.message : String(e));
+    } finally {
+      setDeepBusy(false);
+    }
+  };
 
   const livePrompts = useMemo(() => {
     if (kalshiContextStatus?.degraded || categories.length === 0) {
@@ -157,15 +201,16 @@ export function ChatView({
     setPaperBusy(message.id);
     setPaperMsg(null);
     try {
-      const id = await kalshiApi.recordPaperDecision(sessionId ?? 'analyst', decision);
-      const opensLot =
-        decision.decision === 'TAKE' &&
-        decision.contract_side !== 'PASS' &&
-        (decision.recommended_stake_dollars ?? 0) > 0;
+      const res = await kalshiApi.recordPaperDecision(sessionId ?? 'analyst', decision);
+      const idShort = res.prediction_id.slice(0, 8);
+      const notes =
+        res.demotion_notes?.length > 0
+          ? ` Notes: ${res.demotion_notes.slice(0, 3).join('; ')}`
+          : '';
       setPaperMsg(
-        opensLot
-          ? `Paper TAKE ${decision.contract_side} ${decision.ticker} @ $${decision.price_to_enter.toFixed(2)} · stake ~$${decision.recommended_stake_dollars.toFixed(0)} recorded (${id.slice(0, 8)}…). Prediction + forecast + lot journal updated — use Portfolio → Settle when markets resolve.`
-          : `Logged ${decision.decision} on ${decision.ticker} (${id.slice(0, 8)}…) — prediction/forecast only (no cash lot; TAKE + stake required to open a position).`,
+        res.lot_opened
+          ? `Paper TAKE ${res.contract_side} ${res.ticker} @ $${res.price_to_enter.toFixed(2)} · stake ~$${res.stake.toFixed(0)} · lot ${res.lot_id?.slice(0, 8) ?? 'opened'} (pred ${idShort}…). Auto-settles when Kalshi resolves.${notes}`
+          : `Logged ${res.final_decision} on ${res.ticker} (pred ${idShort}…) — journal only, no cash lot.${notes}`,
       );
     } catch (e) {
       setPaperMsg(e instanceof Error ? e.message : String(e));
@@ -284,11 +329,36 @@ export function ChatView({
             <span className={`statusPill ${tapeCold ? 'warn' : 'ok'}`}>
               {tapeCold ? `Tape limited (${tapeCount})` : `Tape ready · ${tapeCount} markets`}
             </span>
+            <span
+              className={`statusPill ${sidecarOnline === true ? 'ok' : sidecarOnline === false ? 'warn' : 'muted'}`}
+              title="Fincept sidecar — technical, contract_tape, news agents"
+              aria-label="Sidecar status"
+            >
+              {sidecarOnline === true
+                ? `Sidecar online${lastOpining != null ? ` · ${lastOpining} agents opining` : ' · agents ready'}`
+                : sidecarOnline === false
+                  ? 'Sidecar offline'
+                  : 'Sidecar…'}
+            </span>
             <span className="statusPill muted" title="Configured in Settings → Analyst LLM">
               Model from Settings
             </span>
+            <button
+              type="button"
+              className="ghostBtn"
+              disabled={deepBusy || isStreaming}
+              onClick={() => void deepAnalyzeTop3()}
+              title="Run edge pipeline + web snippets on top 3 volume markets"
+            >
+              {deepBusy ? 'Deep analyzing…' : 'Deep analyze top 3'}
+            </button>
           </div>
         </header>
+        {deepMsg && (
+          <p className="muted" role="status" style={{ margin: '0 0 0.5rem' }}>
+            {deepMsg}
+          </p>
+        )}
 
         {activeContext && (
           <div className="analystContextChip insightCard accent">

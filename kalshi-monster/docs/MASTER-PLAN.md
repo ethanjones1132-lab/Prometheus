@@ -44,6 +44,19 @@
 - MarketDetailPanel risk flag codes; truthful chat paper messaging  
 - `prediction_id` on lots; settle syncs prediction Win/Loss; grade/resolve/auto-grade settle paper  
 
+### Sprint 0 — Paper journal trust (done 2026-07-15)
+- Structured `PaperRecordResult` IPC (`lot_opened`, `demotion_notes`, …); Chat/MarketDetail show journal vs lot  
+- Forecast `close_time` from market tape (close/expiry), not wall-clock  
+- Equity snapshots: open MV falls back to cost basis (no cash-only crash); `profit_factor` capped  
+- Breakers: refuse **new paper lots** on daily-loss pause / hard disable; `paper_only` demotion still allows lots  
+
+### Sprint 1+2 — Agents + Edge Board (done 2026-07-15)
+- Technical: expanded series map (`KXBTCD`/`KXETHD`/index/majors), barrier strike from ticker, `horizon_days`  
+- News agent: `agents/news.py` over Rust `web_snippets` (null unless grounded); orchestrator wired  
+- Silent routing weight in `verdict_reasons` when macro/news hold mass but null  
+- Edge Board on Calibration: scan top-N ranked by `|edge_net|`, agent drawer, Deep top 3  
+- Analyst chip: Sidecar online + Deep analyze top 3  
+
 ---
 
 ## Master sequence (chronological from now)
@@ -53,9 +66,9 @@ Estimate bands are rough (1 = short pass, 3 = multi-day).
 
 | # | Sprint | Theme | Effort | Depends on | Source |
 |---|--------|--------|--------|------------|--------|
-| **0** | **P0 — Trust polish (paper journal UX)** | Structured paper IPC + real close_time + equity MTM | 1–2 | — | Paper audit P1–P2 |
-| **1** | **P1 — Agent opinions that fire** | Technical coverage + news agent | 2 | Phase A done | Fincept B1–B2 |
-| **2** | **P2 — Edge Board v1** | Rank markets by edge; agent drawer | 2 | P1 helps | Fincept C1–C2 |
+| **0** | **P0 — Trust polish (paper journal UX)** ✅ | Structured paper IPC + real close_time + equity MTM | 1–2 | — | Paper audit P1–P2 |
+| **1** | **P1 — Agent opinions that fire** ✅ | Technical coverage + news agent | 2 | Phase A done | Fincept B1–B2 |
+| **2** | **P2 — Edge Board v1** ✅ | Rank markets by edge; agent drawer | 2 | P1 helps | Fincept C1–C2 |
 | **3** | **P3 — Depth tiers + Settings ops** | quick/standard/deep; bridge metrics | 1–2 | P1 | Fincept C3–C4 |
 | **4** | **P4 — Macro agent (economic)** | FRED/public series, honest nulls | 2 | P1 | Fincept B3 |
 | **5** | **P5 — Calibration flywheel** | Accumulate resolved ≥200; λ re-fit ops | ongoing | settle/grade live | Progress / Phase 3 |
@@ -64,50 +77,46 @@ Estimate bands are rough (1 = short pass, 3 = multi-day).
 
 ---
 
-## Sprint 0 — Paper journal trust (next)
+## Sprint 0 — Paper journal trust ✅ (done 2026-07-15)
 
 **Why first:** Auto-settle/sync is in, but breakers and UX still misread paper health. Finish paper integrity before leaning harder on agent-driven TAKEs.
 
-| ID | Task | Acceptance |
-|----|------|------------|
-| **0.1** | Structured `kalshi_record_paper_decision` response: `{ prediction_id, lot_opened, final_decision, stake, demotion_notes }` | Chat/MarketDetail show truth (not “lot written” when only journal) |
-| **0.2** | Paper forecast `close_time` from tape (not wall-clock `now`) | Forecast rows match market expiry |
-| **0.3** | Equity snapshot after open/close includes **open market value** (client or cost-basis fallback) | Drawdown not “cash-only crash” after every open |
-| **0.4** | Optional: refuse new lots when breaker daily-pause / paper-only demotion | Matches §6.4 intent for paper |
+| ID | Task | Status |
+|----|------|--------|
+| **0.1** | Structured `kalshi_record_paper_decision` → `PaperRecordResult` | ✅ Chat/MarketDetail show lot vs journal |
+| **0.2** | Paper forecast `close_time` from tape | ✅ close/expiry from cached/fetched market |
+| **0.3** | Equity snapshot open MV (client or cost-basis) | ✅ + `equity_snapshot_uses_cost_basis_when_no_marks` |
+| **0.4** | Refuse new lots on daily pause / hard disable | ✅ `paper_only` still allows lots (§6.4) |
 
 **Out of scope here:** fee formula changes, live orders.
 
-**Verify:** `cargo test --lib paper::`; open TAKE → equity ≠ cash-only; settle → prediction Win/Loss.
+**Verified:** `cargo test --lib paper::` **11/11**; MarketDetailPanel vitest **4/4**; `tsc --noEmit` clean.
 
 ---
 
-## Sprint 1 — Fincept Phase B (agents that actually opine)
+## Sprint 1 — Fincept Phase B ✅ (done 2026-07-15)
 
 **Why next:** Phase A wires the pipe; most categories still get `p_model=null`. Fill honest signal before Edge Board ranking.
 
-| ID | Task | Acceptance |
-|----|------|------------|
-| **1.1** | Expand technical underlying/strike map (`KXBTCD`, `KXETHD`, index, majors) + horizon from close_time | BTC/index markets often non-null technical |
-| **1.2** | News agent: Rust passes `web_snippets` in opinion `context`; sidecar `agents/news.py` (null unless grounded) | Politics/econ can get catalysts; no hallucinated p |
-| **1.3** | Surface “silent agent weight” in verdict_reasons when macro/news always null | Logs/UI show why p_model thin |
-| **1.4** | Sidecar pytest for technical + news null paths | `uv run pytest` green |
-
-**Verify:** Analyze on BTC daily + a political market with web evidence; `agent_breakdown` shows non-null where data exists.
+| ID | Task | Status |
+|----|------|--------|
+| **1.1** | Expand technical map + horizon_days | ✅ Rust + sidecar series/barrier/horizon |
+| **1.2** | News agent + web_snippets | ✅ `agents/news.py`; deep/single analyze attaches snippets |
+| **1.3** | Silent agent weight in verdict_reasons | ✅ `silent_agent_weight_report` |
+| **1.4** | Sidecar pytest technical + news null | ✅ `tests/test_news_and_technical_null.py` |
 
 ---
 
-## Sprint 2 — Edge Board v1 (product surface)
+## Sprint 2 — Edge Board v1 ✅ (done 2026-07-15)
 
-**Why after agents:** Ranking empty models is noise; ranking after B1–B2 is useful.
+| ID | Task | Status |
+|----|------|--------|
+| **2.1** | Batch analyze top-N; rank by \|edge_net\| | ✅ `rank_by_abs_edge_net` + Calibration Edge Board |
+| **2.2** | Agent breakdown drawer | ✅ Click row → signals/rationale/reasons |
+| **2.3** | Analyst sidecar chip | ✅ ChatView status pill |
+| **2.4** | Deep analyze top 3 | ✅ Calibration + Analyst buttons (`deep=true`) |
 
-| ID | Task | Acceptance |
-|----|------|------------|
-| **2.1** | Batch analyze top-N open markets (rate-limited); rank by \|edge_net\| | Calibration or Command desk table |
-| **2.2** | Agent breakdown drawer (from ledger JSON) | Click row → signals + confidences |
-| **2.3** | Analyst chip: “Sidecar online · N agents opining” | Visible without opening Settings |
-| **2.4** | One-click “Deep analyze top 3” → same path as chat priors | Non-blocking progress |
-
-**Verify:** Vitest for board empty/error; cargo tests for ranking pure function if extracted.
+**Verified:** `cargo test --lib edge_engine::` 66; Calibration/Chat vitest; sidecar news/technical pytest.
 
 ---
 
@@ -230,4 +239,4 @@ The program is “ready for serious paper validation” when:
 | Long-range architecture | `docs/fincept-integration-plan.md` |
 | Chronology / ship log | `PRIORITIES.md` (notes only; not the order source) |
 
-**Default next implementation:** **Sprint 0** (paper trust polish), then **Sprint 1** (technical + news agents).
+**Default next implementation:** **Sprint 3** (depth tiers + sidecar ops UX), then Sprint 4 (macro agent).

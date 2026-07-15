@@ -49,6 +49,17 @@ vi.mock('../services/kalshi', () => ({
   kalshiApi: {
     getCategoryStats: vi.fn().mockResolvedValue([]),
     recordPaperDecision: vi.fn(),
+    analyzeTopMarketsEdge: vi.fn().mockResolvedValue([]),
+  },
+}));
+
+vi.mock('../services/tauri', () => ({
+  finceptApi: {
+    getBridgeStatus: vi.fn().mockResolvedValue({
+      online: true,
+      degraded: false,
+      restarts_remaining: 3,
+    }),
   },
 }));
 

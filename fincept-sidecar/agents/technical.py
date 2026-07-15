@@ -19,6 +19,24 @@ from fincept_sidecar.schemas import AgentSignal, DataRef, MarketCategory, Market
 # Map common Kalshi underlyings / title tokens → yfinance tickers.
 # Sources: public Yahoo Finance symbols; Kalshi series naming conventions.
 UNDERLYING_TICKERS: dict[str, str] = {
+    # Kalshi series prefixes (checked via substring on ticker+title)
+    "KXBTCD": "BTC-USD",
+    "KXBTC": "BTC-USD",
+    "KXETHD": "ETH-USD",
+    "KXETH": "ETH-USD",
+    "KXSOL": "SOL-USD",
+    "KXINX": "^GSPC",
+    "INXD": "^GSPC",
+    "KXNASDAQ": "^NDX",
+    "KXNDX": "^NDX",
+    "KXRUT": "^RUT",
+    "KXGOLD": "GC=F",
+    "KXWTI": "CL=F",
+    "KXOIL": "CL=F",
+    "KXAAPL": "AAPL",
+    "KXTSLA": "TSLA",
+    "KXNVDA": "NVDA",
+    # Title tokens
     "SPX": "^GSPC",
     "SPY": "SPY",
     "S&P": "^GSPC",
@@ -35,6 +53,7 @@ UNDERLYING_TICKERS: dict[str, str] = {
     "BITCOIN": "BTC-USD",
     "ETH": "ETH-USD",
     "ETHEREUM": "ETH-USD",
+    "SOLANA": "SOL-USD",
     "GOLD": "GC=F",
     "WTI": "CL=F",
     "OIL": "CL=F",
@@ -101,8 +120,13 @@ def infer_underlying_ticker(req: MarketOpinionRequest) -> str | None:
 
     hay = f"{req.market_ticker} {req.title} {req.resolution_rules}".upper()
     # Prefer longer keys first (S&P 500 before S&P).
+    # Short equity/crypto tokens use word boundaries so "something" ≠ ETH.
     for token in sorted(UNDERLYING_TICKERS.keys(), key=len, reverse=True):
-        if token.upper() in hay:
+        t = token.upper()
+        if len(t) <= 4 and t.isalpha():
+            if re.search(rf"\b{re.escape(t)}\b", hay):
+                return UNDERLYING_TICKERS[token]
+        elif t in hay:
             return UNDERLYING_TICKERS[token]
     return None
 
@@ -127,10 +151,18 @@ def infer_strike(req: MarketOpinionRequest) -> float | None:
             except ValueError:
                 pass
 
+    # Kalshi barrier tickers: KXBTCD-26JUL15-B100000 / -T95000
+    m_tick = re.search(r"(?i)[-_](?:B|T|C)(\d{3,7})(?:\b|$)", req.market_ticker)
+    if m_tick:
+        try:
+            return float(m_tick.group(1))
+        except ValueError:
+            pass
+
     text = f"{req.title} {req.resolution_rules}"
     patterns = [
-        r"(?:above|over|exceed(?:s|ing)?|greater than|>\s*)\$?\s*([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]+)?)",
-        r"(?:close\s+(?:at|above)|settle\s+above)\s+\$?\s*([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]+)?)",
+        r"(?:above|over|exceed(?:s|ing)?|greater than|below|under|less than|>\s*|<\s*)\$?\s*([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]+)?)",
+        r"(?:close\s+(?:at|above|below)|settle\s+(?:above|below))\s+\$?\s*([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]+)?)",
         r"\$\s*([0-9]{2,6}(?:\.[0-9]+)?)",
     ]
     for pat in patterns:
@@ -143,7 +175,10 @@ def infer_strike(req: MarketOpinionRequest) -> float | None:
     return None
 
 
-def years_to_close(close_time: datetime) -> float | None:
+def years_to_close(close_time: datetime, horizon_days: float | None = None) -> float | None:
+    """Prefer explicit horizon_days from Rust; else derive from close_time."""
+    if horizon_days is not None and horizon_days > 0:
+        return horizon_days / 365.25
     now = datetime.now(timezone.utc)
     if close_time.tzinfo is None:
         close_time = close_time.replace(tzinfo=timezone.utc)
@@ -151,6 +186,19 @@ def years_to_close(close_time: datetime) -> float | None:
     if seconds <= 0:
         return None
     return seconds / (365.25 * 24 * 3600)
+
+
+def _horizon_days_from_context(ctx: dict[str, Any]) -> float | None:
+    val = ctx.get("horizon_days")
+    if isinstance(val, (int, float)) and val > 0:
+        return float(val)
+    if isinstance(val, str):
+        try:
+            f = float(val)
+            return f if f > 0 else None
+        except ValueError:
+            return None
+    return None
 
 
 def _momentum_mu(closes: list[float]) -> float:
@@ -191,7 +239,8 @@ async def estimate(req: MarketOpinionRequest) -> AgentSignal:
 
     yf_ticker = infer_underlying_ticker(req)
     strike = infer_strike(req)
-    tau = years_to_close(req.close_time)
+    h_days = _horizon_days_from_context(req.context or {})
+    tau = years_to_close(req.close_time, horizon_days=h_days)
 
     if yf_ticker is None or strike is None or tau is None:
         missing = []

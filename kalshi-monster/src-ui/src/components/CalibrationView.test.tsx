@@ -107,16 +107,67 @@ describe('CalibrationView', () => {
     expect(screen.getByLabelText('p_final vs outcomes reliability chart')).toBeInTheDocument();
   });
 
-  test('analyze top logs batch into table', async () => {
+  test('edge board scan logs batch into ranked table', async () => {
     render(<CalibrationView />);
     await waitFor(() => expect(screen.getByText('LOCKED')).toBeInTheDocument());
 
-    fireEvent.click(screen.getByRole('button', { name: /Analyze top 10/i }));
+    fireEvent.click(screen.getByRole('button', { name: /Scan top 10/i }));
 
     await waitFor(() => {
       expect(screen.getByText('KXTEST')).toBeInTheDocument();
     });
-    expect(kalshiApi.analyzeTopMarketsEdge).toHaveBeenCalledWith(10);
+    expect(kalshiApi.analyzeTopMarketsEdge).toHaveBeenCalledWith(10, false);
+  });
+
+  test('deep analyze top 3 calls IPC with deep flag', async () => {
+    render(<CalibrationView />);
+    await waitFor(() => expect(screen.getByText('LOCKED')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: /Deep analyze top 3/i }));
+
+    await waitFor(() => {
+      expect(kalshiApi.analyzeTopMarketsEdge).toHaveBeenCalledWith(3, true);
+    });
+  });
+
+  test('clicking edge board row opens agent drawer', async () => {
+    vi.mocked(kalshiApi.analyzeTopMarketsEdge).mockResolvedValue([
+      {
+        forecast_id: 1,
+        market_ticker: 'KXTEST',
+        p_market: 0.5,
+        p_model: 0.55,
+        p_final: 0.52,
+        confidence: 0.4,
+        verdict: 'pass',
+        verdict_reasons: ['silent agent weight 50% of routing (macro)'],
+        agent_breakdown: {
+          signals: [
+            { agent: 'technical', probability: 0.55, confidence: 0.4, rationale: 'ok' },
+            { agent: 'macro', probability: null, confidence: 0, rationale: 'no data' },
+          ],
+        },
+        edge_net_yes: 0.01,
+        edge_net_no: -0.02,
+        signals_received: 2,
+        signals_opining: 1,
+        sidecar_elapsed_ms: 12,
+      },
+    ]);
+    render(<CalibrationView />);
+    await waitFor(() => expect(screen.getByText('LOCKED')).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: /Scan top 10/i }));
+    await waitFor(() => expect(screen.getByText('KXTEST')).toBeInTheDocument());
+    fireEvent.click(screen.getByText('KXTEST'));
+    expect(await screen.findByLabelText('Agent breakdown drawer')).toBeInTheDocument();
+    expect(screen.getByText('technical')).toBeInTheDocument();
+    expect(screen.getByText(/silent agent weight/i)).toBeInTheDocument();
+  });
+
+  test('shows empty edge board hint when no batch yet', async () => {
+    render(<CalibrationView />);
+    await waitFor(() => expect(screen.getByText('LOCKED')).toBeInTheDocument());
+    expect(screen.getByLabelText('Edge Board empty')).toBeInTheDocument();
   });
 
   test('lambda re-fit surfaces insufficient-sample message', async () => {

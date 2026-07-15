@@ -2,13 +2,14 @@
 # Copyright (C) 2026 Ethan Jones
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# Currently ships two *real* estimators grounded in available data:
+# Currently ships three *real* estimators grounded in available data:
 #   1. technical — yfinance spot/vol → P(S_T > K)
 #   2. contract_tape — Kalshi mid series from request context
+#   3. news — heuristic over Rust-supplied web_snippets (null if absent)
 #
 # Explicitly NOT shipped yet (no honest data path right now):
 #   - macro (needs EconDB / release calendars — not installed)
-#   - news / sentiment (need LLM + news feeds — no keys/data here)
+#   - sentiment (need social/news sentiment feeds)
 #   - valuation / fundamentals (need fundamentals DB for company events)
 #   - risk / portfolio / explainability (shape sizing/reporting, not p_model)
 
@@ -24,7 +25,7 @@ from fincept_sidecar.schemas import (
     MarketOpinionResponse,
 )
 
-from . import contract_tape, technical
+from . import contract_tape, news, technical
 
 
 async def collect_market_opinion(req: MarketOpinionRequest) -> MarketOpinionResponse:
@@ -33,6 +34,7 @@ async def collect_market_opinion(req: MarketOpinionRequest) -> MarketOpinionResp
 
     signals.append(await technical.estimate(req))
     signals.append(await contract_tape.estimate(req))
+    signals.append(await news.estimate(req))
 
     # Placeholder no-opinion rows for agents that exist in the plan but have
     # no live data path here — honest None, never a fake probability.
@@ -40,10 +42,6 @@ async def collect_market_opinion(req: MarketOpinionRequest) -> MarketOpinionResp
         (
             "macro",
             "Macro agent requires EconDB (or equivalent) release series; not available in this sidecar build.",
-        ),
-        (
-            "news",
-            "News agent requires a resolution-aware news feed / LLM path; not wired.",
         ),
         (
             "sentiment",
@@ -70,6 +68,7 @@ async def collect_market_opinion(req: MarketOpinionRequest) -> MarketOpinionResp
             source="kalshi:close_time",
         )
     )
+    catalysts.extend(news.extract_catalysts_from_request(req))
 
     elapsed_ms = int((time.perf_counter() - t0) * 1000)
     return MarketOpinionResponse(

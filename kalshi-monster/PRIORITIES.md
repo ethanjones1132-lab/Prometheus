@@ -2,13 +2,32 @@
 
 Last updated: 2026-07-15
 
+## Maintenance notes (2026-07-15) — Sprint 1+2 agents + Edge Board
+
+- **1.1** Technical series map expanded (BTC/ETH/index/majors); barrier strike from ticker; `horizon_days` in context
+- **1.2** `fincept-sidecar/agents/news.py` + orchestrator; Rust attaches `web_snippets` on deep/single analyze
+- **1.3** `silent_agent_weight_report` → verdict_reasons when routing mass on null agents
+- **1.4** pytest `test_news_and_technical_null.py` (+ technical math)
+- **2.x** Calibration **Edge Board**: rank by \|edge_net\|, agent drawer, Deep top 3; Analyst sidecar chip + deep button
+- Pure rank helper + cargo tests; vitest Calibration 7 + Chat 2
+- **Next:** Sprint 3 depth tiers / ops UX; Sprint 4 macro
+
+## Maintenance notes (2026-07-15) — Sprint 0 paper journal trust
+
+- **0.1** `PaperRecordResult` IPC (`prediction_id`, `lot_opened`, `lot_id`, `final_decision`, `stake`, `demotion_notes`, `paper_lots_blocked`); ChatView + MarketDetailPanel show lot vs journal truth
+- **0.2** Forecast `close_time` from market tape close/expiry (not wall-clock)
+- **0.3** Equity snapshots: open MV = mark or **cost-basis fallback**; analytics same; `profit_factor` capped at 999 (no Infinity JSON)
+- **0.4** Breakers block **new paper lots** on daily-loss pause / hard disable; calibration `paper_only` demotion still opens lots
+- Tests: `cargo test --lib paper::` **11/11** (incl. `equity_snapshot_uses_cost_basis_when_no_marks`); MarketDetailPanel **4/4**; `tsc` clean
+- **Next:** Sprint 1 (technical coverage + news agent) per `docs/MASTER-PLAN.md`
+
 ## Maintenance notes (2026-07-15, cron pass) — auto-remediation + serde fix
 
 - Committed coherent WIP: paper auto-settle/prediction sync, Phase A agent priors (`agent_priors`, `opinion_input`), IPC serde defaults, decision schema aliases + quality rails.
 - **Fix:** removed erroneous `serde(rename_all = SCREAMING_SNAKE_CASE)` on `DecisionAction`/`ContractSide` (was serializing `TAKE` as `T_A_K_E`, breaking 8 lib tests).
 - Gitignore: `scripts/_*.py` ephemeral helpers.
 - Verified: `cargo check`, `tsc`, **249** lib tests, vitest **46/46**, paper **10/10**.
-- **Next:** KB-1 live credential verify (user); Phase B news/macro agents; equity MTM snapshots.
+- **Next:** Sprint 0 done → Sprint 1 agents; KB-1 live credential verify (user).
 
 ## Maintenance notes (2026-07-15) — paper auto-settle + prediction sync
 

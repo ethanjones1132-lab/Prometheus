@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { finceptApi } from '../services/tauri';
 import { kalshiApi } from '../services/kalshi';
 import type { EdgeAnalysisResult, ForecastCalibrationReport, BreakerDecision, LambdaFit, EdgeConfig } from '../types/kalshi';
@@ -20,12 +20,37 @@ function money(v: number | null | undefined): string {
   return `${sign}$${v.toFixed(2)}`;
 }
 
+function absEdge(r: EdgeAnalysisResult): number {
+  return Math.max(Math.abs(r.edge_net_yes), Math.abs(r.edge_net_no));
+}
+
+function agentSignalRows(breakdown: unknown): Array<{
+  agent: string;
+  probability: number | null;
+  confidence: number;
+  rationale?: string;
+}> {
+  if (!breakdown || typeof breakdown !== 'object') return [];
+  const signals = (breakdown as { signals?: unknown }).signals;
+  if (!Array.isArray(signals)) return [];
+  return signals.map((s) => {
+    const row = s as Record<string, unknown>;
+    return {
+      agent: String(row.agent ?? '?'),
+      probability: typeof row.probability === 'number' ? row.probability : null,
+      confidence: typeof row.confidence === 'number' ? row.confidence : 0,
+      rationale: typeof row.rationale === 'string' ? row.rationale : undefined,
+    };
+  });
+}
+
 export function CalibrationView() {
   const [report, setReport] = useState<ForecastCalibrationReport | null>(null);
   const [bridge, setBridge] = useState<{ online: boolean; degraded: boolean; last_error?: string | null } | null>(
     null,
   );
   const [recent, setRecent] = useState<EdgeAnalysisResult[]>([]);
+  const [selectedTicker, setSelectedTicker] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [actionBusy, setActionBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -78,17 +103,18 @@ export function CalibrationView() {
     }
   };
 
-  const analyzeTop = async (limit: number) => {
-    setActionBusy('analyze');
+  const analyzeTop = async (limit: number, deep = false) => {
+    setActionBusy(deep ? 'deep' : 'analyze');
     setMessage(null);
     setError(null);
+    setSelectedTicker(null);
     try {
-      const rows = await kalshiApi.analyzeTopMarketsEdge(limit);
+      const rows = await kalshiApi.analyzeTopMarketsEdge(limit, deep);
       setRecent(rows);
       setMessage(
         rows.length === 0
           ? 'No markets analyzed (empty tape or all failed). Check Command desk for markets + Fincept bridge.'
-          : `Logged ${rows.length} forecast row(s) via edge engine (PASS included). No fabricated outcomes.`,
+          : `Edge Board: ${rows.length} market(s) ranked by |edge_net|${deep ? ' (deep + web)' : ''}. PASS rows included — no fabricated outcomes.`,
       );
       await refresh();
     } catch (e) {
@@ -97,6 +123,15 @@ export function CalibrationView() {
       setActionBusy(null);
     }
   };
+
+  const selected = useMemo(
+    () => recent.find((r) => r.market_ticker === selectedTicker) ?? null,
+    [recent, selectedTicker],
+  );
+  const selectedAgents = useMemo(
+    () => (selected ? agentSignalRows(selected.agent_breakdown) : []),
+    [selected],
+  );
 
   const runLambdaRefit = async () => {
     setActionBusy('lambda');
@@ -342,8 +377,8 @@ export function CalibrationView() {
         </div>
       </section>
 
-      <section className="modalSection">
-        <h4>Actions</h4>
+      <section className="modalSection" aria-label="Edge Board actions">
+        <h4>Edge Board</h4>
         <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
           <button
             type="button"
@@ -351,7 +386,7 @@ export function CalibrationView() {
             disabled={actionBusy != null}
             onClick={() => void analyzeTop(10)}
           >
-            {actionBusy === 'analyze' ? 'Analyzing…' : 'Analyze top 10 (log forecasts)'}
+            {actionBusy === 'analyze' ? 'Analyzing…' : 'Scan top 10 (rank by |edge|)'}
           </button>
           <button
             type="button"
@@ -359,7 +394,15 @@ export function CalibrationView() {
             disabled={actionBusy != null}
             onClick={() => void analyzeTop(5)}
           >
-            Analyze top 5
+            Scan top 5
+          </button>
+          <button
+            type="button"
+            className="secondaryButton"
+            disabled={actionBusy != null}
+            onClick={() => void analyzeTop(3, true)}
+          >
+            {actionBusy === 'deep' ? 'Deep analyzing…' : 'Deep analyze top 3'}
           </button>
           <button
             type="button"
@@ -371,14 +414,14 @@ export function CalibrationView() {
           </button>
         </div>
         <p className="muted" style={{ marginTop: '0.5rem' }}>
-          Analyze writes pending ledger rows from live Kalshi quotes + agents. Resolve only applies when
-          Kalshi has a Yes/No result — never invented.
+          Board scan logs forecast rows (technical + contract_tape + news when snippets exist), ranked by
+          |edge_net|. Deep top 3 also pulls web evidence for the news agent. Click a row for agent breakdown.
         </p>
       </section>
 
       {recent.length > 0 && (
-        <section className="modalSection">
-          <h4>Last analyze batch</h4>
+        <section className="modalSection" aria-label="Edge Board table">
+          <h4>Edge Board (ranked)</h4>
           <div className="tableWrap">
             <table className="dataTable">
               <thead>
@@ -387,28 +430,103 @@ export function CalibrationView() {
                   <th>p_market</th>
                   <th>p_model</th>
                   <th>p_final</th>
+                  <th>|edge|</th>
                   <th>Verdict</th>
                   <th>Agents</th>
+                  <th>Conf</th>
                 </tr>
               </thead>
               <tbody>
                 {recent.map((r) => (
-                  <tr key={r.forecast_id}>
+                  <tr
+                    key={r.forecast_id}
+                    style={{
+                      cursor: 'pointer',
+                      background:
+                        selectedTicker === r.market_ticker
+                          ? 'var(--surface-2, rgba(74,125,255,0.12))'
+                          : undefined,
+                    }}
+                    onClick={() =>
+                      setSelectedTicker((t) =>
+                        t === r.market_ticker ? null : r.market_ticker,
+                      )
+                    }
+                  >
                     <td>
                       <code>{r.market_ticker}</code>
                     </td>
                     <td>{pct(r.p_market)}</td>
                     <td>{r.p_model == null ? '—' : pct(r.p_model)}</td>
                     <td>{pct(r.p_final)}</td>
+                    <td>{(absEdge(r) * 100).toFixed(1)}¢</td>
                     <td>{r.verdict}</td>
                     <td>
                       {r.signals_opining}/{r.signals_received}
                     </td>
+                    <td>{r.confidence.toFixed(2)}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
+          {selected && (
+            <div
+              className="insightCard"
+              style={{ marginTop: '0.75rem' }}
+              aria-label="Agent breakdown drawer"
+            >
+              <span>Agent breakdown · {selected.market_ticker}</span>
+              <strong>
+                {selected.verdict} · conf {selected.confidence.toFixed(2)}
+              </strong>
+              {selected.verdict_reasons?.length > 0 && (
+                <ul className="muted" style={{ margin: '0.5rem 0', paddingLeft: '1.2rem' }}>
+                  {selected.verdict_reasons.map((reason) => (
+                    <li key={reason}>{reason}</li>
+                  ))}
+                </ul>
+              )}
+              {selectedAgents.length === 0 ? (
+                <p className="muted">No agent signals on this row (sidecar offline or empty).</p>
+              ) : (
+                <div className="tableWrap">
+                  <table className="dataTable">
+                    <thead>
+                      <tr>
+                        <th>Agent</th>
+                        <th>p</th>
+                        <th>Conf</th>
+                        <th>Rationale</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {selectedAgents.map((a) => (
+                        <tr key={a.agent}>
+                          <td>{a.agent}</td>
+                          <td>{a.probability == null ? 'null' : pct(a.probability)}</td>
+                          <td>{a.confidence.toFixed(2)}</td>
+                          <td className="muted" style={{ maxWidth: 360 }}>
+                            {(a.rationale ?? '').slice(0, 180)}
+                            {(a.rationale?.length ?? 0) > 180 ? '…' : ''}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
+        </section>
+      )}
+
+      {recent.length === 0 && !actionBusy && (
+        <section className="modalSection" aria-label="Edge Board empty">
+          <p className="muted">
+            Edge Board is empty — run a scan when Command desk tape is loaded and (optionally) the Fincept
+            bridge is online.
+          </p>
         </section>
       )}
     </section>

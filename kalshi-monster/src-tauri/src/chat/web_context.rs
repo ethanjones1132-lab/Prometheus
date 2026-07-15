@@ -362,6 +362,37 @@ pub async fn gather_web_evidence(
     }
 }
 
+/// Best-effort single-market snippets for the news agent (edge pipeline).
+/// Short timeout; returns empty on any failure — never blocks analyze forever.
+pub async fn snippets_for_market(
+    ticker: &str,
+    title: &str,
+    brave_api_key: Option<&str>,
+) -> Vec<WebHit> {
+    let t = title.trim();
+    if t.is_empty() {
+        return Vec::new();
+    }
+    let query = format!("{t} {ticker} news");
+    let timeout = Duration::from_millis(4_500);
+    match tokio::time::timeout(
+        timeout,
+        search_with_fallback(&query, 4, brave_api_key),
+    )
+    .await
+    {
+        Ok(Ok((_prov, hits))) => hits,
+        Ok(Err(e)) => {
+            tracing::debug!("snippets_for_market {ticker}: {e}");
+            Vec::new()
+        }
+        Err(_) => {
+            tracing::debug!("snippets_for_market {ticker}: timed out");
+            Vec::new()
+        }
+    }
+}
+
 /// Filter market list by gate: keep only OPEN for search targets.
 pub fn open_markets_only(
     candidates: &[(String, String, MarketGate)],

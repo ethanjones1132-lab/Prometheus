@@ -158,9 +158,48 @@ async fn analyze_market_edge_inner(
     bridge: &crate::fincept_bridge::FinceptBridge,
     db_pool: &Pool<Sqlite>,
 ) -> Result<crate::edge_engine::pipeline::EdgeAnalysisResult, String> {
-    // Shared builder: mids from price_tracker + underlying/strike inference (Phase A).
-    let input =
+    // Single-market Analyze always attempts web for news-heavy categories.
+    analyze_market_edge_inner_opts(ticker, client, bridge, db_pool, true).await
+}
+
+/// `fetch_web`: attach web_snippets for news agent (deep board / single Analyze).
+/// Batch board scan uses false for speed; deep top-3 uses true.
+async fn analyze_market_edge_inner_opts(
+    ticker: &str,
+    client: &crate::kalshi::KalshiClient,
+    bridge: &crate::fincept_bridge::FinceptBridge,
+    db_pool: &Pool<Sqlite>,
+    fetch_web: bool,
+) -> Result<crate::edge_engine::pipeline::EdgeAnalysisResult, String> {
+    // Shared builder: mids from price_tracker + underlying/strike inference (Phase A / Sprint 1).
+    let mut input =
         crate::edge_engine::opinion_input::build_analyze_input(client, db_pool, ticker).await?;
+
+    let cat = crate::edge_engine::pipeline::sidecar_category(&input.category);
+    let want_web = fetch_web
+        && matches!(
+            cat,
+            "political" | "economic" | "other" | "company_event"
+        );
+    if want_web {
+        let hits = crate::chat::web_context::snippets_for_market(
+            &input.market_ticker,
+            &input.title,
+            None,
+        )
+        .await;
+        if !hits.is_empty() {
+            input.web_snippets = hits
+                .into_iter()
+                .map(|h| crate::edge_engine::pipeline::WebSnippet {
+                    title: h.title,
+                    url: h.url,
+                    snippet: h.snippet,
+                })
+                .collect();
+            input.flags.push("web_snippets_attached".into());
+        }
+    }
 
     crate::edge_engine::pipeline::analyze_and_log_forecast(
         db_pool,
@@ -185,24 +224,30 @@ pub async fn kalshi_analyze_market_edge(
 }
 
 /// Analyze the top-N open markets by volume (from tape) and log forecasts.
+/// Results ranked by |edge_net| descending (Edge Board).
 /// Does **not** invent outcomes — only writes pending rows for live markets.
 #[tauri::command]
 pub async fn kalshi_analyze_top_markets_edge(
     limit: Option<usize>,
+    deep: Option<bool>,
     kalshi: State<'_, KalshiState>,
     bridge: State<'_, Arc<crate::fincept_bridge::FinceptBridge>>,
     db_pool: State<'_, Pool<Sqlite>>,
 ) -> Result<Vec<crate::edge_engine::pipeline::EdgeAnalysisResult>, String> {
     let n = limit.unwrap_or(10).min(25);
+    let deep = deep.unwrap_or(false);
     let client = kalshi.as_ref();
     let top = client.get_top_markets(n).await?;
     let mut out = Vec::new();
     for summary in top {
-        match analyze_market_edge_inner(
+        // Deep: web for all; standard batch: web only for political (inner helper).
+        let fetch_web = deep;
+        match analyze_market_edge_inner_opts(
             &summary.ticker,
             &client,
             bridge.as_ref(),
             &db_pool,
+            fetch_web,
         )
         .await
         {
@@ -212,7 +257,7 @@ pub async fn kalshi_analyze_top_markets_edge(
             }
         }
     }
-    Ok(out)
+    Ok(crate::edge_engine::pipeline::rank_by_abs_edge_net(&out))
 }
 
 /// Poll Kalshi for settlement of unresolved forecast rows; compute Brier scores.
@@ -375,6 +420,7 @@ pub async fn kalshi_set_edge_config(
 }
 
 /// Record a paper-trade decision with calibration + correlation-adjusted sizing.
+/// Returns a structured result so the UI can tell journal-only vs cash lot.
 #[tauri::command]
 pub async fn kalshi_record_paper_decision(
     session_id: String,
@@ -382,7 +428,8 @@ pub async fn kalshi_record_paper_decision(
     tracker: State<'_, Arc<Mutex<crate::predictions::tracker::PredictionTracker>>>,
     kalshi: State<'_, KalshiState>,
     db_pool: State<'_, Pool<Sqlite>>,
-) -> Result<String, String> {
+) -> Result<crate::paper::PaperRecordResult, String> {
+    let mut demotion_notes: Vec<String> = Vec::new();
     let bankroll = crate::bankroll::load_bankroll_config();
     // Normalize mixed LLM units (0–1 dollars vs percent/cents) and hard-cap Kelly/stake
     // before TAKE is persisted or shown as actionable paper size.
@@ -402,7 +449,8 @@ pub async fn kalshi_record_paper_decision(
 
     // Hard settlement rail: tape SETTLED/CLOSED (incl. embedded ticker dates) → force PASS.
     // Re-applied after Kelly recompute so stake cannot reappear.
-    let settlement_gate = {
+    // Also capture market close_time for forecast ledger (Sprint 0.2).
+    let (settlement_gate, market_close_time) = {
         let client = kalshi.as_ref();
         let mkt = if let Some(m) = client.find_cached_market(&decision.ticker) {
             Some(m)
@@ -410,26 +458,37 @@ pub async fn kalshi_record_paper_decision(
             client.fetch_market(&decision.ticker).await.ok()
         };
         if let Some(m) = mkt {
-            crate::chat::market_gate::assess_market_gate_for_ticker(
+            let gate = crate::chat::market_gate::assess_market_gate_for_ticker(
                 Some(&m.ticker),
                 &m.status,
                 &m.result,
                 m.close_time.as_deref(),
                 m.expiration_time.as_deref(),
                 chrono::Utc::now(),
-            )
+            );
+            let close = m
+                .close_time
+                .clone()
+                .or(m.expiration_time.clone())
+                .unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
+            (gate, close)
         } else {
-            crate::chat::market_gate::assess_market_gate_for_ticker(
+            let gate = crate::chat::market_gate::assess_market_gate_for_ticker(
                 Some(&decision.ticker),
                 "unknown",
                 "",
                 None,
                 None,
                 chrono::Utc::now(),
-            )
+            );
+            (gate, chrono::Utc::now().to_rfc3339())
         }
     };
     if !settlement_gate.allows_take() {
+        demotion_notes.push(format!(
+            "settlement gate forced PASS: {:?}",
+            settlement_gate
+        ));
         tracing::info!(
             "paper decision forced PASS by settlement gate: {} {:?}",
             decision.ticker,
@@ -462,16 +521,48 @@ pub async fn kalshi_record_paper_decision(
 
     let side = format!("{:?}", decision.contract_side);
 
-    // Circuit-breaker stake multiplier (§6.4): scale paper stakes when drawdown or
-    // calibration degradation is active.
-    let breaker_stake_mult =
+    // Circuit-breaker (§6.4): scale stakes; refuse *new paper lots* when daily
+    // pause or hard disable is active (paper_only demotion still allows lots).
+    let (breaker_stake_mult, paper_lots_blocked, breaker_reasons) =
         match crate::edge_engine::persistence::evaluate_and_persist_breakers(&db_pool).await {
-            Ok(bd) => bd.stake_multiplier,
+            Ok(bd) => {
+                // live_orders_allowed is false for daily pause, hard DD, OR paper_only.
+                // paper_only means "force paper mode" — lots still allowed.
+                // daily pause / hard disable: live_orders_allowed false AND not paper_only.
+                let blocked = !bd.live_orders_allowed && !bd.paper_only;
+                (bd.stake_multiplier, blocked, bd.reasons)
+            }
             Err(e) => {
                 tracing::warn!("breaker evaluation skipped for paper decision: {e}");
-                1.0
+                (1.0, false, Vec::new())
             }
         };
+    if paper_lots_blocked {
+        demotion_notes.push(
+            "paper lots blocked by circuit breaker (daily loss pause or hard disable) — journal only"
+                .into(),
+        );
+        for r in &breaker_reasons {
+            demotion_notes.push(r.clone());
+        }
+        if !decision
+            .risk_flags
+            .contains(&crate::chat::decision_schema::RiskFlag::CircuitBreakerActive)
+        {
+            decision
+                .risk_flags
+                .push(crate::chat::decision_schema::RiskFlag::CircuitBreakerActive);
+        }
+        // Force no-stake so we never open a lot while paused.
+        decision.recommended_stake_dollars = 0.0;
+        decision.max_position_dollars = 0.0;
+        decision.fractional_kelly_pct = 0.0;
+        if decision.decision == crate::chat::decision_schema::DecisionAction::TAKE {
+            decision.decision = crate::chat::decision_schema::DecisionAction::WATCH;
+            demotion_notes.push("TAKE demoted to WATCH — new paper positions paused".into());
+        }
+    }
+
     let base_stake = if decision.recommended_stake_dollars > 0.0 {
         decision.recommended_stake_dollars
     } else {
@@ -493,6 +584,7 @@ pub async fn kalshi_record_paper_decision(
                 .push(crate::chat::decision_schema::RiskFlag::CircuitBreakerActive);
         }
         if let Some(note) = breaker_apply.thesis_note {
+            demotion_notes.push(note.clone());
             if !decision.thesis.is_empty() {
                 decision.thesis.push(' ');
             }
@@ -517,7 +609,14 @@ pub async fn kalshi_record_paper_decision(
     // Kelly recompute must not resurrect a TAKE on a settled market.
     decision.enforce_settlement_gate(&settlement_gate);
     // Re-apply quality rails after Kelly so stakes stay zero on demoted decisions.
+    let pre_rails_decision = format!("{:?}", decision.decision);
     decision.enforce_prediction_quality_rails();
+    if format!("{:?}", decision.decision) != pre_rails_decision {
+        demotion_notes.push(format!(
+            "quality rails: {} → {:?}",
+            pre_rails_decision, decision.decision
+        ));
+    }
 
     if let Some(summary) = &bankroll_summary {
         let (capped_stake, warning) =
@@ -531,11 +630,16 @@ pub async fn kalshi_record_paper_decision(
             }
             if let Some(warning) = warning {
                 adj.warnings.push(warning.clone());
+                demotion_notes.push(warning.clone());
                 if !decision.thesis.is_empty() {
                     decision.thesis.push(' ');
                 }
                 decision.thesis.push_str(&warning);
             }
+            demotion_notes.push(format!(
+                "bankroll cap: stake ${:.2} → ${:.2}",
+                old_stake, capped_stake
+            ));
             tracing::info!(
                 "paper decision capped by bankroll: {} ${:.2} -> ${:.2}",
                 decision.ticker,
@@ -601,7 +705,8 @@ pub async fn kalshi_record_paper_decision(
     // apply fee-aware verdict. Agent pipeline (sidecar) is the preferred source
     // of p_model; paper path uses the decision's fair probability as a single
     // model opinion so columns are never left blank with a raw unshrunk number.
-    let close_time = chrono::Utc::now().to_rfc3339();
+    // Sprint 0.2: use market close/expiry from tape when known.
+    let close_time = market_close_time;
     // market_price_pct is percent 0–100; price_to_enter is dollars 0–1 after sanitize.
     let p_market_raw = (decision.market_price_pct / 100.0).clamp(0.01, 0.99);
     let p_model_raw = (decision.fair_probability_pct / 100.0).clamp(0.01, 0.99);
@@ -645,9 +750,11 @@ pub async fn kalshi_record_paper_decision(
     };
     let breakdown = serde_json::to_string(&opinion.contributions).ok();
 
-    // Open a paper lot only on actionable TAKE with a real side + stake.
+    // Open a paper lot only on actionable TAKE with a real side + stake,
+    // and only when breakers are not blocking new paper positions.
     // WATCH/PASS must not debit cash even if contract_side is YES/NO.
-    let trade_input = if decision.decision == crate::chat::decision_schema::DecisionAction::TAKE
+    let trade_input = if !paper_lots_blocked
+        && decision.decision == crate::chat::decision_schema::DecisionAction::TAKE
         && decision.contract_side != crate::chat::decision_schema::ContractSide::PASS
     {
         let entry_cents = crate::paper::normalize_entry_cents(decision.price_to_enter);
@@ -667,6 +774,11 @@ pub async fn kalshi_record_paper_decision(
                 prediction_id: Some(prediction_id.clone()),
             })
         } else {
+            if decision.decision == crate::chat::decision_schema::DecisionAction::TAKE {
+                demotion_notes.push(
+                    "TAKE requested but stake/entry invalid — journal only (no lot)".into(),
+                );
+            }
             None
         }
     } else {
@@ -688,18 +800,46 @@ pub async fn kalshi_record_paper_decision(
         trade_input: trade_input.clone(),
     };
 
-    let prediction_id = crate::paper::record_paper_decision(&db_pool, ctx).await?;
+    let (prediction_id, lot_id) = crate::paper::record_paper_decision(&db_pool, ctx).await?;
 
-    if trade_input.is_some() {
+    // Prefer live marks for equity curve when client is available (Sprint 0.3).
+    let _ = crate::paper::record_equity_snapshot(&db_pool, Some(kalshi.as_ref())).await;
+
+    let lot_opened = lot_id.is_some();
+    if lot_opened {
         tracing::info!(
-            "paper decision recorded: {} {:?} (prediction {})",
+            "paper decision recorded: {} {:?} lot={:?} (prediction {})",
             decision.ticker,
             decision.contract_side,
+            lot_id,
             prediction_id
+        );
+    } else {
+        tracing::info!(
+            "paper journal-only: {} {:?} (prediction {}) notes={:?}",
+            decision.ticker,
+            decision.decision,
+            prediction_id,
+            demotion_notes
         );
     }
 
-    Ok(prediction_id)
+    Ok(crate::paper::PaperRecordResult {
+        prediction_id,
+        lot_opened,
+        lot_id,
+        final_decision: format!("{:?}", decision.decision),
+        contract_side: format!("{:?}", decision.contract_side),
+        ticker: decision.ticker.clone(),
+        stake: if lot_opened {
+            decision.recommended_stake_dollars
+        } else {
+            0.0
+        },
+        price_to_enter: decision.price_to_enter,
+        demotion_notes,
+        paper_lots_blocked,
+    })
 }
 
 // ═══════════════════════════════════════════════════════════════

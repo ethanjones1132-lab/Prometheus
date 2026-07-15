@@ -323,6 +323,20 @@ export interface PaperAccount {
   updated_at: string;
 }
 
+/** Structured result from kalshi_record_paper_decision (Sprint 0.1). */
+export interface PaperRecordResult {
+  prediction_id: string;
+  lot_opened: boolean;
+  lot_id?: string | null;
+  final_decision: string;
+  contract_side: string;
+  ticker: string;
+  stake: number;
+  price_to_enter: number;
+  demotion_notes: string[];
+  paper_lots_blocked: boolean;
+}
+
 export function kalshiBetWon(pred: KalshiPrediction): boolean | null {
   const actual = pred.actual_outcome;
   if (!actual) return null;

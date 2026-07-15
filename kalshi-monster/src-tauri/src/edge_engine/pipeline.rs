@@ -116,6 +116,14 @@ pub struct EdgeAnalysisResult {
     pub sidecar_elapsed_ms: Option<i64>,
 }
 
+/// Compact web evidence row for the news agent (Rust → sidecar context).
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct WebSnippet {
+    pub title: String,
+    pub url: String,
+    pub snippet: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct AnalyzeMarketInput {
     pub market_ticker: String,
@@ -129,7 +137,60 @@ pub struct AnalyzeMarketInput {
     pub contract_mids: Vec<f64>,
     pub underlying_ticker: Option<String>,
     pub strike: Option<f64>,
+    /// Days until close (from tape); technical prefers this over re-parsing close_time.
+    pub horizon_days: Option<f64>,
+    /// Structured snippets for news agent — never invents p without these.
+    pub web_snippets: Vec<WebSnippet>,
     pub flags: Vec<String>,
+}
+
+/// Absolute edge score for ranking: max(|edge_yes|, |edge_no|).
+pub fn abs_edge_net_score(edge_net_yes: f64, edge_net_no: f64) -> f64 {
+    edge_net_yes.abs().max(edge_net_no.abs())
+}
+
+/// Rank analysis results by |edge_net| descending (stable for equal scores).
+pub fn rank_by_abs_edge_net(results: &[EdgeAnalysisResult]) -> Vec<EdgeAnalysisResult> {
+    let mut ranked = results.to_vec();
+    ranked.sort_by(|a, b| {
+        let sa = abs_edge_net_score(a.edge_net_yes, a.edge_net_no);
+        let sb = abs_edge_net_score(b.edge_net_yes, b.edge_net_no);
+        sb.partial_cmp(&sa)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.market_ticker.cmp(&b.market_ticker))
+    });
+    ranked
+}
+
+/// Routing weight mass sitting on agents that returned `probability=None`.
+/// Returns (silent_fraction, silent_agent_names) relative to total routing table mass.
+pub fn silent_agent_weight_report(
+    signals: &[AgentSignal],
+    weights: &HashMap<String, f64>,
+) -> Option<(f64, Vec<String>)> {
+    let total: f64 = weights.values().copied().sum();
+    if total <= 0.0 {
+        return None;
+    }
+    let mut silent_mass = 0.0;
+    let mut silent_names: Vec<String> = Vec::new();
+    for (agent, w) in weights {
+        if *w <= 0.0 {
+            continue;
+        }
+        let opined = signals
+            .iter()
+            .any(|s| s.agent == *agent && s.probability.is_some());
+        if !opined {
+            silent_mass += *w;
+            silent_names.push(agent.clone());
+        }
+    }
+    if silent_names.is_empty() {
+        return None;
+    }
+    silent_names.sort();
+    Some((silent_mass / total, silent_names))
 }
 
 /// Call sidecar agents (if online), aggregate, evaluate, insert forecast ledger row.
@@ -165,6 +226,15 @@ pub async fn analyze_and_log_forecast(
     }
     if let Some(k) = input.strike {
         context.insert("strike".into(), serde_json::json!(k));
+    }
+    if let Some(h) = input.horizon_days {
+        context.insert("horizon_days".into(), serde_json::json!(h));
+    }
+    if !input.web_snippets.is_empty() {
+        context.insert(
+            "web_snippets".into(),
+            serde_json::json!(input.web_snippets),
+        );
     }
     // Depth hint for sidecar orchestrator (quick/standard/deep); agents may ignore.
     context.insert("depth".into(), serde_json::json!("standard"));
@@ -208,7 +278,21 @@ pub async fn analyze_and_log_forecast(
     let opinion: Option<ModelOpinion> = aggregate(&signals, &weights);
     let signals_opining = signals.iter().filter(|s| s.probability.is_some()).count();
 
-    let (p_model, edge): (Option<f64>, EdgeVerdict) = if let Some(ref op) = opinion {
+    // Sprint 1.3: surface routing weight on silent agents (macro/news often null).
+    let silent_note = silent_agent_weight_report(&signals, &weights).and_then(|(frac, names)| {
+        if frac < 0.25 {
+            return None;
+        }
+        Some(format!(
+            "silent agent weight {:.0}% of routing ({}) — p_model thin when only {} of {} agents opine",
+            frac * 100.0,
+            names.join(", "),
+            signals_opining,
+            signals.len()
+        ))
+    });
+
+    let (p_model, mut edge): (Option<f64>, EdgeVerdict) = if let Some(ref op) = opinion {
         let v = evaluate(op, quote, &flags, cfg);
         (Some(op.p_model), v)
     } else {
@@ -232,6 +316,9 @@ pub async fn analyze_and_log_forecast(
         };
         (None, v)
     };
+    if let Some(note) = silent_note {
+        edge.reasons.push(note);
+    }
 
     let agent_breakdown = if signals.is_empty() {
         None
@@ -296,5 +383,72 @@ mod tests {
     fn sidecar_category_maps_finance() {
         assert_eq!(sidecar_category("Financials"), "index_price_level");
         assert_eq!(sidecar_category("Politics"), "political");
+    }
+
+    #[test]
+    fn rank_by_abs_edge_puts_largest_first() {
+        let mk = |ticker: &str, yes: f64, no: f64| EdgeAnalysisResult {
+            forecast_id: 1,
+            market_ticker: ticker.into(),
+            p_market: 0.5,
+            p_model: None,
+            p_final: 0.5,
+            confidence: 0.0,
+            verdict: "pass".into(),
+            verdict_reasons: vec![],
+            agent_breakdown: None,
+            edge_net_yes: yes,
+            edge_net_no: no,
+            signals_received: 0,
+            signals_opining: 0,
+            sidecar_elapsed_ms: None,
+        };
+        let ranked = rank_by_abs_edge_net(&[
+            mk("A", 0.01, 0.0),
+            mk("B", 0.0, -0.08),
+            mk("C", 0.03, 0.02),
+        ]);
+        assert_eq!(ranked[0].market_ticker, "B");
+        assert_eq!(ranked[1].market_ticker, "C");
+        assert_eq!(ranked[2].market_ticker, "A");
+    }
+
+    #[test]
+    fn silent_weight_reports_macro_news_mass() {
+        let mut weights = HashMap::new();
+        weights.insert("macro".into(), 0.50);
+        weights.insert("news".into(), 0.20);
+        weights.insert("technical".into(), 0.20);
+        weights.insert("contract_tape".into(), 0.10);
+        let signals = vec![
+            AgentSignal {
+                agent: "technical".into(),
+                probability: Some(0.55),
+                confidence: 0.4,
+                rationale: "ok".into(),
+                inputs_used: vec![],
+                caveats: vec![],
+            },
+            AgentSignal {
+                agent: "macro".into(),
+                probability: None,
+                confidence: 0.0,
+                rationale: "no data".into(),
+                inputs_used: vec![],
+                caveats: vec![],
+            },
+            AgentSignal {
+                agent: "news".into(),
+                probability: None,
+                confidence: 0.0,
+                rationale: "no snippets".into(),
+                inputs_used: vec![],
+                caveats: vec![],
+            },
+        ];
+        let (frac, names) = silent_agent_weight_report(&signals, &weights).unwrap();
+        assert!(frac > 0.5, "frac={frac}");
+        assert!(names.contains(&"macro".to_string()));
+        assert!(names.contains(&"news".to_string()));
     }
 }
