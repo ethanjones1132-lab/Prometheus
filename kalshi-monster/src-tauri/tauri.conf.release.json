@@ -1,5 +1,5 @@
 {
   "bundle": {
-    "externalBin": ["fincept-sidecar"]
+    "externalBin": ["binaries/fincept-sidecar"]
   }
 }

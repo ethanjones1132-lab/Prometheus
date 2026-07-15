@@ -40,3 +40,6 @@ kalshi-monster/scripts/debug_test.py
 kalshi-monster/scripts/expand_*.py
 kalshi-monster/scripts/fix_*.py
 kalshi-monster/scripts/add_*.py
+
+# Ephemeral helper scripts at repo root (cron one-offs)
+scripts/_*.py

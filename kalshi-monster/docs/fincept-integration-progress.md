@@ -2,21 +2,32 @@
 
 Tracks execution of `docs/fincept-integration-plan.md` (v2.1). Newest entry first.
 
-**This file is the working source of truth for “what’s next.”** Prefer it over the reverse-chronology in `PRIORITIES.md` when choosing work. Historical maintenance notes remain below; only the **Current next steps** block is kept reconciled.
+**Forward roadmap source of truth:** **`docs/MASTER-PLAN.md`** (merged Fincept + paper + analyst quality, chronological sprints 0–7).  
+This file remains the Fincept integration **ship log**; prefer MASTER-PLAN for “what next,” this file for history. Historical notes below.
 
 ---
 
-## Current next steps (reconciled 2026-07-14, post sidecar PyInstaller staging)
+## Current next steps (reconciled 2026-07-15 → see MASTER-PLAN)
 
-| # | Item | Why | Notes / acceptance |
-|---|------|------|---------------------|
-| **1** | ~~**KB-1 live verify**~~ | Done (catalog path) | Code + public API verified; release binary rebuilt. User machine still needed for logged-in portfolio path. |
-| **2** | **Calibration flywheel (ongoing)** | Gate needs *resolved* rows | Auto-grade fills `forecasts.outcome`; accumulate ≥200 resolved + Brier + paper P&L. |
-| **3** | ~~**KB-2 Analyst UX**~~ | Shipped | Sessions, stream, paper, OpenCode providers, completion + retrieval fixes. |
-| **4** | **Phase 3 productization** | Ops path | Breaker persistence; reliability diagram; live-order guard; λ re-fit; full edge_config; keyring secrets; fee-aware paper + grading PnL. Polish as gate data accrues. |
-| **5** | **Phase 1 leftovers** | Sidecar ops / data breadth | **`build_fincept_sidecar.py`** now Hermes-safe + `--check-env`; staged `fincept-sidecar-x86_64-pc-windows-msvc.exe` (~42MB) locally. **Next:** `tauri build --config tauri.conf.release.json` on release machine. |
-| **6** | **More agents (honest data only)** | p_model coverage | Fincept spike or native agents only with real data. |
-| **7** | **AGPL isolation hygiene** | Plan §3 Rule 1 | Split `fincept-sidecar` public repo before Fincept-derived code. |
+| # | Item | Status | Notes |
+|---|------|--------|--------|
+| **0** | **Master plan** | Active | `docs/MASTER-PLAN.md` |
+| **1** | Fincept Phase A | ✅ Done | Agent priors in chat; opinion_input; unified analyze path |
+| **2** | Paper settle + prediction sync | ✅ Done | Side-aware settle; grade/auto-grade settle paper |
+| **3** | **Next: Sprint 0** | Todo | Paper trust polish (structured IPC, equity MTM, close_time) |
+| **4** | **Then: Sprint 1** | Todo | Fincept B — technical coverage + news agent |
+| **5** | Sprints 2–7 | Planned | Edge Board → depth tiers → macro → calibration → paper polish → AGPL |
+
+---
+
+## 2026-07-15 — Phase A: Sidecar as default opinion co-pilot
+
+- **Plan saved:** `docs/fincept-sidecar-deep-integration-plan.md`
+- **`edge_engine/opinion_input.rs`:** `build_analyze_input`, mids (newest-first), underlying/strike inference, prompt formatter.
+- **`chat/agent_priors.rs`:** up to 3 open markets → `analyze_and_log_forecast` (8s budget) → `## SIDECAR MODEL PRIORS` in chat context.
+- **Analyze path:** uses shared builder (mids + inference always).
+- **Chat ledger:** prefers edge pipeline; annotates `agent_breakdown.llm`; LLM-only fallback if offline.
+- **Tests:** `opinion_input` + `agent_priors` unit tests.
 
 ---
 

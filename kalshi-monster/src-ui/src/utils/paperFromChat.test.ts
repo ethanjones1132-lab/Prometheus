@@ -38,6 +38,42 @@ Here is my call:
     // price_to_enter normalized from cents → dollars
     expect(d!.price_to_enter).toBeCloseTo(0.42);
     expect(d!.market_price_pct).toBeCloseTo(40);
+    // Always present for IPC even when LLM omits it
+    expect(typeof d!.model_disagreement).toBe('boolean');
+  });
+
+  test('omitted model_disagreement is inferred from fair vs market', () => {
+    const content = `
+\`\`\`json
+{
+  "ticker": "KXSENATEMID-26-HSTE",
+  "market_title": "Stevens",
+  "category": "Politics",
+  "contract_side": "YES",
+  "market_price_pct": 34,
+  "fair_probability_pct": 62,
+  "edge_points": 28,
+  "spread_cents": 1,
+  "liquidity_score": 80,
+  "ev_per_contract_cents": 28,
+  "ev_roi_pct": 82.4,
+  "raw_kelly_pct": 42.4,
+  "fractional_kelly_pct": 5,
+  "recommended_stake_dollars": 50,
+  "max_position_dollars": 50,
+  "decision": "TAKE",
+  "confidence_tier": "High",
+  "thesis": "edge",
+  "evidence": [],
+  "risk_flags": ["EarlyCloseRisk"],
+  "data_quality": "Live",
+  "price_to_enter": 0.34
+}
+\`\`\`
+`;
+    const d = extractPaperDecision(content);
+    expect(d).not.toBeNull();
+    expect(d!.model_disagreement).toBe(true); // |62-34| >= 15
   });
 
   test('parses heuristic YES with fair and market pct', () => {

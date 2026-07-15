@@ -2,6 +2,46 @@
 
 Last updated: 2026-07-15
 
+## Maintenance notes (2026-07-15, cron pass) — auto-remediation + serde fix
+
+- Committed coherent WIP: paper auto-settle/prediction sync, Phase A agent priors (`agent_priors`, `opinion_input`), IPC serde defaults, decision schema aliases + quality rails.
+- **Fix:** removed erroneous `serde(rename_all = SCREAMING_SNAKE_CASE)` on `DecisionAction`/`ContractSide` (was serializing `TAKE` as `T_A_K_E`, breaking 8 lib tests).
+- Gitignore: `scripts/_*.py` ephemeral helpers.
+- Verified: `cargo check`, `tsc`, **249** lib tests, vitest **46/46**, paper **10/10**.
+- **Next:** KB-1 live credential verify (user); Phase B news/macro agents; equity MTM snapshots.
+
+## Maintenance notes (2026-07-15) — paper auto-settle + prediction sync
+
+(Merges Fincept deep integration + paper audit + analyst quality. Next: Sprint 0 paper trust, then Sprint 1 agents.)
+
+## Maintenance notes (2026-07-15) — master plan merged
+
+- Created `docs/MASTER-PLAN.md`: chronological sprints 0–7 from Fincept plan (B–D remaining) + paper audit leftovers + calibration flywheel.
+- Pointers updated in `docs/fincept-integration-progress.md`.
+
+## Maintenance notes (2026-07-15) — paper auto-settle + prediction sync
+
+- `paper_lots.prediction_id` column + link on open
+- `settle_pending`: side-aware close + **sync prediction Win/Loss/PnL** + resolve forecasts
+- Auto-grade poller always settles open paper lots; Grade / Resolve IPC also settle paper
+- Tests: paper:: **10/10** (`settle_syncs_linked_prediction_outcome`)
+- Audit updated: `docs/paper-system-audit-2026-07-15.md`
+
+## Maintenance notes (2026-07-15) — paper system audit + critical fixes
+
+- Audit: `docs/paper-system-audit-2026-07-15.md`
+- **Critical fix:** NO-side settlement was inverted (used YES exit cents for all lots)
+- **High:** lots only open on `decision=TAKE` (not WATCH); prediction `entry_price` stores dollars not market %
+- **IPC:** serde defaults for evidence/risk_flags/data_quality; `ChatExtract` quality; risk `#[serde(other)]`; case aliases
+- Tests: paper:: **9/9** including `no_side_settlement_pays_on_no_result`
+- **Next paper:** equity MTM snapshots; structured IPC response
+
+## Maintenance notes (2026-07-15) — Fincept Phase A (agent priors in Analyst)
+
+- Plan in-repo: `docs/fincept-sidecar-deep-integration-plan.md` (Phases A–D for other agents).
+- Shipped Phase A: `edge_engine/opinion_input` (mids + underlying/strike), `chat/agent_priors` injects SIDECAR MODEL PRIORS into chat; Analyze uses shared builder; chat forecasts prefer edge pipeline + LLM annotation.
+- **Next:** Phase B (news/macro/technical coverage), Edge Board (Phase C).
+
 ## Maintenance notes (2026-07-15) — comprehensive model performance (no math)
 
 - Analyzed latest Analyst sessions + `predictions.db`: free DeepSeek **D+** process grade; edge ledger 35/35 PASS; graded track record thin (1 Loss / 14 Pending).

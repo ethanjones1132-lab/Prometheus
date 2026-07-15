@@ -77,6 +77,8 @@ pub struct PaperLot {
     pub stake_dollars: f64,
     pub source: PaperTradeSource,
     pub decision_json: Option<String>,
+    /// Linked predictions.id when opened via kalshi_record_paper_decision.
+    pub prediction_id: Option<String>,
     pub opened_at: String,
     pub closed_at: Option<String>,
     pub closed_price_cents: Option<f64>,
@@ -96,6 +98,9 @@ pub struct PaperTradeInput {
     pub entry_price_cents: f64,
     pub source: PaperTradeSource,
     pub decision_json: Option<String>,
+    /// Optional link back to the predictions journal row.
+    #[serde(default)]
+    pub prediction_id: Option<String>,
 }
 
 /// An aggregated open position per ticker/side.
@@ -132,6 +137,12 @@ pub struct PaperSettlementDetail {
     pub side: String,
     pub result: String,
     pub realized_pnl: f64,
+    /// Predictions journal row graded as a side-effect of settlement (if any).
+    #[serde(default)]
+    pub prediction_id: Option<String>,
+    /// Win / Loss / Push written to the prediction (if synced).
+    #[serde(default)]
+    pub prediction_outcome: Option<String>,
 }
 
 /// High-level paper-trading analytics.
@@ -249,6 +260,19 @@ pub async fn init_paper_tables(pool: &Pool<Sqlite>) -> Result<(), String> {
         .execute(pool)
         .await
         .ok();
+
+    // Migration: link lots → predictions for grade sync on settle.
+    let _ = sqlx::query(
+        "ALTER TABLE paper_lots ADD COLUMN prediction_id TEXT",
+    )
+    .execute(pool)
+    .await;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_paper_lots_prediction ON paper_lots(prediction_id)",
+    )
+    .execute(pool)
+    .await
+    .ok();
 
     // Bootstrap singleton account if missing.
     let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM paper_account WHERE id = 1)")
@@ -431,8 +455,8 @@ pub async fn place_trade_tx(
         r#"
         INSERT INTO paper_lots
             (id, ticker, title, category, side, entry_price_cents, qty, stake_dollars,
-             source, decision_json, opened_at, status)
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 'Open')
+             source, decision_json, prediction_id, opened_at, status)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 'Open')
         "#,
     )
     .bind(&id)
@@ -445,6 +469,7 @@ pub async fn place_trade_tx(
     .bind(total_cost)
     .bind(&source_str)
     .bind(&input.decision_json)
+    .bind(&input.prediction_id)
     .bind(&now)
     .execute(&mut **txn)
     .await
@@ -526,8 +551,12 @@ pub async fn record_paper_decision(
     .await
     .map_err(|e| format!("prediction edge update: {e}"))?;
 
-    // 4. Optional paper lot (PASS decisions do not open a position).
-    if let Some(input) = ctx.trade_input {
+    // 4. Optional paper lot (PASS/WATCH do not open a position).
+    if let Some(mut input) = ctx.trade_input {
+        // Always link the lot to this prediction for settle → grade sync.
+        if input.prediction_id.is_none() {
+            input.prediction_id = Some(prediction_id.clone());
+        }
         place_trade_tx(&mut txn, &input, fee_multiplier)
             .await
             .map_err(|e| format!("paper lot: {e}"))?;
@@ -544,10 +573,34 @@ pub async fn record_paper_decision(
     Ok(prediction_id)
 }
 
+/// Exit price in cents for the *held side* given Kalshi YES/NO settlement.
+/// Held-side contracts pay $1 (100¢) when that side wins, else $0.
+pub fn settlement_exit_cents_for_side(side: &str, actual_yes_no: &str) -> f64 {
+    let side = side.trim().to_uppercase();
+    let actual = actual_yes_no.trim();
+    let held_wins = (side == "YES" && actual.eq_ignore_ascii_case("yes"))
+        || (side == "NO" && actual.eq_ignore_ascii_case("no"));
+    if held_wins {
+        100.0
+    } else {
+        0.0
+    }
+}
+
 pub async fn close_lot(
     pool: &Pool<Sqlite>,
     lot_id: &str,
     exit_price_cents: f64,
+) -> Result<PaperLot, String> {
+    close_lot_with_result(pool, lot_id, exit_price_cents, "Closed").await
+}
+
+/// Close a lot and store the Kalshi settlement string (Yes/No) when known.
+pub async fn close_lot_with_result(
+    pool: &Pool<Sqlite>,
+    lot_id: &str,
+    exit_price_cents: f64,
+    settlement_result: &str,
 ) -> Result<PaperLot, String> {
     if exit_price_cents < 0.0 || exit_price_cents > 100.0 {
         return Err("Exit price must be between 0 and 100 cents".into());
@@ -561,12 +614,14 @@ pub async fn close_lot(
     let proceeds = lot.qty * exit_price_cents / 100.0;
     let realized = proceeds - lot.stake_dollars;
     let now = Utc::now().to_rfc3339();
-    let result = if exit_price_cents >= 99.99 {
-        "Yes"
+    let result = if !settlement_result.is_empty() && settlement_result != "Closed" {
+        settlement_result.to_string()
+    } else if exit_price_cents >= 99.99 {
+        "Yes".to_string()
     } else if exit_price_cents <= 0.01 {
-        "No"
+        "No".to_string()
     } else {
-        "Closed"
+        "Closed".to_string()
     };
 
     sqlx::query(
@@ -580,7 +635,7 @@ pub async fn close_lot(
     .bind(&now)
     .bind(exit_price_cents)
     .bind(realized)
-    .bind(result)
+    .bind(&result)
     .bind(lot_id)
     .execute(pool)
     .await
@@ -596,7 +651,7 @@ pub async fn get_lot(pool: &Pool<Sqlite>, lot_id: &str) -> Result<PaperLot, Stri
     let row = sqlx::query(
         r#"
         SELECT id, ticker, title, category, side, entry_price_cents, qty, stake_dollars,
-               source, decision_json, opened_at, closed_at, closed_price_cents,
+               source, decision_json, prediction_id, opened_at, closed_at, closed_price_cents,
                realized_pnl, status, settlement_result
         FROM paper_lots WHERE id = ?1
         "#,
@@ -613,7 +668,7 @@ async fn get_lot_tx(txn: &mut sqlx::Transaction<'_, Sqlite>, lot_id: &str) -> Re
     let row = sqlx::query(
         r#"
         SELECT id, ticker, title, category, side, entry_price_cents, qty, stake_dollars,
-               source, decision_json, opened_at, closed_at, closed_price_cents,
+               source, decision_json, prediction_id, opened_at, closed_at, closed_price_cents,
                realized_pnl, status, settlement_result
         FROM paper_lots WHERE id = ?1
         "#,
@@ -630,7 +685,7 @@ pub async fn get_all_lots(pool: &Pool<Sqlite>) -> Result<Vec<PaperLot>, String> 
     let rows = sqlx::query(
         r#"
         SELECT id, ticker, title, category, side, entry_price_cents, qty, stake_dollars,
-               source, decision_json, opened_at, closed_at, closed_price_cents,
+               source, decision_json, prediction_id, opened_at, closed_at, closed_price_cents,
                realized_pnl, status, settlement_result
         FROM paper_lots ORDER BY opened_at DESC
         "#,
@@ -646,7 +701,7 @@ pub async fn get_open_lots(pool: &Pool<Sqlite>) -> Result<Vec<PaperLot>, String>
     let rows = sqlx::query(
         r#"
         SELECT id, ticker, title, category, side, entry_price_cents, qty, stake_dollars,
-               source, decision_json, opened_at, closed_at, closed_price_cents,
+               source, decision_json, prediction_id, opened_at, closed_at, closed_price_cents,
                realized_pnl, status, settlement_result
         FROM paper_lots WHERE status = 'Open' ORDER BY opened_at DESC
         "#,
@@ -671,6 +726,7 @@ fn row_to_lot(r: &sqlx::sqlite::SqliteRow) -> PaperLot {
         stake_dollars: r.get("stake_dollars"),
         source: source.parse().unwrap_or(PaperTradeSource::Manual),
         decision_json: r.get("decision_json"),
+        prediction_id: r.try_get("prediction_id").ok().flatten(),
         opened_at: r.get("opened_at"),
         closed_at: r.get("closed_at"),
         closed_price_cents: r.get("closed_price_cents"),
@@ -795,34 +851,169 @@ pub async fn settle_pending(
             continue;
         }
 
-        let exit = if market.result.eq_ignore_ascii_case("yes") {
-            100.0
-        } else {
-            0.0
-        };
+        // Normalize Yes/No (Kalshi may return mixed case).
+        let actual = crate::kalshi::grading::normalize_settlement_result(&market.result);
+        if actual != "Yes" && actual != "No" {
+            tracing::debug!(
+                "paper settle: skip {ticker} — non-binary result {:?}",
+                market.result
+            );
+            continue;
+        }
+
+        // Resolve forecast ledger rows for this market (same truth as lot settle).
+        let resolved_at = Utc::now().to_rfc3339();
+        if let Err(e) = crate::kalshi::forecast::resolve_forecasts_for_market(
+            pool,
+            &ticker,
+            &actual,
+            &resolved_at,
+        )
+        .await
+        {
+            tracing::warn!("paper settle forecast resolve {ticker}: {e}");
+        }
 
         for lot in lots {
-            let closed = close_lot(pool, &lot.id, exit).await?;
-            let won = (closed.side == "YES" && market.result.eq_ignore_ascii_case("yes"))
-                || (closed.side == "NO" && market.result.eq_ignore_ascii_case("no"));
+            // CRITICAL: exit price is for the *held side*, not always the YES settlement.
+            // YES lot + Yes → 100c; YES lot + No → 0c; NO lot + No → 100c; NO lot + Yes → 0c.
+            let exit = settlement_exit_cents_for_side(&lot.side, &actual);
+            let closed = close_lot_with_result(pool, &lot.id, exit, &actual).await?;
+            let won = (closed.side == "YES" && actual == "Yes")
+                || (closed.side == "NO" && actual == "No");
+            let pnl = closed.realized_pnl.unwrap_or(0.0);
             summary.settled += 1;
             if won {
                 summary.wins += 1;
             } else {
                 summary.losses += 1;
             }
-            summary.total_pnl += closed.realized_pnl.unwrap_or(0.0);
+            summary.total_pnl += pnl;
+
+            // Sync predictions journal (Win/Loss + PnL) so Portfolio cards match paper lots.
+            let (pred_id, pred_outcome) =
+                match sync_prediction_from_settled_lot(pool, &closed, &actual, pnl).await {
+                    Ok(pair) => pair,
+                    Err(e) => {
+                        tracing::warn!(
+                            "paper settle prediction sync lot {}: {e}",
+                            closed.id
+                        );
+                        (closed.prediction_id.clone(), None)
+                    }
+                };
+
             summary.details.push(PaperSettlementDetail {
                 lot_id: closed.id,
                 ticker: closed.ticker,
                 side: closed.side,
-                result: market.result.clone(),
-                realized_pnl: closed.realized_pnl.unwrap_or(0.0),
+                result: actual.clone(),
+                realized_pnl: pnl,
+                prediction_id: pred_id,
+                prediction_outcome: pred_outcome,
             });
         }
     }
 
     Ok(summary)
+}
+
+/// Grade matching prediction row(s) when a paper lot settles.
+/// Returns (prediction_id, outcome label) when a row was updated.
+pub async fn sync_prediction_from_settled_lot(
+    pool: &Pool<Sqlite>,
+    lot: &PaperLot,
+    actual_yes_no: &str,
+    realized_pnl: f64,
+) -> Result<(Option<String>, Option<String>), String> {
+    let pred_id = resolve_prediction_id_for_lot(pool, lot).await?;
+    let Some(pred_id) = pred_id else {
+        return Ok((None, None));
+    };
+
+    let won = (lot.side.eq_ignore_ascii_case("YES") && actual_yes_no.eq_ignore_ascii_case("yes"))
+        || (lot.side.eq_ignore_ascii_case("NO") && actual_yes_no.eq_ignore_ascii_case("no"));
+    let outcome = if realized_pnl > 0.0 {
+        "Win"
+    } else if realized_pnl < 0.0 {
+        "Loss"
+    } else if won {
+        "Win"
+    } else {
+        "Loss"
+    };
+    // Held-side settlement value in dollars for CLV-ish close mark.
+    let close_price = if won { 1.0 } else { 0.0 };
+    let entry_dollars = (lot.entry_price_cents / 100.0).clamp(0.0, 1.0);
+    let clv = close_price - entry_dollars;
+    let notes = format!(
+        "Outcome: {actual_yes_no}, PnL: {realized_pnl:.4} (synced from paper lot {})",
+        lot.id
+    );
+    let resolved_at = Utc::now().to_rfc3339();
+
+    let rows = sqlx::query(
+        r#"
+        UPDATE predictions
+        SET outcome = ?1,
+            actual_result = ?2,
+            notes = ?3,
+            resolved_at = ?4,
+            close_price = ?5,
+            clv = ?6
+        WHERE id = ?7
+          AND (outcome IS NULL OR outcome = '' OR outcome = 'Pending')
+        "#,
+    )
+    .bind(outcome)
+    .bind(realized_pnl)
+    .bind(&notes)
+    .bind(&resolved_at)
+    .bind(close_price)
+    .bind(clv)
+    .bind(&pred_id)
+    .execute(pool)
+    .await
+    .map_err(|e| format!("prediction sync update: {e}"))?
+    .rows_affected();
+
+    if rows == 0 {
+        // Already graded or missing — still report the link.
+        return Ok((Some(pred_id), None));
+    }
+    Ok((Some(pred_id), Some(outcome.to_string())))
+}
+
+/// Prefer lot.prediction_id; else latest pending prediction for this ticker.
+async fn resolve_prediction_id_for_lot(
+    pool: &Pool<Sqlite>,
+    lot: &PaperLot,
+) -> Result<Option<String>, String> {
+    if let Some(ref id) = lot.prediction_id {
+        if !id.is_empty() {
+            return Ok(Some(id.clone()));
+        }
+    }
+    // Fallback: pending journal rows for this ticker (player_name or decision JSON).
+    let row = sqlx::query(
+        r#"
+        SELECT id FROM predictions
+        WHERE (outcome IS NULL OR outcome = '' OR outcome = 'Pending')
+          AND (
+            player_name = ?1
+            OR full_decision_json LIKE ?2
+          )
+        ORDER BY created_at DESC
+        LIMIT 1
+        "#,
+    )
+    .bind(&lot.ticker)
+    .bind(format!("%\"ticker\":\"{}%", lot.ticker))
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| format!("prediction lookup: {e}"))?;
+
+    Ok(row.map(|r| r.get::<String, _>("id")))
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1211,6 +1402,7 @@ mod tests {
             entry_price_cents: 55.0,
             source: PaperTradeSource::AiDecision,
             decision_json: None,
+            prediction_id: None,
         };
         let total_cost = 5500.0 + order_fee(0.55, 10_000.0, EdgeConfig::default().fee_multiplier);
 
@@ -1249,6 +1441,7 @@ mod tests {
             entry_price_cents: 55.0,
             source: PaperTradeSource::AiDecision,
             decision_json: None,
+            prediction_id: None,
         };
         let total_cost = 5500.0 + order_fee(0.55, 10_000.0, EdgeConfig::default().fee_multiplier);
 
@@ -1276,6 +1469,156 @@ mod tests {
         assert_eq!(lots.len(), successes);
     }
 
+    #[test]
+    fn settlement_exit_cents_side_aware() {
+        // YES holder wins only when result is Yes
+        assert!((settlement_exit_cents_for_side("YES", "Yes") - 100.0).abs() < 1e-9);
+        assert!((settlement_exit_cents_for_side("YES", "No") - 0.0).abs() < 1e-9);
+        // NO holder wins when result is No — previously inverted (used YES exit only)
+        assert!((settlement_exit_cents_for_side("NO", "No") - 100.0).abs() < 1e-9);
+        assert!((settlement_exit_cents_for_side("NO", "Yes") - 0.0).abs() < 1e-9);
+    }
+
+    #[tokio::test]
+    async fn no_side_settlement_pays_on_no_result() {
+        let pool = Pool::<Sqlite>::connect("sqlite::memory:").await.unwrap();
+        init_paper_tables(&pool).await.unwrap();
+        // Buy NO at 34c (like shorting YES at 66)
+        let input = PaperTradeInput {
+            ticker: "KXTEST-NO".into(),
+            title: "No side".into(),
+            category: "Politics".into(),
+            side: "NO".into(),
+            qty: 100.0,
+            entry_price_cents: 34.0,
+            source: PaperTradeSource::AiDecision,
+            decision_json: None,
+            prediction_id: None,
+        };
+        let lot = place_trade(&pool, input).await.unwrap();
+        let exit = settlement_exit_cents_for_side(&lot.side, "No");
+        let closed = close_lot_with_result(&pool, &lot.id, exit, "No")
+            .await
+            .unwrap();
+        // Win: 100 contracts * $1 - stake (34 + fee)
+        assert!(
+            closed.realized_pnl.unwrap_or(0.0) > 0.0,
+            "NO winner should have positive PnL, got {:?}",
+            closed.realized_pnl
+        );
+        assert_eq!(closed.settlement_result.as_deref(), Some("No"));
+    }
+
+    #[tokio::test]
+    async fn settle_syncs_linked_prediction_outcome() {
+        let pool = Pool::<Sqlite>::connect("sqlite::memory:").await.unwrap();
+        init_paper_tables(&pool).await.unwrap();
+        // Minimal predictions table for sync path
+        sqlx::query(
+            r#"
+            CREATE TABLE predictions (
+                id TEXT PRIMARY KEY,
+                session_id TEXT,
+                raw_text TEXT,
+                player_name TEXT,
+                pick_type TEXT,
+                line REAL,
+                stat_category TEXT,
+                confidence TEXT,
+                confidence_score INTEGER,
+                probability REAL,
+                reasoning TEXT,
+                risk TEXT,
+                created_at TEXT,
+                outcome TEXT,
+                actual_result REAL,
+                notes TEXT,
+                resolved_at TEXT,
+                full_decision_json TEXT,
+                entry_price REAL,
+                close_price REAL,
+                clv REAL,
+                model_disagreement INTEGER
+            )
+            "#,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS forecasts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                market_ticker TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                close_time TEXT NOT NULL,
+                p_market REAL NOT NULL,
+                p_model REAL,
+                p_final REAL NOT NULL,
+                verdict TEXT NOT NULL,
+                verdict_reasons TEXT NOT NULL,
+                stake_suggested REAL,
+                agent_breakdown TEXT,
+                resolved_at TEXT,
+                outcome INTEGER,
+                brier_model REAL,
+                brier_market REAL,
+                brier_final REAL
+            )
+            "#,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let pred_id = "pred-sync-1";
+        sqlx::query(
+            "INSERT INTO predictions (id, session_id, raw_text, player_name, created_at, outcome, entry_price, full_decision_json)
+             VALUES (?1, 's', '{}', 'KXTEST-SYNC', datetime('now'), 'Pending', 0.40, '{\"ticker\":\"KXTEST-SYNC\"}')",
+        )
+        .bind(pred_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let input = PaperTradeInput {
+            ticker: "KXTEST-SYNC".into(),
+            title: "Sync test".into(),
+            category: "Politics".into(),
+            side: "YES".into(),
+            qty: 10.0,
+            entry_price_cents: 40.0,
+            source: PaperTradeSource::AiDecision,
+            decision_json: Some(r#"{"ticker":"KXTEST-SYNC"}"#.into()),
+            prediction_id: Some(pred_id.into()),
+        };
+        let lot = place_trade(&pool, input).await.unwrap();
+        assert_eq!(lot.prediction_id.as_deref(), Some(pred_id));
+
+        // Simulate settle path for YES winner
+        let exit = settlement_exit_cents_for_side("YES", "Yes");
+        let closed = close_lot_with_result(&pool, &lot.id, exit, "Yes")
+            .await
+            .unwrap();
+        let pnl = closed.realized_pnl.unwrap_or(0.0);
+        let (synced_id, outcome) =
+            sync_prediction_from_settled_lot(&pool, &closed, "Yes", pnl)
+                .await
+                .unwrap();
+        assert_eq!(synced_id.as_deref(), Some(pred_id));
+        assert_eq!(outcome.as_deref(), Some("Win"));
+
+        let row = sqlx::query("SELECT outcome, actual_result FROM predictions WHERE id = ?1")
+            .bind(pred_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let out: String = row.get("outcome");
+        let ar: f64 = row.get("actual_result");
+        assert_eq!(out, "Win");
+        assert!((ar - pnl).abs() < 1e-6);
+    }
+
     #[tokio::test]
     async fn close_lot_realized_pnl_includes_entry_fees() {
         let pool = Pool::<Sqlite>::connect("sqlite::memory:")
@@ -1292,6 +1635,7 @@ mod tests {
             entry_price_cents: 50.0,
             source: PaperTradeSource::Manual,
             decision_json: None,
+            prediction_id: None,
         };
         let lot = place_trade(&pool, input).await.unwrap();
         let total_cost = lot.stake_dollars;

@@ -247,6 +247,8 @@ export interface KalshiTradeDecision {
   risk_flags: string[];
   data_quality: string;
   price_to_enter: number;
+  /** Optional; inferred client-side when omitted (|fair − market| ≥ 15). */
+  model_disagreement?: boolean;
 }
 
 export type KalshiBetSide = 'YES' | 'NO' | 'PASS' | 'UNKNOWN';

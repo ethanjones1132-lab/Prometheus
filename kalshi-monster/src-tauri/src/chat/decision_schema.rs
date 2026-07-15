@@ -47,14 +47,20 @@ pub struct KalshiTradeDecision {
     /// Calibrated thesis (2–3 sentences)
     pub thesis: String,
     /// Supporting evidence bullets
+    #[serde(default)]
     pub evidence: Vec<String>,
     /// Risk flags identified
+    #[serde(default)]
     pub risk_flags: Vec<RiskFlag>,
     /// Quality rating of the data behind this decision
+    #[serde(default)]
     pub data_quality: DataQuality,
     /// Entry price in dollars per contract (0–1). Never cents.
     pub price_to_enter: f64,
-    /// Whether the model's fair probability diverges significantly from market implied prob
+    /// Whether the model's fair probability diverges significantly from market implied prob.
+    /// Optional on the wire (LLM / UI tickets often omit it) — defaults false, then
+    /// recomputed by `compute` / sanitize paths when edge is known.
+    #[serde(default)]
     pub model_disagreement: bool,
 }
 
@@ -135,9 +141,12 @@ pub fn coerce_probability_to_pct(raw: f64) -> f64 {
 /// Side of the binary contract
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub enum ContractSide {
+    #[serde(alias = "yes", alias = "Yes")]
     YES,
+    #[serde(alias = "no", alias = "No")]
     NO,
     #[default]
+    #[serde(alias = "pass", alias = "Pass")]
     PASS,
 }
 
@@ -145,11 +154,14 @@ pub enum ContractSide {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub enum DecisionAction {
     /// Execute the trade — the edge justifies action
+    #[serde(alias = "take", alias = "Take")]
     TAKE,
     /// Monitor — not enough edge or data to act
+    #[serde(alias = "watch", alias = "Watch")]
     WATCH,
     /// Skip — negative EV or excessive risk
     #[default]
+    #[serde(alias = "pass", alias = "Pass")]
     PASS,
 }
 
@@ -157,18 +169,23 @@ pub enum DecisionAction {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub enum ConfidenceTier {
     /// Strong conviction + excellent data quality
+    #[serde(alias = "high", alias = "HIGH")]
     High,
     /// Moderate conviction + good data quality
+    #[serde(alias = "medium", alias = "MEDIUM")]
     Medium,
     /// Weak conviction or incomplete data
+    #[serde(alias = "low", alias = "LOW")]
     Low,
     /// No confidence — default for PASS
     #[default]
+    #[serde(alias = "none", alias = "NONE")]
     None,
 }
 
 /// Risk flags that can downgrade or invalidate a trade
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "PascalCase")]
 pub enum RiskFlag {
     /// Bid-ask spread is wider than the estimated edge
     SpreadExceedsEdge,
@@ -196,24 +213,33 @@ pub enum RiskFlag {
     MarketSettledOrClosed,
     /// Circuit breaker (§6.4) active — stake scaled or trading blocked
     CircuitBreakerActive,
-    /// Other unspecified risk
-    Other(String),
+    /// Other unspecified risk — also absorbs unknown LLM strings via #[serde(other)]
+    #[serde(other)]
+    Other,
 }
 
 /// Quality of the data used to make this decision
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub enum DataQuality {
     /// Real-time Kalshi API data with live orderbook
+    #[serde(alias = "live", alias = "LIVE")]
     Live,
     /// Cached data < 60 seconds old
+    #[serde(alias = "fresh", alias = "FRESH")]
     Fresh,
     /// Cached data 1–5 minutes old
+    #[serde(alias = "stale", alias = "STALE")]
     Stale,
     /// No direct market data — reasoning from base rates and news only
     #[default]
+    #[serde(alias = "inferential", alias = "INFERENTIAL")]
     Inferential,
     /// Speculative — very limited data
+    #[serde(alias = "speculative", alias = "SPECULATIVE")]
     Speculative,
+    /// Ticket extracted from chat UI (not live orderbook)
+    #[serde(alias = "chat_extract", alias = "ChatExtract", alias = "CHATEXTRACT")]
+    ChatExtract,
 }
 
 impl KalshiTradeDecision {
@@ -916,6 +942,40 @@ mod tests {
         assert!((coerce_price_to_dollars(0.55) - 0.55).abs() < 1e-9);
         assert!((coerce_price_to_dollars(55.0) - 0.55).abs() < 1e-9);
         assert!((coerce_price_to_dollars(0.0) - 0.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn deserialize_omits_model_disagreement_defaults_false() {
+        // LLM tickets (e.g. Stevens YES) often omit model_disagreement — must not
+        // fail kalshi_record_paper_decision IPC.
+        let json = r#"{
+            "ticker": "KXSENATEMID-26-HSTE",
+            "market_title": "Stevens MI",
+            "category": "Politics",
+            "contract_side": "YES",
+            "market_price_pct": 34.0,
+            "fair_probability_pct": 62.0,
+            "edge_points": 28.0,
+            "spread_cents": 1.0,
+            "liquidity_score": 80.0,
+            "ev_per_contract_cents": 28.0,
+            "ev_roi_pct": 82.4,
+            "raw_kelly_pct": 42.4,
+            "fractional_kelly_pct": 5.0,
+            "recommended_stake_dollars": 50.0,
+            "max_position_dollars": 50.0,
+            "decision": "TAKE",
+            "confidence_tier": "High",
+            "thesis": "edge",
+            "evidence": [],
+            "risk_flags": ["EarlyCloseRisk"],
+            "data_quality": "Live",
+            "price_to_enter": 0.34
+        }"#;
+        let d: KalshiTradeDecision = serde_json::from_str(json).expect("deserialize");
+        assert_eq!(d.ticker, "KXSENATEMID-26-HSTE");
+        assert!(!d.model_disagreement);
+        assert_eq!(d.decision, DecisionAction::TAKE);
     }
 
     #[test]

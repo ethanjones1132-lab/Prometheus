@@ -43,15 +43,37 @@ pub async fn kalshi_get_prediction_stats(
     Ok(t.get_kalshi_stats(&all).await)
 }
 
-/// Grade pending Kalshi predictions against resolved market outcomes
+/// Grade pending Kalshi predictions against resolved market outcomes.
+/// Also settles open paper lots and syncs prediction outcomes from those lots.
 #[tauri::command]
 pub async fn kalshi_grade_pending_predictions(
     tracker: State<'_, Arc<Mutex<crate::predictions::tracker::PredictionTracker>>>,
     kalshi: State<'_, KalshiState>,
     db_pool: State<'_, Pool<Sqlite>>,
 ) -> Result<KalshiGradingSummary, String> {
-    let t = tracker.lock().await;
-    crate::kalshi::grade_pending_predictions(&t, &kalshi, &db_pool).await
+    let summary = {
+        let t = tracker.lock().await;
+        crate::kalshi::grade_pending_predictions(&t, &kalshi, &db_pool).await?
+    };
+    // Paper lots + prediction sync (side-aware settlement).
+    match crate::paper::settle_pending(&db_pool, &kalshi).await {
+        Ok(ps) if ps.settled > 0 => {
+            tracing::info!(
+                "grade path also settled {} paper lot(s) ({}W/{}L ${:.2})",
+                ps.settled,
+                ps.wins,
+                ps.losses,
+                ps.total_pnl
+            );
+        }
+        Ok(_) => {}
+        Err(e) => tracing::warn!("paper settle during grade: {e}"),
+    }
+    // Forecast ledger for any remaining open markets.
+    if let Err(e) = crate::kalshi::grading::resolve_pending_forecasts(&db_pool, &kalshi).await {
+        tracing::warn!("forecast resolve during grade: {e}");
+    }
+    Ok(summary)
 }
 
 /// Portfolio-aware Kelly stake scaling for a proposed Kalshi trade.
@@ -136,46 +158,9 @@ async fn analyze_market_edge_inner(
     bridge: &crate::fincept_bridge::FinceptBridge,
     db_pool: &Pool<Sqlite>,
 ) -> Result<crate::edge_engine::pipeline::EdgeAnalysisResult, String> {
-    let market = client.fetch_market(ticker).await?;
-    let history = crate::kalshi::price_tracker::get_price_history(db_pool, ticker, 50)
-        .await
-        .unwrap_or(crate::kalshi::KalshiPriceHistory {
-            ticker: ticker.to_string(),
-            snapshots: vec![],
-            opening_yes_prob: None,
-            current_yes_prob: None,
-            prob_change: None,
-            spread_change: None,
-        });
-    // Snapshots store yes_prob_pct 0–100; agents expect 0–1 mids.
-    let contract_mids: Vec<f64> = history
-        .snapshots
-        .iter()
-        .map(|s| (s.yes_prob_pct / 100.0).clamp(0.01, 0.99))
-        .collect();
-
-    let category = market
-        .category
-        .clone()
-        .unwrap_or_else(|| market.infer_category().to_string());
-    let close_time = market
-        .close_time
-        .clone()
-        .unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
-
-    let input = crate::edge_engine::pipeline::AnalyzeMarketInput {
-        market_ticker: market.ticker.clone(),
-        title: market.title.clone(),
-        resolution_rules: market.rules_primary.clone(),
-        close_time,
-        category,
-        yes_bid: market.yes_bid(),
-        yes_ask: market.yes_ask(),
-        contract_mids,
-        underlying_ticker: None,
-        strike: None,
-        flags: vec![],
-    };
+    // Shared builder: mids from price_tracker + underlying/strike inference (Phase A).
+    let input =
+        crate::edge_engine::opinion_input::build_analyze_input(client, db_pool, ticker).await?;
 
     crate::edge_engine::pipeline::analyze_and_log_forecast(
         db_pool,
@@ -237,7 +222,12 @@ pub async fn kalshi_resolve_pending_forecasts(
     db_pool: State<'_, Pool<Sqlite>>,
 ) -> Result<u32, String> {
     let client = kalshi.as_ref();
-    crate::kalshi::grading::resolve_pending_forecasts(&db_pool, &client).await
+    let n = crate::kalshi::grading::resolve_pending_forecasts(&db_pool, &client).await?;
+    // Keep paper journal in lockstep with forecast resolution.
+    if let Err(e) = crate::paper::settle_pending(&db_pool, client).await {
+        tracing::warn!("paper settle during forecast resolve: {e}");
+    }
+    Ok(n)
 }
 
 /// Calibration gate report from the **forecast** ledger (real rows only).
@@ -588,7 +578,8 @@ pub async fn kalshi_record_paper_decision(
         },
         created_at: now.clone(),
                 full_decision_json: Some(decision_json.clone()),
-        entry_price: Some(decision.market_price_pct),
+        // Store selected-side entry in dollars [0,1] (not market_price_pct which is 0–100).
+        entry_price: Some(decision.price_to_enter),
         model_disagreement: decision.model_disagreement,
     };
 
@@ -654,8 +645,11 @@ pub async fn kalshi_record_paper_decision(
     };
     let breakdown = serde_json::to_string(&opinion.contributions).ok();
 
-    // Build optional paper trade input.
-    let trade_input = if decision.contract_side != crate::chat::decision_schema::ContractSide::PASS {
+    // Open a paper lot only on actionable TAKE with a real side + stake.
+    // WATCH/PASS must not debit cash even if contract_side is YES/NO.
+    let trade_input = if decision.decision == crate::chat::decision_schema::DecisionAction::TAKE
+        && decision.contract_side != crate::chat::decision_schema::ContractSide::PASS
+    {
         let entry_cents = crate::paper::normalize_entry_cents(decision.price_to_enter);
         let stake = decision.recommended_stake_dollars.max(0.0);
         if stake > 0.0 && entry_cents > 0.0 && entry_cents < 100.0 {
@@ -670,6 +664,7 @@ pub async fn kalshi_record_paper_decision(
                 entry_price_cents: entry_cents,
                 source: crate::paper::PaperTradeSource::AiDecision,
                 decision_json: Some(decision_json.clone()),
+                prediction_id: Some(prediction_id.clone()),
             })
         } else {
             None

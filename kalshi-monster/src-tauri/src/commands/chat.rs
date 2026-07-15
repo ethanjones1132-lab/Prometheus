@@ -88,6 +88,17 @@ pub async fn send_message(
         .await;
         // Local graded history — confidence tempering only (no math change).
         ctx.push_str(&crate::chat::track_record::track_record_prompt_block(&db_pool).await);
+        // Phase A: Fincept agent priors for a few open retrieved markets.
+        let edge_cfg = edge_config_for_pool(&db_pool).await;
+        crate::chat::agent_priors::append_agent_priors_for_chat(
+            &mut ctx,
+            kalshi.as_ref(),
+            fincept.inner().as_ref(),
+            &db_pool,
+            &edge_cfg,
+            &built.open_markets,
+        )
+        .await;
         ctx
     };
 
@@ -136,12 +147,18 @@ pub async fn send_message(
     };
     let _ = session::save_session_messages(&session_id, &all_messages);
 
-    // Auto-extract predictions + mirror TAKE/WATCH into the forecast ledger
+    // Auto-extract predictions; ledger via edge pipeline when possible (Phase A3).
     {
         let t = tracker.lock().await;
         let extracted = t.extract_predictions(&session_id, &response.content);
         for pred in extracted {
-            let _ = persist_chat_forecast_from_prediction(&db_pool, &pred, &kalshi).await;
+            let _ = persist_chat_forecast_unified(
+                &db_pool,
+                &pred,
+                &kalshi,
+                fincept.inner().as_ref(),
+            )
+            .await;
             let record = PredictionRecord {
                 prediction: pred,
                 outcome: PredictionOutcome::Pending,
@@ -229,7 +246,7 @@ pub async fn send_message_stream(
         }
     });
 
-    // Fetch live data context — Kalshi gates + optional web + Fincept
+    // Fetch live data context — Kalshi gates + optional web + Fincept + agent priors
     let kalshi_context = {
         emit_chat_kalshi_context(&app, &session_id, &kalshi);
         let built = crate::chat::kalshi_context::build_kalshi_context_full(
@@ -255,6 +272,16 @@ pub async fn send_message_stream(
         )
         .await;
         ctx.push_str(&crate::chat::track_record::track_record_prompt_block(&db_pool).await);
+        let edge_cfg = edge_config_for_pool(&db_pool).await;
+        crate::chat::agent_priors::append_agent_priors_for_chat(
+            &mut ctx,
+            kalshi.as_ref(),
+            fincept.inner().as_ref(),
+            &db_pool,
+            &edge_cfg,
+            &built.open_markets,
+        )
+        .await;
         ctx
     };
 
@@ -315,12 +342,18 @@ pub async fn send_message_stream(
     };
     let _ = session::save_session_messages(&session_id, &all_messages);
 
-    // Auto-extract predictions + forecast ledger mirror
+    // Auto-extract predictions; ledger via edge pipeline when possible (Phase A3).
     {
         let t = tracker.lock().await;
         let extracted = t.extract_predictions(&session_id, &response.content);
         for pred in extracted {
-            let _ = persist_chat_forecast_from_prediction(&db_pool, &pred, &kalshi).await;
+            let _ = persist_chat_forecast_unified(
+                &db_pool,
+                &pred,
+                &kalshi,
+                fincept.inner().as_ref(),
+            )
+            .await;
             let record = PredictionRecord {
                 prediction: pred,
                 outcome: PredictionOutcome::Pending,
@@ -335,12 +368,14 @@ pub async fn send_message_stream(
     Ok(())
 }
 
-/// When chat extracts a Kalshi decision, also write a forecast ledger row so
-/// calibration / resolve pollers can grade model opinions (not only paper lots).
-async fn persist_chat_forecast_from_prediction(
+/// Prefer edge-pipeline forecast (sidecar p_model) when the bridge is online;
+/// always attach LLM fair as secondary metadata. Falls back to LLM-only row
+/// when sidecar/tape unavailable — never invents agent probabilities.
+async fn persist_chat_forecast_unified(
     pool: &Pool<Sqlite>,
     pred: &crate::predictions::tracker::Prediction,
     kalshi: &KalshiState,
+    bridge: &crate::fincept_bridge::FinceptBridge,
 ) -> Option<i64> {
     let blob = pred.full_decision_json.as_deref()?;
     let decision = crate::chat::decision_extract::parse_kalshi_decision_blob(blob).ok()?;
@@ -348,8 +383,6 @@ async fn persist_chat_forecast_from_prediction(
     {
         return None;
     }
-    // Skip pure PASS with zero edge journal noise — still keep TAKE/WATCH and
-    // PASS with explicit model disagreement for calibration.
     let keep = matches!(
         decision.decision,
         crate::chat::decision_schema::DecisionAction::TAKE
@@ -360,11 +393,70 @@ async fn persist_chat_forecast_from_prediction(
         return None;
     }
 
-    let p_market = (decision.market_price_pct / 100.0).clamp(0.0, 1.0);
-    let p_model = (decision.fair_probability_pct / 100.0).clamp(0.0, 1.0);
-    // Ledger p_final starts as model fair; edge engine can re-shrink later.
-    // This is storage of the LLM opinion — not a change to Kelly math.
-    let p_final = p_model;
+    let llm_fair = (decision.fair_probability_pct / 100.0).clamp(0.01, 0.99);
+    let llm_meta = serde_json::json!({
+        "source": "chat_llm",
+        "ticker": decision.ticker,
+        "decision": format!("{:?}", decision.decision),
+        "side": format!("{:?}", decision.contract_side),
+        "fair_probability_pct": decision.fair_probability_pct,
+        "market_price_pct": decision.market_price_pct,
+        "edge_points": decision.edge_points,
+        "thesis": decision.thesis,
+        "risk_flags": decision.risk_flags,
+    });
+
+    // Path 1: full edge pipeline (agents + shrink + ledger) — preferred.
+    let status = bridge.status().await;
+    if status.online {
+        match crate::edge_engine::opinion_input::build_analyze_input(
+            kalshi.as_ref(),
+            pool,
+            &decision.ticker,
+        )
+        .await
+        {
+            Ok(mut input) => {
+                input.flags.push("source=chat_extract".into());
+                let cfg = edge_config_for_pool(pool).await;
+                match crate::edge_engine::pipeline::analyze_and_log_forecast(
+                    pool, bridge, input, &cfg,
+                )
+                .await
+                {
+                    Ok(edge) => {
+                        // Annotate the just-written row with LLM fair (best-effort update).
+                        let _ = annotate_forecast_with_llm(pool, edge.forecast_id, &llm_meta, llm_fair)
+                            .await;
+                        tracing::info!(
+                            "chat forecast via edge pipeline: id={} ticker={} p_model={:?}",
+                            edge.forecast_id,
+                            decision.ticker,
+                            edge.p_model
+                        );
+                        return Some(edge.forecast_id);
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "chat edge pipeline failed for {}: {e} — LLM-only fallback",
+                            decision.ticker
+                        );
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "chat opinion input failed for {}: {e} — LLM-only fallback",
+                    decision.ticker
+                );
+            }
+        }
+    }
+
+    // Path 2: LLM-only row (sidecar offline / tape miss). p_model is LLM fair;
+    // agent_breakdown marks source so calibration can filter if needed.
+    let p_market = (decision.market_price_pct / 100.0).clamp(0.01, 0.99);
+    let p_final = llm_fair;
     let verdict = match (&decision.decision, &decision.contract_side) {
         (
             crate::chat::decision_schema::DecisionAction::TAKE,
@@ -374,51 +466,38 @@ async fn persist_chat_forecast_from_prediction(
             crate::chat::decision_schema::DecisionAction::TAKE,
             crate::chat::decision_schema::ContractSide::NO,
         ) => "trade_no",
-        (crate::chat::decision_schema::DecisionAction::WATCH, _) => "pass",
         _ => "pass",
     };
     let reasons = serde_json::json!([
-        format!("source=chat_extract"),
+        "source=chat_llm_fallback",
         format!("decision={:?}", decision.decision),
-        format!("side={:?}", decision.contract_side),
         format!("edge_points={:.2}", decision.edge_points),
-        format!("confidence={:?}", decision.confidence_tier),
-        format!("data_quality={:?}", decision.data_quality),
     ])
     .to_string();
-
-    let close_time = {
-        let client = kalshi.as_ref();
-        client
-            .find_cached_market(&decision.ticker)
-            .and_then(|m| m.close_time.clone())
-            .or_else(|| {
-                // Best-effort live fetch is intentionally skipped here to keep chat fast.
-                None
-            })
-            .unwrap_or_else(|| chrono::Utc::now().to_rfc3339())
-    };
-    let created = chrono::Utc::now().to_rfc3339();
+    let close_time = kalshi
+        .as_ref()
+        .find_cached_market(&decision.ticker)
+        .and_then(|m| m.close_time.clone())
+        .unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
     let stake = if decision.recommended_stake_dollars > 0.0 {
         Some(decision.recommended_stake_dollars)
     } else {
         None
     };
     let breakdown = serde_json::json!({
-        "source": "chat_llm",
-        "ticker": decision.ticker,
-        "thesis": decision.thesis,
-        "risk_flags": decision.risk_flags,
+        "signals": [],
+        "llm": llm_meta,
+        "note": "sidecar offline or analyze failed; p_model is LLM fair only",
     })
     .to_string();
 
     match crate::kalshi::forecast::insert_forecast(
         pool,
         &decision.ticker,
-        &created,
+        &chrono::Utc::now().to_rfc3339(),
         &close_time,
         p_market,
-        Some(p_model),
+        Some(llm_fair),
         p_final,
         verdict,
         &reasons,
@@ -429,16 +508,49 @@ async fn persist_chat_forecast_from_prediction(
     {
         Ok(id) => {
             tracing::info!(
-                "chat forecast ledger: id={id} ticker={} verdict={verdict}",
+                "chat forecast LLM-only fallback: id={id} ticker={}",
                 decision.ticker
             );
             Some(id)
         }
         Err(e) => {
-            tracing::warn!("chat forecast ledger insert failed: {e}");
+            tracing::warn!("chat forecast insert failed: {e}");
             None
         }
     }
+}
+
+/// Merge LLM metadata into an existing forecast's agent_breakdown JSON.
+async fn annotate_forecast_with_llm(
+    pool: &Pool<Sqlite>,
+    forecast_id: i64,
+    llm_meta: &serde_json::Value,
+    llm_fair: f64,
+) -> Result<(), String> {
+    let row = sqlx::query("SELECT agent_breakdown FROM forecasts WHERE id = ?1")
+        .bind(forecast_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| e.to_string())?;
+    let mut root = if let Some(r) = row {
+        let raw: Option<String> = sqlx::Row::get(&r, "agent_breakdown");
+        raw.and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_else(|| serde_json::json!({}))
+    } else {
+        serde_json::json!({})
+    };
+    if let Some(obj) = root.as_object_mut() {
+        obj.insert("llm".into(), llm_meta.clone());
+        obj.insert("llm_fair".into(), serde_json::json!(llm_fair));
+    }
+    let s = root.to_string();
+    sqlx::query("UPDATE forecasts SET agent_breakdown = ?1 WHERE id = ?2")
+        .bind(s)
+        .bind(forecast_id)
+        .execute(pool)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 #[tauri::command]

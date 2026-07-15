@@ -69,12 +69,20 @@ export function MarketDetailPanel({ market, onClose, onAnalyzeMarket }: Props) {
   const selectedFairPct = sideFairProbability(fairProb, contractSide);
   const edgePts = selectedFairPct - marketPricePct;
   const selectedPrice = sideAsk(market, contractSide);
-  const riskFlags = [
-    market.can_close_early ? 'Early close' : null,
-    market.is_provisional ? 'Provisional' : null,
-    market.spread * 100 > Math.max(edgePts, 0) ? 'Spread exceeds edge' : null,
-    market.liquidity <= 0 ? 'No visible liquidity' : null,
-  ].filter(Boolean) as string[];
+  // Human labels for UI chips; `code` is the Rust RiskFlag variant name for paper IPC.
+  const riskFlagRows = (
+    [
+      market.can_close_early ? { label: 'Early close', code: 'EarlyCloseRisk' } : null,
+      market.is_provisional ? { label: 'Provisional', code: 'ProvisionalSettlement' } : null,
+      market.spread * 100 > Math.max(edgePts, 0)
+        ? { label: 'Spread exceeds edge', code: 'SpreadExceedsEdge' }
+        : null,
+      market.liquidity <= 0
+        ? { label: 'No visible liquidity', code: 'InsufficientLiquidity' }
+        : null,
+    ] as ({ label: string; code: string } | null)[]
+  ).filter((x): x is { label: string; code: string } => x != null);
+  const riskFlags = riskFlagRows.map((r) => r.label);
   const maxStakeDollars = Math.max(
     1,
     Math.round(((bankrollConfig?.total_bankroll ?? 1000) * (config?.max_bet_pct ?? 0.05)) * 100) / 100,
@@ -210,10 +218,11 @@ export function MarketDetailPanel({ market, onClose, onAnalyzeMarket }: Props) {
       ],
       risk_flags: [
         ...(adjustment && adjustment.kelly_scale < 1 ? ['CorrelatedExposure'] : []),
-        ...riskFlags.map((flag) => flag.replace(/\s+/g, '')),
+        ...riskFlagRows.map((r) => r.code),
       ],
       data_quality: 'Live',
       price_to_enter: sideAsk(market, side),
+      model_disagreement: Math.abs(fairPct - pricePct) >= 15,
     };
   };
 

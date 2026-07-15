@@ -158,8 +158,14 @@ export function ChatView({
     setPaperMsg(null);
     try {
       const id = await kalshiApi.recordPaperDecision(sessionId ?? 'analyst', decision);
+      const opensLot =
+        decision.decision === 'TAKE' &&
+        decision.contract_side !== 'PASS' &&
+        (decision.recommended_stake_dollars ?? 0) > 0;
       setPaperMsg(
-        `Paper ${decision.decision} on ${decision.ticker} recorded (${id.slice(0, 8)}…). Ledger + forecast row written.`,
+        opensLot
+          ? `Paper TAKE ${decision.contract_side} ${decision.ticker} @ $${decision.price_to_enter.toFixed(2)} · stake ~$${decision.recommended_stake_dollars.toFixed(0)} recorded (${id.slice(0, 8)}…). Prediction + forecast + lot journal updated — use Portfolio → Settle when markets resolve.`
+          : `Logged ${decision.decision} on ${decision.ticker} (${id.slice(0, 8)}…) — prediction/forecast only (no cash lot; TAKE + stake required to open a position).`,
       );
     } catch (e) {
       setPaperMsg(e instanceof Error ? e.message : String(e));

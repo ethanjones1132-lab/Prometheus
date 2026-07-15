@@ -363,7 +363,13 @@ pub fn spawn_auto_grade_task(
                 .await
                 .map(|v| v.len())
                 .unwrap_or(0);
-            if pending_count == 0 && forecast_pending == 0 {
+            let paper_open: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM paper_lots WHERE status = 'Open'",
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap_or(0);
+            if pending_count == 0 && forecast_pending == 0 && paper_open == 0 {
                 continue;
             }
             let summary = {
@@ -373,7 +379,7 @@ pub fn spawn_auto_grade_task(
                         Ok(s) => s,
                         Err(e) => {
                             tracing::warn!("kalshi auto-grade: {e}");
-                            continue;
+                            empty_summary()
                         }
                     }
                 } else {
@@ -387,6 +393,27 @@ pub fn spawn_auto_grade_task(
                     }
                     Ok(_) => {}
                     Err(e) => tracing::warn!("kalshi forecast poller: {e}"),
+                }
+            }
+            // Paper lots: settle + sync prediction outcomes (side-aware).
+            // Runs even when grade found nothing — open lots are independent.
+            if paper_open > 0 {
+                match crate::paper::settle_pending(&pool, &*kalshi).await {
+                    Ok(ps) if ps.settled > 0 => {
+                        tracing::info!(
+                            "auto-grade paper settle: {} lots ({}W/{}L ${:.2}); pred sync={}",
+                            ps.settled,
+                            ps.wins,
+                            ps.losses,
+                            ps.total_pnl,
+                            ps.details
+                                .iter()
+                                .filter(|d| d.prediction_outcome.is_some())
+                                .count()
+                        );
+                    }
+                    Ok(_) => {}
+                    Err(e) => tracing::warn!("auto-grade paper settle: {e}"),
                 }
             }
             if summary.graded > 0 {

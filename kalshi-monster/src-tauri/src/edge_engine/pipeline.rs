@@ -166,6 +166,8 @@ pub async fn analyze_and_log_forecast(
     if let Some(k) = input.strike {
         context.insert("strike".into(), serde_json::json!(k));
     }
+    // Depth hint for sidecar orchestrator (quick/standard/deep); agents may ignore.
+    context.insert("depth".into(), serde_json::json!("standard"));
 
     let body = serde_json::json!({
         "market_ticker": input.market_ticker,

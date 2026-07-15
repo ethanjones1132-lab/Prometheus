@@ -41,12 +41,25 @@ pub async fn paper_get_positions(
 }
 
 /// Settle open paper lots against resolved Kalshi markets.
+/// Also grades linked prediction rows and resolves forecast ledger entries.
 #[tauri::command]
 pub async fn paper_settle_pending(
     db_pool: State<'_, Pool<Sqlite>>,
     kalshi: State<'_, KalshiState>,
 ) -> Result<crate::paper::PaperSettlementSummary, String> {
-    crate::paper::settle_pending(&db_pool, &kalshi).await
+    let summary = crate::paper::settle_pending(&db_pool, &kalshi).await?;
+    if summary.settled > 0 {
+        tracing::info!(
+            "paper_settle_pending: {} lots, predictions synced: {}",
+            summary.settled,
+            summary
+                .details
+                .iter()
+                .filter(|d| d.prediction_outcome.is_some())
+                .count()
+        );
+    }
+    Ok(summary)
 }
 
 /// Reset paper account and clear lot history.

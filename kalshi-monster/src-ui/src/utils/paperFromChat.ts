@@ -137,6 +137,13 @@ export function sanitizeDecisionUnitsAndCaps(
       ? decision.edge_points
       : fair_probability_pct - market_price_pct;
 
+  // Always emit model_disagreement so Tauri IPC never rejects the ticket
+  // (Rust field is #[serde(default)] but we still send an explicit bool).
+  const model_disagreement =
+    typeof decision.model_disagreement === 'boolean'
+      ? decision.model_disagreement
+      : Math.abs(fair_probability_pct - market_price_pct) >= 15;
+
   return {
     ...decision,
     market_price_pct,
@@ -149,6 +156,7 @@ export function sanitizeDecisionUnitsAndCaps(
     max_position_dollars,
     risk_flags,
     thesis,
+    model_disagreement,
   };
 }
 
@@ -452,6 +460,10 @@ function tryParseJsonDecision(content: string): KalshiTradeDecision | null {
         risk_flags: Array.isArray(obj.risk_flags) ? (obj.risk_flags as string[]) : [],
         data_quality: String(obj.data_quality ?? 'ChatExtract'),
         price_to_enter: Number(obj.price_to_enter ?? market_price_pct),
+        model_disagreement:
+          typeof obj.model_disagreement === 'boolean'
+            ? obj.model_disagreement
+            : Math.abs(fair_probability_pct - market_price_pct) >= 15,
       };
       last = d;
     } catch {
