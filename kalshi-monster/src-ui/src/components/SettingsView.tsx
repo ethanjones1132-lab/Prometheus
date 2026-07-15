@@ -614,25 +614,75 @@ export function SettingsView() {
         </p>
         {finceptBridgeError ? <div className="banner error">{finceptBridgeError}</div> : null}
         {finceptBridge ? (
-          <p className="muted">
-            Status:{' '}
-            <strong>{finceptBridge.online ? 'online' : 'offline'}</strong>
-            {finceptBridge.degraded ? ' (degraded)' : ''}
-            {finceptBridge.base_url ? (
-              <>
-                {' '}
-                · <code>{finceptBridge.base_url}</code>
-              </>
-            ) : null}
-            {' '}
-            · restarts remaining: <strong>{finceptBridge.restarts_remaining}</strong>
-            {finceptBridge.last_error ? (
-              <>
-                <br />
-                Last error: {finceptBridge.last_error}
-              </>
-            ) : null}
-          </p>
+          <>
+            <p className="muted">
+              Status:{' '}
+              <strong>{finceptBridge.online ? 'online' : 'offline'}</strong>
+              {finceptBridge.degraded ? ' (degraded)' : ''}
+              {finceptBridge.base_url ? (
+                <>
+                  {' '}
+                  · <code>{finceptBridge.base_url}</code>
+                </>
+              ) : null}
+              {' '}
+              · restarts remaining: <strong>{finceptBridge.restarts_remaining}</strong>
+              {finceptBridge.last_error ? (
+                <>
+                  <br />
+                  Last error: {finceptBridge.last_error}
+                </>
+              ) : null}
+            </p>
+            <div
+              className="mechanicsGrid"
+              style={{ marginTop: '0.75rem' }}
+              aria-label="Sidecar agent ops"
+            >
+              <div>
+                <span>Last agent latency</span>
+                <strong>
+                  {finceptBridge.last_agent_latency_ms != null
+                    ? `${finceptBridge.last_agent_latency_ms} ms`
+                    : '—'}
+                </strong>
+              </div>
+              <div>
+                <span>Agent calls</span>
+                <strong>{finceptBridge.agent_calls ?? 0}</strong>
+              </div>
+              <div>
+                <span>Opining rate</span>
+                <strong>
+                  {finceptBridge.agent_calls
+                    ? `${((finceptBridge.opining_rate ?? 0) * 100).toFixed(0)}% (${finceptBridge.agent_calls_opining ?? 0}/${finceptBridge.agent_calls})`
+                    : '—'}
+                </strong>
+              </div>
+              <div>
+                <span>Signals opining (total)</span>
+                <strong>
+                  {finceptBridge.signals_opining_total ?? 0}
+                  {finceptBridge.signals_received_total
+                    ? ` / ${finceptBridge.signals_received_total}`
+                    : ''}
+                </strong>
+              </div>
+            </div>
+            {finceptBridge.last_agent_call_at ? (
+              <p className="muted" style={{ marginTop: '0.5rem' }}>
+                Last agent call: {new Date(finceptBridge.last_agent_call_at).toLocaleString()}
+              </p>
+            ) : (
+              <p className="muted" style={{ marginTop: '0.5rem' }}>
+                No agent calls yet this session — run Calibration → Edge Board or Analyze.
+              </p>
+            )}
+            <p className="muted" style={{ marginTop: '0.25rem' }}>
+              Depth tiers: board scan = <code>quick</code> (tape only); Analyze ={' '}
+              <code>standard</code>; Deep top 3 = <code>deep</code> (+ web snippets).
+            </p>
+          </>
         ) : (
           <p className="muted">Loading bridge status…</p>
         )}

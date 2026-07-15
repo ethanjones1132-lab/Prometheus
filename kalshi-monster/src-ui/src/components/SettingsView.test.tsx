@@ -202,6 +202,13 @@ describe('SettingsView', () => {
       base_url: null,
       last_error: null,
       restarts_remaining: 3,
+      last_agent_latency_ms: 42,
+      agent_calls: 10,
+      agent_calls_opining: 4,
+      signals_received_total: 40,
+      signals_opining_total: 8,
+      last_agent_call_at: '2026-07-15T12:00:00Z',
+      opining_rate: 0.4,
     });
   });
 
@@ -227,5 +234,8 @@ describe('SettingsView', () => {
     expect(await screen.findByText('Fincept sidecar (Phase 1)')).toBeInTheDocument();
     expect(screen.getByText(/offline/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Start dev sidecar/i })).toBeInTheDocument();
+    expect(await screen.findByLabelText('Sidecar agent ops')).toBeInTheDocument();
+    expect(screen.getByText(/42 ms/)).toBeInTheDocument();
+    expect(screen.getByText(/40%/)).toBeInTheDocument();
   });
 });

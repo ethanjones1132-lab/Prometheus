@@ -2,16 +2,15 @@
 # Copyright (C) 2026 Ethan Jones
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# Currently ships three *real* estimators grounded in available data:
-#   1. technical — yfinance spot/vol → P(S_T > K)
-#   2. contract_tape — Kalshi mid series from request context
-#   3. news — heuristic over Rust-supplied web_snippets (null if absent)
+# Depth tiers (Sprint 3 / plan §7):
+#   quick    — contract_tape only (board scan; no yfinance / news)
+#   standard — technical + contract_tape + news (default Analyze / chat)
+#   deep     — same live agents + full history path (technical always runs)
 #
 # Explicitly NOT shipped yet (no honest data path right now):
 #   - macro (needs EconDB / release calendars — not installed)
 #   - sentiment (need social/news sentiment feeds)
 #   - valuation / fundamentals (need fundamentals DB for company events)
-#   - risk / portfolio / explainability (shape sizing/reporting, not p_model)
 
 from __future__ import annotations
 
@@ -28,24 +27,67 @@ from fincept_sidecar.schemas import (
 from . import contract_tape, news, technical
 
 
+def _depth(req: MarketOpinionRequest) -> str:
+    ctx = req.context or {}
+    raw = ctx.get("depth") or "standard"
+    if isinstance(raw, str):
+        d = raw.strip().lower()
+        if d in ("quick", "standard", "deep"):
+            return d
+    return "standard"
+
+
+def _null_signal(name: str, reason: str, caveat: str = "depth_skipped") -> AgentSignal:
+    return AgentSignal(
+        agent=name,
+        probability=None,
+        confidence=0.0,
+        rationale=reason,
+        inputs_used=[],
+        caveats=[caveat],
+    )
+
+
 async def collect_market_opinion(req: MarketOpinionRequest) -> MarketOpinionResponse:
     t0 = time.perf_counter()
     signals: list[AgentSignal] = []
+    depth = _depth(req)
 
-    signals.append(await technical.estimate(req))
-    signals.append(await contract_tape.estimate(req))
-    signals.append(await news.estimate(req))
+    if depth == "quick":
+        # Board scan: tape only — skip yfinance technical + news.
+        signals.append(
+            _null_signal(
+                "technical",
+                "depth=quick: technical (yfinance) skipped for board scan latency.",
+            )
+        )
+        signals.append(await contract_tape.estimate(req))
+        signals.append(
+            _null_signal(
+                "news",
+                "depth=quick: news agent skipped (no web fetch on board scan).",
+            )
+        )
+    else:
+        # standard + deep: full live estimators
+        signals.append(await technical.estimate(req))
+        signals.append(await contract_tape.estimate(req))
+        signals.append(await news.estimate(req))
 
     # Placeholder no-opinion rows for agents that exist in the plan but have
     # no live data path here — honest None, never a fake probability.
     for name, reason in (
         (
             "macro",
-            "Macro agent requires EconDB (or equivalent) release series; not available in this sidecar build.",
+            "Macro agent requires EconDB (or equivalent) release series; not available in this sidecar build."
+            if depth != "quick"
+            else "depth=quick: macro skipped.",
         ),
         (
             "sentiment",
-            "Sentiment agent requires social/news sentiment feeds; not wired.",
+            "Sentiment agent requires social/news sentiment feeds; not wired."
+            if depth != "quick"
+            else "depth=quick: sentiment skipped.",
         ),
     ):
         signals.append(
@@ -55,7 +97,7 @@ async def collect_market_opinion(req: MarketOpinionRequest) -> MarketOpinionResp
                 confidence=0.0,
                 rationale=reason,
                 inputs_used=[],
-                caveats=["data_source_unavailable"],
+                caveats=["data_source_unavailable" if depth != "quick" else "depth_skipped"],
             )
         )
 
@@ -68,7 +110,8 @@ async def collect_market_opinion(req: MarketOpinionRequest) -> MarketOpinionResp
             source="kalshi:close_time",
         )
     )
-    catalysts.extend(news.extract_catalysts_from_request(req))
+    if depth != "quick":
+        catalysts.extend(news.extract_catalysts_from_request(req))
 
     elapsed_ms = int((time.perf_counter() - t0) * 1000)
     return MarketOpinionResponse(

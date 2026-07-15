@@ -139,6 +139,15 @@ export type FinceptBridgeStatus = {
   base_url?: string | null;
   last_error?: string | null;
   restarts_remaining: number;
+  /** Sprint 3.2 — agent ops diagnostics */
+  last_agent_latency_ms?: number | null;
+  agent_calls?: number;
+  agent_calls_opining?: number;
+  signals_received_total?: number;
+  signals_opining_total?: number;
+  last_agent_call_at?: string | null;
+  /** Fraction of agent calls with ≥1 non-null probability */
+  opining_rate?: number;
 };
 
 export const finceptApi = {

@@ -2,6 +2,14 @@
 
 Last updated: 2026-07-15
 
+## Maintenance notes (2026-07-15) — Sprint 3 depth tiers + sidecar ops
+
+- **3.1** `AnalysisDepth` on analyze input; board scan = quick (tape only); single Analyze = standard; Deep top 3 = deep + web
+- **3.2** Bridge counters: last latency, agent_calls, opining_rate, signals totals; Settings Fincept card surfaces them
+- **3.3** `tauri.conf.release.json` externalBin guard test; binaries README unchanged
+- Sidecar orchestrator respects `context.depth`
+- **Next:** Sprint 4 macro agent
+
 ## Maintenance notes (2026-07-15) — Sprint 1+2 agents + Edge Board
 
 - **1.1** Technical series map expanded (BTC/ETH/index/majors); barrier strike from ticker; `horizon_days` in context

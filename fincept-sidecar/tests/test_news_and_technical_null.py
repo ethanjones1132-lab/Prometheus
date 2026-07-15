@@ -119,3 +119,22 @@ def test_horizon_days_from_context_preferred():
     )
     assert tau is not None
     assert abs(tau - 3.0 / 365.25) < 1e-9
+
+
+def test_quick_depth_skips_technical_and_news():
+    """Sprint 3.1 — board scan depth only runs contract_tape for live signal."""
+    import asyncio
+    from agents.orchestrator import collect_market_opinion
+
+    req = _req(
+        category=MarketCategory.INDEX_PRICE_LEVEL,
+        context={"depth": "quick", "contract_mids": [0.4, 0.42, 0.45, 0.48, 0.5]},
+    )
+    resp = asyncio.run(collect_market_opinion(req))
+    by_name = {s.agent: s for s in resp.signals}
+    assert by_name["technical"].probability is None
+    assert "depth=quick" in by_name["technical"].rationale or "depth_skipped" in by_name[
+        "technical"
+    ].caveats
+    assert by_name["news"].probability is None
+    assert by_name["contract_tape"].probability is not None

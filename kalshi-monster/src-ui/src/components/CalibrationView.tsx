@@ -414,8 +414,9 @@ export function CalibrationView() {
           </button>
         </div>
         <p className="muted" style={{ marginTop: '0.5rem' }}>
-          Board scan logs forecast rows (technical + contract_tape + news when snippets exist), ranked by
-          |edge_net|. Deep top 3 also pulls web evidence for the news agent. Click a row for agent breakdown.
+          Board scan uses depth=<code>quick</code> (contract_tape only) and ranks by |edge_net|. Deep top 3
+          uses depth=<code>deep</code> (technical + tape + news + web). Single Analyze is{' '}
+          <code>standard</code>. Click a row for agent breakdown.
         </p>
       </section>
 

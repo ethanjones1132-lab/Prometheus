@@ -290,6 +290,7 @@ pub fn analyze_input_from_market(
         strike,
         horizon_days,
         web_snippets: Vec::new(),
+        depth: super::pipeline::AnalysisDepth::Standard,
         flags,
     }
 }

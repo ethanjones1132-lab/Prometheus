@@ -124,6 +124,38 @@ pub struct WebSnippet {
     pub snippet: String,
 }
 
+/// Sidecar depth tier (Sprint 3 / plan §7).
+///
+/// - **Quick** — board scan: contract_tape only, no yfinance / news fetch
+/// - **Standard** — default Analyze / chat priors: technical + tape + news if snippets
+/// - **Deep** — manual deep: full agents + fresh history path + web snippets
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum AnalysisDepth {
+    Quick,
+    #[default]
+    Standard,
+    Deep,
+}
+
+impl AnalysisDepth {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Quick => "quick",
+            Self::Standard => "standard",
+            Self::Deep => "deep",
+        }
+    }
+
+    pub fn parse(s: &str) -> Self {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "quick" => Self::Quick,
+            "deep" => Self::Deep,
+            _ => Self::Standard,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct AnalyzeMarketInput {
     pub market_ticker: String,
@@ -141,6 +173,8 @@ pub struct AnalyzeMarketInput {
     pub horizon_days: Option<f64>,
     /// Structured snippets for news agent — never invents p without these.
     pub web_snippets: Vec<WebSnippet>,
+    /// Agent fan-out tier (quick / standard / deep).
+    pub depth: AnalysisDepth,
     pub flags: Vec<String>,
 }
 
@@ -236,8 +270,9 @@ pub async fn analyze_and_log_forecast(
             serde_json::json!(input.web_snippets),
         );
     }
-    // Depth hint for sidecar orchestrator (quick/standard/deep); agents may ignore.
-    context.insert("depth".into(), serde_json::json!("standard"));
+    // Depth hint for sidecar orchestrator (quick/standard/deep).
+    context.insert("depth".into(), serde_json::json!(input.depth.as_str()));
+    flags.push(format!("depth:{}", input.depth.as_str()));
 
     let body = serde_json::json!({
         "market_ticker": input.market_ticker,
@@ -267,10 +302,22 @@ pub async fn analyze_and_log_forecast(
                     }
                 }
             }
+            let opining = signals.iter().filter(|s| s.probability.is_some()).count() as u64;
+            bridge
+                .record_agent_call(
+                    sidecar_elapsed_ms,
+                    signals.len() as u64,
+                    opining,
+                    None,
+                )
+                .await;
         }
         Err(e) => {
             tracing::warn!("sidecar market-opinion failed: {e}");
             flags.push(format!("sidecar_unavailable: {e}"));
+            bridge
+                .record_agent_call(None, 0, 0, Some(e.clone()))
+                .await;
         }
     }
 
@@ -411,6 +458,16 @@ mod tests {
         assert_eq!(ranked[0].market_ticker, "B");
         assert_eq!(ranked[1].market_ticker, "C");
         assert_eq!(ranked[2].market_ticker, "A");
+    }
+
+    #[test]
+    fn analysis_depth_parse_and_str() {
+        assert_eq!(AnalysisDepth::parse("quick"), AnalysisDepth::Quick);
+        assert_eq!(AnalysisDepth::parse("DEEP"), AnalysisDepth::Deep);
+        assert_eq!(AnalysisDepth::parse("whatever"), AnalysisDepth::Standard);
+        assert_eq!(AnalysisDepth::Quick.as_str(), "quick");
+        assert_eq!(AnalysisDepth::Standard.as_str(), "standard");
+        assert_eq!(AnalysisDepth::Deep.as_str(), "deep");
     }
 
     #[test]

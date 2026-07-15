@@ -158,29 +158,46 @@ async fn analyze_market_edge_inner(
     bridge: &crate::fincept_bridge::FinceptBridge,
     db_pool: &Pool<Sqlite>,
 ) -> Result<crate::edge_engine::pipeline::EdgeAnalysisResult, String> {
-    // Single-market Analyze always attempts web for news-heavy categories.
-    analyze_market_edge_inner_opts(ticker, client, bridge, db_pool, true).await
+    // Single-market Analyze: standard depth + web for news-heavy categories.
+    analyze_market_edge_inner_opts(
+        ticker,
+        client,
+        bridge,
+        db_pool,
+        crate::edge_engine::pipeline::AnalysisDepth::Standard,
+    )
+    .await
 }
 
-/// `fetch_web`: attach web_snippets for news agent (deep board / single Analyze).
-/// Batch board scan uses false for speed; deep top-3 uses true.
+/// Depth controls agent fan-out and whether web_snippets are fetched:
+/// - **quick**: board scan — tape only, no web
+/// - **standard**: default Analyze — technical + tape + news if snippets
+/// - **deep**: full agents + web for news-heavy categories
 async fn analyze_market_edge_inner_opts(
     ticker: &str,
     client: &crate::kalshi::KalshiClient,
     bridge: &crate::fincept_bridge::FinceptBridge,
     db_pool: &Pool<Sqlite>,
-    fetch_web: bool,
+    depth: crate::edge_engine::pipeline::AnalysisDepth,
 ) -> Result<crate::edge_engine::pipeline::EdgeAnalysisResult, String> {
-    // Shared builder: mids from price_tracker + underlying/strike inference (Phase A / Sprint 1).
+    use crate::edge_engine::pipeline::AnalysisDepth;
+
+    // Shared builder: mids from price_tracker + underlying/strike inference.
     let mut input =
         crate::edge_engine::opinion_input::build_analyze_input(client, db_pool, ticker).await?;
+    input.depth = depth;
 
     let cat = crate::edge_engine::pipeline::sidecar_category(&input.category);
-    let want_web = fetch_web
+    let want_web = matches!(depth, AnalysisDepth::Standard | AnalysisDepth::Deep)
         && matches!(
             cat,
             "political" | "economic" | "other" | "company_event"
         );
+    // Deep also tries web for index/price when title looks event-like (optional skip — keep simple).
+    let want_web = want_web
+        || (depth == AnalysisDepth::Deep
+            && matches!(cat, "index_price_level" | "political" | "economic"));
+
     if want_web {
         let hits = crate::chat::web_context::snippets_for_market(
             &input.market_ticker,
@@ -236,18 +253,22 @@ pub async fn kalshi_analyze_top_markets_edge(
 ) -> Result<Vec<crate::edge_engine::pipeline::EdgeAnalysisResult>, String> {
     let n = limit.unwrap_or(10).min(25);
     let deep = deep.unwrap_or(false);
+    let depth = if deep {
+        crate::edge_engine::pipeline::AnalysisDepth::Deep
+    } else {
+        // Board scan: quick tier (contract_tape only) — Sprint 3.1
+        crate::edge_engine::pipeline::AnalysisDepth::Quick
+    };
     let client = kalshi.as_ref();
     let top = client.get_top_markets(n).await?;
     let mut out = Vec::new();
     for summary in top {
-        // Deep: web for all; standard batch: web only for political (inner helper).
-        let fetch_web = deep;
         match analyze_market_edge_inner_opts(
             &summary.ticker,
             &client,
             bridge.as_ref(),
             &db_pool,
-            fetch_web,
+            depth,
         )
         .await
         {

@@ -95,6 +95,27 @@ pub struct FinceptBridgeStatus {
     pub base_url: Option<String>,
     pub last_error: Option<String>,
     pub restarts_remaining: u32,
+    /// Last market-opinion round-trip latency (ms), if any call recorded.
+    #[serde(default)]
+    pub last_agent_latency_ms: Option<i64>,
+    /// Total market-opinion requests attempted this process lifetime.
+    #[serde(default)]
+    pub agent_calls: u64,
+    /// Subset of agent_calls where ≥1 signal had a non-null probability.
+    #[serde(default)]
+    pub agent_calls_opining: u64,
+    /// Sum of signals received across agent calls (for avg diagnostics).
+    #[serde(default)]
+    pub signals_received_total: u64,
+    /// Sum of opining signals across agent calls.
+    #[serde(default)]
+    pub signals_opining_total: u64,
+    /// RFC3339 of last agent call (success or fail).
+    #[serde(default)]
+    pub last_agent_call_at: Option<String>,
+    /// opining_rate = agent_calls_opining / agent_calls (0 when no calls).
+    #[serde(default)]
+    pub opining_rate: f64,
 }
 
 struct FinceptBridgeInner {
@@ -104,6 +125,13 @@ struct FinceptBridgeInner {
     degraded: bool,
     last_error: Option<String>,
     restart_budget: RestartBudget,
+    // Sprint 3.2 agent ops counters
+    last_agent_latency_ms: Option<i64>,
+    agent_calls: u64,
+    agent_calls_opining: u64,
+    signals_received_total: u64,
+    signals_opining_total: u64,
+    last_agent_call_at: Option<String>,
 }
 
 impl Default for FinceptBridgeInner {
@@ -115,6 +143,12 @@ impl Default for FinceptBridgeInner {
             degraded: false,
             last_error: None,
             restart_budget: RestartBudget::default(),
+            last_agent_latency_ms: None,
+            agent_calls: 0,
+            agent_calls_opining: 0,
+            signals_received_total: 0,
+            signals_opining_total: 0,
+            last_agent_call_at: None,
         }
     }
 }
@@ -139,12 +173,34 @@ impl FinceptBridge {
     pub async fn status(&self) -> FinceptBridgeStatus {
         let inner = self.inner.lock().await;
         let now = Instant::now();
-        FinceptBridgeStatus {
-            online: inner.base_url.is_some() && !inner.degraded,
-            degraded: inner.degraded,
-            base_url: inner.base_url.clone(),
-            last_error: inner.last_error.clone(),
-            restarts_remaining: inner.restart_budget.remaining(now),
+        Self::status_from_inner(&inner, now)
+    }
+
+    /// Record one market-opinion attempt (success or failure) for Settings ops UX.
+    pub async fn record_agent_call(
+        &self,
+        latency_ms: Option<i64>,
+        signals_received: u64,
+        signals_opining: u64,
+        error: Option<String>,
+    ) {
+        let mut inner = self.inner.lock().await;
+        inner.agent_calls = inner.agent_calls.saturating_add(1);
+        inner.signals_received_total = inner
+            .signals_received_total
+            .saturating_add(signals_received);
+        inner.signals_opining_total = inner
+            .signals_opining_total
+            .saturating_add(signals_opining);
+        if signals_opining > 0 {
+            inner.agent_calls_opining = inner.agent_calls_opining.saturating_add(1);
+        }
+        if let Some(ms) = latency_ms {
+            inner.last_agent_latency_ms = Some(ms);
+        }
+        inner.last_agent_call_at = Some(chrono::Utc::now().to_rfc3339());
+        if let Some(e) = error {
+            inner.last_error = Some(e);
         }
     }
 
@@ -381,12 +437,24 @@ impl FinceptBridge {
     }
 
     fn status_from_inner(inner: &FinceptBridgeInner, now: Instant) -> FinceptBridgeStatus {
+        let opining_rate = if inner.agent_calls == 0 {
+            0.0
+        } else {
+            inner.agent_calls_opining as f64 / inner.agent_calls as f64
+        };
         FinceptBridgeStatus {
             online: inner.base_url.is_some() && !inner.degraded,
             degraded: inner.degraded,
             base_url: inner.base_url.clone(),
             last_error: inner.last_error.clone(),
             restarts_remaining: inner.restart_budget.remaining(now),
+            last_agent_latency_ms: inner.last_agent_latency_ms,
+            agent_calls: inner.agent_calls,
+            agent_calls_opining: inner.agent_calls_opining,
+            signals_received_total: inner.signals_received_total,
+            signals_opining_total: inner.signals_opining_total,
+            last_agent_call_at: inner.last_agent_call_at.clone(),
+            opining_rate,
         }
     }
 }
@@ -458,6 +526,47 @@ mod tests {
         } else {
             assert_eq!(super::sidecar_exe_name(), "fincept-sidecar");
         }
+    }
+
+    #[tokio::test]
+    async fn record_agent_call_updates_status_counters() {
+        let bridge = FinceptBridge::new();
+        bridge.record_agent_call(Some(42), 5, 2, None).await;
+        bridge
+            .record_agent_call(Some(10), 3, 0, Some("timeout".into()))
+            .await;
+        let st = bridge.status().await;
+        assert_eq!(st.agent_calls, 2);
+        assert_eq!(st.agent_calls_opining, 1);
+        assert_eq!(st.signals_received_total, 8);
+        assert_eq!(st.signals_opining_total, 2);
+        assert_eq!(st.last_agent_latency_ms, Some(10));
+        assert!((st.opining_rate - 0.5).abs() < 1e-9);
+        assert_eq!(st.last_error.as_deref(), Some("timeout"));
+        assert!(st.last_agent_call_at.is_some());
+    }
+
+    /// Sprint 3.3 — release conf must declare externalBin for the sidecar.
+    #[test]
+    fn release_conf_ships_fincept_sidecar_external_bin() {
+        let conf_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tauri.conf.release.json");
+        let raw = std::fs::read_to_string(&conf_path)
+            .unwrap_or_else(|e| panic!("read {}: {e}", conf_path.display()));
+        let v: serde_json::Value =
+            serde_json::from_str(&raw).expect("tauri.conf.release.json is valid JSON");
+        let bins = v
+            .pointer("/bundle/externalBin")
+            .and_then(|x| x.as_array())
+            .expect("bundle.externalBin array");
+        let has = bins.iter().any(|b| {
+            b.as_str()
+                .map(|s| s.contains("fincept-sidecar"))
+                .unwrap_or(false)
+        });
+        assert!(
+            has,
+            "tauri.conf.release.json must list binaries/fincept-sidecar in externalBin"
+        );
     }
 
     /// Contract with `scripts/build_fincept_sidecar.py` (repo root): PyInstaller output

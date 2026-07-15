@@ -57,6 +57,11 @@
 - Edge Board on Calibration: scan top-N ranked by `|edge_net|`, agent drawer, Deep top 3  
 - Analyst chip: Sidecar online + Deep analyze top 3  
 
+### Sprint 3 — Depth tiers + sidecar ops (done 2026-07-15)
+- `AnalysisDepth` + `context.depth`: board=`quick`, Analyze=`standard`, Deep top 3=`deep`  
+- Sidecar orchestrator skips technical/news on quick; Settings shows latency / opining rate  
+- Release packaging: `tauri.conf.release.json` externalBin + cargo test guard  
+
 ---
 
 ## Master sequence (chronological from now)
@@ -69,7 +74,7 @@ Estimate bands are rough (1 = short pass, 3 = multi-day).
 | **0** | **P0 — Trust polish (paper journal UX)** ✅ | Structured paper IPC + real close_time + equity MTM | 1–2 | — | Paper audit P1–P2 |
 | **1** | **P1 — Agent opinions that fire** ✅ | Technical coverage + news agent | 2 | Phase A done | Fincept B1–B2 |
 | **2** | **P2 — Edge Board v1** ✅ | Rank markets by edge; agent drawer | 2 | P1 helps | Fincept C1–C2 |
-| **3** | **P3 — Depth tiers + Settings ops** | quick/standard/deep; bridge metrics | 1–2 | P1 | Fincept C3–C4 |
+| **3** | **P3 — Depth tiers + Settings ops** ✅ | quick/standard/deep; bridge metrics | 1–2 | P1 | Fincept C3–C4 |
 | **4** | **P4 — Macro agent (economic)** | FRED/public series, honest nulls | 2 | P1 | Fincept B3 |
 | **5** | **P5 — Calibration flywheel** | Accumulate resolved ≥200; λ re-fit ops | ongoing | settle/grade live | Progress / Phase 3 |
 | **6** | **P6 — Paper product polish** | Bankroll vs cash clarity; Grade vs Settle UX | 1–2 | P0 | Paper audit M/L |
@@ -120,13 +125,15 @@ Estimate bands are rough (1 = short pass, 3 = multi-day).
 
 ---
 
-## Sprint 3 — Depth tiers + sidecar ops UX
+## Sprint 3 — Depth tiers + sidecar ops UX ✅ (done 2026-07-15)
 
-| ID | Task | Acceptance |
-|----|------|------------|
-| **3.1** | `context.depth`: `quick` (tape only) / `standard` / `deep` | Board uses quick; Analyze default standard; button deep |
-| **3.2** | Settings: last agent latency, last error, opining rate counters on bridge | Debuggable without logs |
-| **3.3** | Ensure release packaging still ships `fincept-sidecar` externalBin | Installer includes sidecar |
+| ID | Task | Status |
+|----|------|--------|
+| **3.1** | `context.depth` quick / standard / deep | ✅ Board quick; Analyze standard; Deep top 3 deep |
+| **3.2** | Settings bridge ops counters | ✅ latency, opining rate, call totals |
+| **3.3** | Release `externalBin` for fincept-sidecar | ✅ release conf + unit test |
+
+**Verified:** fincept_bridge + pipeline depth tests; Settings vitest; sidecar quick-depth pytest.
 
 ---
 
@@ -239,4 +246,4 @@ The program is “ready for serious paper validation” when:
 | Long-range architecture | `docs/fincept-integration-plan.md` |
 | Chronology / ship log | `PRIORITIES.md` (notes only; not the order source) |
 
-**Default next implementation:** **Sprint 3** (depth tiers + sidecar ops UX), then Sprint 4 (macro agent).
+**Default next implementation:** **Sprint 4** (macro agent), then Sprint 5/6 polish.
