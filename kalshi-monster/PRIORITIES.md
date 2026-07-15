@@ -11,6 +11,13 @@ Last updated: 2026-07-15
 - Set `FRED_API_KEY` env for live macro opinions
 - **Next:** Sprint 6 paper product polish
 
+## Maintenance notes (2026-07-15, afternoon pass) — Sprint 6 paper product polish
+
+- **6.1** Settings bankroll card: "Cash / bankroll.json" ledger explainer.
+- **6.2** Paper portfolio: inline Grade vs Settle copy; auto-refresh after Analyst paper record via `KALSHI_PAPER_UPDATED` event; analytics error banner (no more silent blank).
+- **6.3** Chat bankroll policy loaded into `extractPaperDecision` — client stake uses real Kelly caps from bankroll.json + max_bet_pct. Large-stake confirm dialog for TAKE ≥$250 or ≥75% of cap.
+- **Next:** revisit KB-1 live credential verification or advance to Sprint 7 AGPL.
+
 ## Maintenance notes (2026-07-15) — Sprint 3 depth tiers + sidecar ops
 
 - **3.1** `AnalysisDepth` on analyze input; board scan = quick (tape only); single Analyze = standard; Deep top 3 = deep + web
