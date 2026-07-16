@@ -56,5 +56,5 @@ Targets from `PRIORITIES.md`: warm revisit &lt;300ms, category switch &lt;500ms.
 
 ## Related repos
 
-- `monster-edge-core`, `edge-eval` — sibling paths under `kalshi-build/`
+- `edge-eval` — sibling path under `kalshi-build/`
 - User data: `~/.openclaw/kalshi-monster/` (predictions.db, ML models, notification settings)

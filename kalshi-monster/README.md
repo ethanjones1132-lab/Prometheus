@@ -58,7 +58,7 @@ Think of it as your personal market research assistant. It pulls live market dat
 
 ## Edge calibration — the numbers
 
-Kalshi Monster shares its evaluation stack with the other Monster apps through the shared `monster-edge-core` and `edge-eval` crates. This is not a toy — it's a measured, verified pipeline.
+Kalshi Monster's evaluation stack lives in its in-app `edge_engine` module and the shared `edge-eval` crate. This is not a toy — it's a measured, verified pipeline.
 
 | Metric | What it measures | Score |
 |--------|-----------------|-------|
@@ -360,7 +360,7 @@ Prometheus/
 | **UUID** | uuid | v1, v4 feature |
 | **Frontend** | React 18 + TypeScript | Vite, Tailwind CSS v4 |
 | **AI gateway** | OpenRouter | Multi-model proxy, SSE streaming |
-| **Edge math** | shared `monster-edge-core` + `edge-eval` | Same crate as PrizePicks Monster; isotonic calibration, Kelly sizing, shrinkage |
+| **Edge math** | in-app `edge_engine` + shared `edge-eval` | Isotonic calibration, Kelly sizing, shrinkage |
 | **Database** | SQLite | rusqlite (via tauri), 3 tables: predictions, edge_config, session store |
 | **Credential storage** | OS keyring | Windows Credential Manager, macOS Keychain, Linux libsecret |
 | **Sidecar** | Fincept | Bundled analysis process via tauri-plugin-shell |

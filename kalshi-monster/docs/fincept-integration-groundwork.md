@@ -53,7 +53,7 @@ Survey of `src-tauri/src` (verified against code this run):
 
 - `kalshi/` — `KalshiClient` (fetch/search markets, orderbook, balance, positions, category stats), `SharedCache: Arc<RwLock<Option<KalshiCache>>>`, persisted market-cache store, price tracker (`get_price_history`, `snapshot_markets`), grading (`evaluate_bet`, auto-grade task), portfolio risk (`compute_stake_adjustment`, exposure builders).
 - `predictions/` + `predictions.db` (SQLite, canonical at `~/.openclaw/kalshi-monster/`) — paper journal, stats, calibration; the graded history that Phase 3 ML is waiting on.
-- Shared edge math in sibling crates `monster-edge-core` / `edge-eval` (MIT-side, reusable freely).
+- Evaluation math in sibling crate `edge-eval` (MIT-side, reusable freely); prop edge scoring lives in-app (`analysis/edge_calculator`).
 - ~80 Tauri commands in `commands/mod.rs` already expose config, markets, predictions, bankroll, recommendations, and grading as clean request/response functions — an almost ready-made tool catalog.
 
 The important structural point: **everything Fincept would want from Kalshi Monster already exists behind a command layer.** Integration is an exposure problem, not a rebuild problem.
@@ -72,7 +72,7 @@ Proposed initial tool surface (each maps ~1:1 onto existing functions):
 | `kalshi_price_history(ticker)` | `price_tracker::get_price_history` |
 | `paper_journal_stats()` | prediction stats + calibration metrics |
 | `paper_positions_risk()` | `exposures_from_predictions` + `compute_stake_adjustment` |
-| `edge_assessment(ticker, fair_prob)` | `monster-edge-core` EV/Kelly + calibrator |
+| `edge_assessment(ticker, fair_prob)` | in-app edge math (`analysis/edge_calculator`) + calibrator |
 
 Guardrails to preserve the product guarantee: read-only tools only; no tool that writes the journal, alters config, or hints at order placement; balance/positions tools excluded by default (opt-in config flag) since they expose account data to an external client.
 

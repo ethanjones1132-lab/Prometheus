@@ -1,18 +1,22 @@
 //! Runtime calibrator resolution.
 //!
 //! Priority: `~/.openclaw/kalshi-monster/calibrator.json` (lets a re-fitted
-//! artifact ship without a rebuild) -> the calibrator embedded in
-//! `monster-edge-core` at build time -> `None` (no calibration applied).
+//! artifact ship without a rebuild) -> the artifact embedded at build time
+//! (`analysis/calibrator.json`) -> `None` (no calibration applied).
 //!
-//! Resolved once per process. The calibrator itself is conservative by
-//! construction: thin fitting data produces shrinkage toward the prior,
-//! never amplified edge (see edge-eval's recalibrate module).
+//! Resolved once per process.
 
 use serde::Serialize;
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
 use crate::analysis::edge_calculator;
+
+/// Calibrator artifact embedded at build time.
+fn embedded_calibrator() -> Option<edge_eval::Calibrator> {
+    let json = include_str!("calibrator.json");
+    serde_json::from_str(json).ok()
+}
 
 fn override_path() -> PathBuf {
     let home = std::env::var("USERPROFILE")
@@ -40,7 +44,7 @@ pub fn current() -> Option<&'static edge_eval::Calibrator> {
             );
             return Some(cal);
         }
-        match monster_edge_core::embedded_calibrator() {
+        match embedded_calibrator() {
             Some(cal) => {
                 log::info!(
                     "calibrator: embedded artifact ({}, n_fit={})",
@@ -131,7 +135,7 @@ pub fn calibration_status_for_probability(raw_pct: f64) -> CalibrationStatus {
     } else {
         "embedded"
     };
-    let artifact = runtime_override.or_else(monster_edge_core::embedded_calibrator);
+    let artifact = runtime_override.or_else(embedded_calibrator);
 
     let (artifact_kind, n_fit, source) = if let Some(cal) = artifact.as_ref() {
         (
@@ -186,7 +190,7 @@ mod tests {
 
     #[test]
     fn load_from_file_round_trips_embedded() {
-        let cal = monster_edge_core::embedded_calibrator().expect("embedded");
+        let cal = embedded_calibrator().expect("embedded");
         let path = std::env::temp_dir().join("km-cal-test-good.json");
         std::fs::write(&path, serde_json::to_string(&cal).unwrap()).unwrap();
         let loaded = load_from_file(&path).expect("parse");

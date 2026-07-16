@@ -1,6 +1,14 @@
 # Kalshi Monster — Priority Roadmap
 
-Last updated: 2026-07-16
+Last updated: 2026-07-16 (evening maintenance pass)
+
+## Maintenance notes (2026-07-16, evening) — inline monster-edge-core
+
+- Removed sibling crate `monster-edge-core/`; prop edge math inlined in `analysis/edge_calculator.rs`
+- Calibrator artifact embedded at `analysis/calibrator.json` (was in removed crate)
+- `calibration.rs` resolves override → embedded JSON → none; analysis tests green
+- Tauri icon set refreshed (Prometheus branding assets + Android/iOS packs)
+- **Next:** operator AGPL public push; live tape KB-1 credentials (user machine)
 
 ## Maintenance notes (2026-07-16) — integration secret health probes
 
@@ -732,4 +740,4 @@ Off-roadmap fix shipped 2026-06-22: notification settings now persist to `~/.ope
 ## Environment notes
 
 - Canonical WSL repo (`~/.openclaw/agents/coderclaw/workspace/kalshi-monster`) was unreachable as of 2026-06-17
-- `edge-eval` and `monster-edge-core` live at `C:\\Users\\ethan\\kalshi-build\\` (sibling paths)
+- `edge-eval` lives at `C:\\Users\\ethan\\kalshi-build\\edge-eval` (sibling path); prop calibrator inlined in `kalshi-monster/src-tauri/src/analysis/`

@@ -160,8 +160,6 @@ kalshi-monster/              # Main Tauri desktop application
 │       ├── App.tsx          # Tab navigation (markets / analyst / predictions / settings)
 │       ├── components/      # KalshiView, ChatView, SettingsView, etc.
 │       └── main.tsx         # Frontend entry point
-monster-edge-core/           # Shared edge math library (also used by offline backtest CLI)
-│   └── src/lib.rs           # Edge calculation, calibration adjustment
 edge-eval/                   # Calibration / backtest / recalibration engine
 │   └── src/
 │       ├── lib.rs
@@ -207,7 +205,7 @@ The bundled installer will be in `src-tauri/target/release/bundle/`.
 
 ### Edge calculation
 
-The edge engine in `monster-edge-core` computes win probability from line + projection delta, then applies a beta-binomial Brier-score calibration that shrinks toward the prior when fitting data is thin. The pipeline:
+The in-app `edge_engine` module computes win probability from line + projection delta, then applies a beta-binomial Brier-score calibration that shrinks toward the prior when fitting data is thin. The pipeline:
 
 ```
 Projection vs Line → Raw Win Prob → Calibrator → Calibrated Win Prob → Kelly Fraction → Stake
