@@ -169,6 +169,8 @@ export interface AppConfig {
   api_sports_key: string;
   /** Brave Search API key for Analyst web evidence */
   brave_api_key: string;
+  /** FRED API key for macro agent */
+  fred_api_key: string;
   risk_tolerance: string;
   preferred_leagues: string[];
   stat_weighting: string;
@@ -194,6 +196,7 @@ export interface AppSecrets {
   openweathermap_api_key: string;
   api_sports_key: string;
   brave_api_key: string;
+  fred_api_key: string;
   kalshi_password: string;
   discord_webhook_url: string;
   telegram_bot_token: string;
@@ -205,6 +208,7 @@ export type SecretKey =
   | 'openweathermap_api_key'
   | 'api_sports_key'
   | 'brave_api_key'
+  | 'fred_api_key'
   | 'kalshi_password'
   | 'discord_webhook_url'
   | 'telegram_bot_token';

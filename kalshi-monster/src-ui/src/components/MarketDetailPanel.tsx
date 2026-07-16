@@ -293,7 +293,15 @@ export function MarketDetailPanel({ market, onClose, onAnalyzeMarket }: Props) {
       setEdgeSummary(
         `Ledger #${r.forecast_id}: p_mkt ${(r.p_market * 100).toFixed(1)}% · p_model ${model} · p_final ${(r.p_final * 100).toFixed(1)}% · ${r.verdict} (${r.signals_opining}/${r.signals_received} agents)`,
       );
-      setMessage(`Edge engine logged forecast #${r.forecast_id} (${r.verdict}). See Calibration tab.`);
+      // Agent-first fair: default slider to p_final when agents opined (S9).
+      if (r.p_model != null && r.signals_opining > 0) {
+        setFairProb(Math.round(r.p_final * 1000) / 10);
+        setMessage(
+          `Edge engine #${r.forecast_id} (${r.verdict}). Fair set to agent p_final ${(r.p_final * 100).toFixed(1)}% — edit thesis only if you disagree.`,
+        );
+      } else {
+        setMessage(`Edge engine logged forecast #${r.forecast_id} (${r.verdict}). See Calibration tab.`);
+      }
     } catch (e) {
       setMessage(e instanceof Error ? e.message : String(e));
     } finally {

@@ -50,6 +50,8 @@ export type SizingPolicy = {
   bankrollDollars?: number;
   kellyFraction?: number;
   maxBetPct?: number;
+  /** Optional agent p_final (0–100 pct) for ModelDisagreement vs LLM fair. */
+  agentPFinalPct?: number;
 };
 
 /**
@@ -139,10 +141,26 @@ export function sanitizeDecisionUnitsAndCaps(
 
   // Always emit model_disagreement so Tauri IPC never rejects the ticket
   // (Rust field is #[serde(default)] but we still send an explicit bool).
-  const model_disagreement =
+  let model_disagreement =
     typeof decision.model_disagreement === 'boolean'
       ? decision.model_disagreement
       : Math.abs(fair_probability_pct - market_price_pct) >= 15;
+
+  // Gap fix: force ModelDisagreement when LLM fair vs agent p_final diverges ≥10pts.
+  const agentFinalPct = policy.agentPFinalPct;
+  if (
+    agentFinalPct != null &&
+    Number.isFinite(agentFinalPct) &&
+    Math.abs(fair_probability_pct - agentFinalPct) >= 10
+  ) {
+    model_disagreement = true;
+    if (!risk_flags.includes('ModelDisagreement')) {
+      risk_flags.push('ModelDisagreement');
+    }
+    if (!thesis.includes('[agent disagreement')) {
+      thesis = `${thesis} [agent disagreement: LLM fair ${fair_probability_pct.toFixed(1)}% vs p_final ${agentFinalPct.toFixed(1)}%]`.trim();
+    }
+  }
 
   return {
     ...decision,

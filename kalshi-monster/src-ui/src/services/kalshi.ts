@@ -137,6 +137,24 @@ export const kalshiApi = {
       decision,
     }),
 
+  /** One-click paper from Edge Board (agent p_final as fair). */
+  paperFromEdge: (ticker: string, side: 'YES' | 'NO', stakeDollars?: number, sessionId?: string) =>
+    invoke<PaperRecordResult>('kalshi_paper_from_edge', {
+      ticker,
+      side,
+      stakeDollars: stakeDollars ?? null,
+      sessionId: sessionId ?? null,
+    }),
+
+  getAssetSignal: (ticker: string, horizonDays?: number) =>
+    invoke<Record<string, unknown>>('kalshi_get_asset_signal', {
+      ticker,
+      horizonDays: horizonDays ?? null,
+    }),
+
+  syncBankrollToPaperEquity: () =>
+    invoke<{ total_bankroll: number }>('paper_sync_bankroll_to_equity'),
+
   getPaperAnalytics: () => invoke<PaperAnalytics>('paper_get_analytics'),
 
   getPaperPositions: () => invoke<PaperPosition[]>('paper_get_positions'),

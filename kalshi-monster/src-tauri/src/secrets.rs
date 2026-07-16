@@ -17,6 +17,7 @@ pub enum SecretKey {
     OpenweathermapApiKey,
     ApiSportsKey,
     BraveApiKey,
+    FredApiKey,
     KalshiPassword,
     DiscordWebhookUrl,
     TelegramBotToken,
@@ -31,6 +32,7 @@ impl SecretKey {
             SecretKey::OpenweathermapApiKey => "openweathermap_api_key",
             SecretKey::ApiSportsKey => "api_sports_key",
             SecretKey::BraveApiKey => "brave_api_key",
+            SecretKey::FredApiKey => "fred_api_key",
             SecretKey::KalshiPassword => "kalshi_password",
             SecretKey::DiscordWebhookUrl => "discord_webhook_url",
             SecretKey::TelegramBotToken => "telegram_bot_token",
@@ -45,6 +47,7 @@ impl SecretKey {
             "openweathermap_api_key" => Some(SecretKey::OpenweathermapApiKey),
             "api_sports_key" => Some(SecretKey::ApiSportsKey),
             "brave_api_key" => Some(SecretKey::BraveApiKey),
+            "fred_api_key" => Some(SecretKey::FredApiKey),
             "kalshi_password" => Some(SecretKey::KalshiPassword),
             "discord_webhook_url" => Some(SecretKey::DiscordWebhookUrl),
             "telegram_bot_token" => Some(SecretKey::TelegramBotToken),
@@ -66,6 +69,7 @@ pub struct AppSecrets {
     pub openweathermap_api_key: String,
     pub api_sports_key: String,
     pub brave_api_key: String,
+    pub fred_api_key: String,
     pub kalshi_password: String,
     pub discord_webhook_url: String,
     pub telegram_bot_token: String,
@@ -81,6 +85,7 @@ impl AppSecrets {
             openweathermap_api_key: get_secret(SecretKey::OpenweathermapApiKey),
             api_sports_key: get_secret(SecretKey::ApiSportsKey),
             brave_api_key: get_secret(SecretKey::BraveApiKey),
+            fred_api_key: get_secret(SecretKey::FredApiKey),
             kalshi_password: get_secret(SecretKey::KalshiPassword),
             discord_webhook_url: get_secret(SecretKey::DiscordWebhookUrl),
             telegram_bot_token: get_secret(SecretKey::TelegramBotToken),
@@ -95,6 +100,7 @@ impl AppSecrets {
         config.openweathermap_api_key = self.openweathermap_api_key.clone();
         config.api_sports_key = self.api_sports_key.clone();
         config.brave_api_key = self.brave_api_key.clone();
+        config.fred_api_key = self.fred_api_key.clone();
         config.kalshi_password = self.kalshi_password.clone();
         config.discord_webhook_url = self.discord_webhook_url.clone();
         config.telegram_bot_token = self.telegram_bot_token.clone();
@@ -109,6 +115,7 @@ impl AppSecrets {
             openweathermap_api_key: config.openweathermap_api_key.clone(),
             api_sports_key: config.api_sports_key.clone(),
             brave_api_key: config.brave_api_key.clone(),
+            fred_api_key: config.fred_api_key.clone(),
             kalshi_password: config.kalshi_password.clone(),
             discord_webhook_url: config.discord_webhook_url.clone(),
             telegram_bot_token: config.telegram_bot_token.clone(),
@@ -122,6 +129,7 @@ impl AppSecrets {
             || !self.openweathermap_api_key.is_empty()
             || !self.api_sports_key.is_empty()
             || !self.brave_api_key.is_empty()
+            || !self.fred_api_key.is_empty()
             || !self.kalshi_password.is_empty()
             || !self.discord_webhook_url.is_empty()
             || !self.telegram_bot_token.is_empty()
@@ -180,6 +188,7 @@ pub fn migrate_plaintext_secrets(config: &AppConfig) -> Result<AppSecrets, Strin
         (SecretKey::OpenweathermapApiKey, &secrets.openweathermap_api_key),
         (SecretKey::ApiSportsKey, &secrets.api_sports_key),
         (SecretKey::BraveApiKey, &secrets.brave_api_key),
+        (SecretKey::FredApiKey, &secrets.fred_api_key),
         (SecretKey::KalshiPassword, &secrets.kalshi_password),
         (SecretKey::DiscordWebhookUrl, &secrets.discord_webhook_url),
         (SecretKey::TelegramBotToken, &secrets.telegram_bot_token),

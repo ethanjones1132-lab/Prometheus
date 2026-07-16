@@ -72,6 +72,9 @@ pub struct AppConfig {
     /// Dashboard: https://api-dashboard.search.brave.com/
     #[serde(default)]
     pub brave_api_key: String,
+    /// FRED API key for macro agent (free at stlouisfed.org). OS keyring in production.
+    #[serde(default)]
+    pub fred_api_key: String,
     // Custom system prompt preferences
     pub risk_tolerance: String,        // "conservative" | "moderate" | "aggressive"
     pub preferred_leagues: Vec<String>, // e.g. ["NFL", "NBA"]
@@ -161,6 +164,7 @@ impl Default for AppConfig {
             openweathermap_api_key: String::new(),
             api_sports_key: String::new(),
             brave_api_key: String::new(),
+            fred_api_key: String::new(),
             risk_tolerance: "moderate".to_string(),
             preferred_leagues: vec!["NFL".to_string()],
             stat_weighting: "balanced".to_string(),
@@ -384,6 +388,7 @@ pub fn save_config(config: &AppConfig) -> Result<(), String> {
         openweathermap_api_key: String::new(),
         api_sports_key: String::new(),
         brave_api_key: String::new(),
+        fred_api_key: String::new(),
         kalshi_password: String::new(),
         discord_webhook_url: String::new(),
         telegram_bot_token: String::new(),

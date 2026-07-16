@@ -13,6 +13,7 @@ vi.mock('../services/kalshi', () => ({
     refitLambda: vi.fn(),
     getEdgeConfig: vi.fn(),
     manualReenableBreaker: vi.fn(),
+    paperFromEdge: vi.fn(),
   },
 }));
 

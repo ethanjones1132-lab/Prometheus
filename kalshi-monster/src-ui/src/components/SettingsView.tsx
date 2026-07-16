@@ -36,6 +36,7 @@ const EMPTY_CONFIG: AppConfig = {
   openweathermap_api_key: '',
   api_sports_key: '',
   brave_api_key: '',
+  fred_api_key: '',
   risk_tolerance: 'moderate',
   preferred_leagues: ['NFL'],
   stat_weighting: 'balanced',
@@ -87,6 +88,7 @@ export function SettingsView() {
   const [weatherKeyInput, setWeatherKeyInput] = useState('');
   const [sportsKeyInput, setSportsKeyInput] = useState('');
   const [braveKeyInput, setBraveKeyInput] = useState('');
+  const [fredKeyInput, setFredKeyInput] = useState('');
   const [discordInput, setDiscordInput] = useState('');
   const [telegramTokenInput, setTelegramTokenInput] = useState('');
   const [leaguesInput, setLeaguesInput] = useState('NFL');
@@ -151,6 +153,7 @@ export function SettingsView() {
       setWeatherKeyInput('');
       setSportsKeyInput('');
       setBraveKeyInput('');
+      setFredKeyInput('');
       setDiscordInput('');
       setTelegramTokenInput('');
     } catch (e) {
@@ -316,6 +319,7 @@ export function SettingsView() {
         openweathermap_api_key: weatherKeyInput.trim() || config.openweathermap_api_key,
         api_sports_key: sportsKeyInput.trim() || config.api_sports_key,
         brave_api_key: braveKeyInput.trim() || config.brave_api_key,
+        fred_api_key: fredKeyInput.trim() || config.fred_api_key,
         discord_webhook_url: discordInput.trim() || config.discord_webhook_url,
         telegram_bot_token: telegramTokenInput.trim() || config.telegram_bot_token,
         preferred_leagues: leaguesInput
@@ -332,6 +336,7 @@ export function SettingsView() {
         weatherKeyInput.trim() && configApi.saveSecret('openweathermap_api_key', weatherKeyInput.trim()),
         sportsKeyInput.trim() && configApi.saveSecret('api_sports_key', sportsKeyInput.trim()),
         braveKeyInput.trim() && configApi.saveSecret('brave_api_key', braveKeyInput.trim()),
+        fredKeyInput.trim() && configApi.saveSecret('fred_api_key', fredKeyInput.trim()),
         discordInput.trim() && configApi.saveSecret('discord_webhook_url', discordInput.trim()),
         telegramTokenInput.trim() && configApi.saveSecret('telegram_bot_token', telegramTokenInput.trim()),
       ].filter(Boolean));
@@ -345,6 +350,7 @@ export function SettingsView() {
       setWeatherKeyInput('');
       setSportsKeyInput('');
       setBraveKeyInput('');
+      setFredKeyInput('');
       setDiscordInput('');
       setTelegramTokenInput('');
       setMessage('Settings saved. Analyst will use the selected provider on the next message.');
@@ -517,6 +523,26 @@ export function SettingsView() {
             <p className="muted">
               Synced from <code>predictions.db</code> and paper positions at {bankrollSummary.synced_at}.
             </p>
+            <button
+              type="button"
+              className="secondaryButton"
+              style={{ marginTop: '0.75rem' }}
+              onClick={() =>
+                void (async () => {
+                  try {
+                    const cfg = await kalshiApi.syncBankrollToPaperEquity();
+                    setMessage(
+                      `bankroll.json total set to paper equity $${cfg.total_bankroll.toFixed(2)}.`,
+                    );
+                    await loadBankroll();
+                  } catch (e) {
+                    setError(e instanceof Error ? e.message : String(e));
+                  }
+                })()
+              }
+            >
+              Set bankroll.json = paper equity
+            </button>
           </>
         ) : null}
       </div>
@@ -1140,6 +1166,27 @@ export function SettingsView() {
                   api-dashboard.search.brave.com
                 </a>
                 . Used first for Analyst web grounding; falls back to DuckDuckGo if empty.
+              </span>
+            </label>
+            <label>
+              FRED API key (macro agent)
+              <input
+                type="password"
+                placeholder={
+                  config.fred_api_key
+                    ? `Set (${maskSecret(config.fred_api_key)})`
+                    : 'Optional — CPI/Fed/payrolls opinions'
+                }
+                value={fredKeyInput}
+                onChange={(e) => setFredKeyInput(e.target.value)}
+                autoComplete="off"
+              />
+              <span className="fieldHint">
+                Free key from{' '}
+                <a href="https://fred.stlouisfed.org/docs/api/api_key.html" target="_blank" rel="noreferrer">
+                  FRED API
+                </a>
+                . Also accepted via env <code>FRED_API_KEY</code>.
               </span>
             </label>
           </div>

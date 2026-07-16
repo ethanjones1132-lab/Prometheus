@@ -3,6 +3,8 @@ import { finceptApi } from '../services/tauri';
 import { kalshiApi } from '../services/kalshi';
 import type { EdgeAnalysisResult, ForecastCalibrationReport, BreakerDecision, LambdaFit, EdgeConfig } from '../types/kalshi';
 import { ReliabilityDiagram } from './ReliabilityDiagram';
+import { notifyPaperUpdated } from '../utils/paperEvents';
+import { formatFeePreviewLine } from '../utils/kalshiFees';
 
 function pct(p: number | null | undefined): string {
   if (p == null || !Number.isFinite(p)) return '—';
@@ -156,6 +158,63 @@ export function CalibrationView() {
     }
   };
 
+  const paperSelectedEdge = async (side: 'YES' | 'NO') => {
+    if (!selected) return;
+    setActionBusy('paper');
+    setMessage(null);
+    setError(null);
+    try {
+      const stake = 25;
+      const entry =
+        side === 'YES' ? selected.p_market : 1 - selected.p_market;
+      const feeLine = formatFeePreviewLine(stake, entry);
+      const ok = window.confirm(
+        `Paper ${side} on ${selected.market_ticker} using agent fair (p_final=${(selected.p_final * 100).toFixed(1)}%)?\nStake ~$${stake}.\n${feeLine}`,
+      );
+      if (!ok) {
+        setActionBusy(null);
+        return;
+      }
+      const res = await kalshiApi.paperFromEdge(selected.market_ticker, side, stake);
+      setMessage(
+        res.lot_opened
+          ? `Edge Board paper lot: ${res.contract_side} ${res.ticker} ~$${res.stake.toFixed(0)}`
+          : `Journal only: ${res.final_decision} — ${(res.demotion_notes || []).slice(0, 2).join('; ')}`,
+      );
+      notifyPaperUpdated();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setActionBusy(null);
+    }
+  };
+
+  const exportBrierCsv = () => {
+    if (!report) return;
+    const rows = [
+      ['metric', 'value'],
+      ['resolved_count', String(report.resolved_count)],
+      ['unresolved_count', String(report.unresolved_count)],
+      ['brier_market', String(report.brier_market ?? '')],
+      ['brier_final', String(report.brier_final ?? '')],
+      ['brier_model', String(report.brier_model ?? '')],
+      ['brier_market_on_model_rows', String(report.brier_market_on_model_rows ?? '')],
+      ['n_model', String(report.n_model)],
+      ['paper_pnl', String(report.paper_pnl ?? '')],
+      ['gate_passed', String(report.gate_passed)],
+      ...(report.gate_reasons || []).map((r, i) => [`gate_reason_${i + 1}`, r]),
+    ];
+    const csv = rows.map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `kalshi-brier-export-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    setMessage('Brier gate report exported as CSV.');
+  };
+
   const gateOk = report?.gate_passed === true;
   const progress =
     report != null ? Math.min(100, (report.resolved_count / 200) * 100) : 0;
@@ -182,9 +241,14 @@ export function CalibrationView() {
             paper P&amp;L &gt; 0. Background auto-grade + paper settle run on the Kalshi poll interval.
           </p>
         </div>
-        <button type="button" className="primaryButton" onClick={() => void refresh()} disabled={loading}>
-          {loading ? 'Refreshing…' : 'Refresh report'}
-        </button>
+        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+          <button type="button" className="ghostBtn" onClick={() => exportBrierCsv()} disabled={!report}>
+            Export Brier CSV
+          </button>
+          <button type="button" className="primaryButton" onClick={() => void refresh()} disabled={loading}>
+            {loading ? 'Refreshing…' : 'Refresh report'}
+          </button>
+        </div>
       </header>
 
       <div className="insightCard" style={{ marginBottom: '1rem' }} aria-label="Flywheel status">
@@ -585,6 +649,27 @@ export function CalibrationView() {
                   </table>
                 </div>
               )}
+              <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.75rem', flexWrap: 'wrap' }}>
+                <button
+                  type="button"
+                  className="primaryButton"
+                  disabled={actionBusy != null}
+                  onClick={() => void paperSelectedEdge('YES')}
+                >
+                  Paper YES (agent fair)
+                </button>
+                <button
+                  type="button"
+                  className="secondaryButton"
+                  disabled={actionBusy != null}
+                  onClick={() => void paperSelectedEdge('NO')}
+                >
+                  Paper NO (agent fair)
+                </button>
+              </div>
+              <p className="muted" style={{ marginTop: '0.35rem' }}>
+                One-click uses sidecar p_final as fair (LLM not re-queried). Paper cash must cover stake+fee.
+              </p>
             </div>
           )}
         </section>

@@ -69,6 +69,8 @@ mod tests {
                 created_at: "2026-01-04T18:00:00+00:00".into(),
                 full_decision_json: None,
                 entry_price: None,
+                close_price: None,
+                clv: None,
                 model_disagreement: false,
             },
             outcome,

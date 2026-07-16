@@ -652,7 +652,7 @@ pub async fn get_all_predictions(pool: &Pool<Sqlite>) -> Result<Vec<PredictionRe
         SELECT id, session_id, raw_text, player_name, pick_type, line,
                stat_category, confidence, confidence_score, probability,
                reasoning, risk, created_at, outcome, actual_result, notes, resolved_at,
-               full_decision_json, entry_price, model_disagreement
+               full_decision_json, entry_price, close_price, clv, model_disagreement
         FROM predictions
         ORDER BY created_at DESC
         "#,
@@ -870,7 +870,23 @@ fn row_to_record(r: &sqlx::sqlite::SqliteRow) -> PredictionRecord {
             risk: r.get("risk"),
             created_at: r.get("created_at"),
             full_decision_json: r.try_get("full_decision_json").ok().flatten(),
-            entry_price: r.try_get("entry_price").ok().flatten(),
+            entry_price: r.try_get("entry_price").ok().or_else(|| {
+                r.try_get::<f64, _>("entry_price").ok().map(Some).flatten()
+            }),
+            close_price: r.try_get("close_price").ok().or_else(|| {
+                r.try_get::<f64, _>("close_price")
+                    .ok()
+                    .filter(|v| *v != 0.0)
+                    .map(Some)
+                    .flatten()
+            }),
+            clv: r.try_get("clv").ok().or_else(|| {
+                r.try_get::<f64, _>("clv")
+                    .ok()
+                    .filter(|v| *v != 0.0)
+                    .map(Some)
+                    .flatten()
+            }),
             model_disagreement: r.try_get::<i64, _>("model_disagreement").ok().unwrap_or(0) != 0,
         },
         outcome,

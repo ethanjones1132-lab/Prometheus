@@ -291,6 +291,7 @@ pub fn analyze_input_from_market(
         horizon_days,
         web_snippets: Vec::new(),
         depth: super::pipeline::AnalysisDepth::Standard,
+        fred_api_key: None,
         flags,
     }
 }

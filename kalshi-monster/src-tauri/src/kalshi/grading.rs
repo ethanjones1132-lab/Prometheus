@@ -552,6 +552,8 @@ mod tests {
             thesis: None,
             data_quality: None,
             decision: None,
+            close_price: None,
+            clv: None,
         }
     }
 

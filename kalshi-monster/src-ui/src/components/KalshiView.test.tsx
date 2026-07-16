@@ -37,6 +37,7 @@ vi.mock('../services/tauri', () => ({
       openweathermap_api_key: '',
       api_sports_key: '',
       brave_api_key: '',
+      fred_api_key: '',
       risk_tolerance: 'moderate',
       preferred_leagues: ['NFL'],
       stat_weighting: 'balanced',

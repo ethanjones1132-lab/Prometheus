@@ -168,6 +168,10 @@ export interface KalshiPrediction {
   thesis?: string | null;
   data_quality?: string | null;
   decision?: string | null;
+  /** Closing mid (0–1) when graded */
+  close_price?: number | null;
+  /** CLV = close − entry */
+  clv?: number | null;
 }
 
 export interface CorrelationConflict {

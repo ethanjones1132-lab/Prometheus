@@ -187,22 +187,31 @@ async fn analyze_market_edge_inner_opts(
         crate::edge_engine::opinion_input::build_analyze_input(client, db_pool, ticker).await?;
     input.depth = depth;
 
+    // Wire OS secrets into agent context (FRED for macro; Brave for web).
+    let secrets = crate::secrets::AppSecrets::load().unwrap_or_default();
+    if !secrets.fred_api_key.is_empty() {
+        input.fred_api_key = Some(secrets.fred_api_key.clone());
+    }
+    let brave = if secrets.brave_api_key.is_empty() {
+        None
+    } else {
+        Some(secrets.brave_api_key.as_str())
+    };
+
     let cat = crate::edge_engine::pipeline::sidecar_category(&input.category);
     let want_web = matches!(depth, AnalysisDepth::Standard | AnalysisDepth::Deep)
         && matches!(
             cat,
             "political" | "economic" | "other" | "company_event"
         );
-    // Deep also tries web for index/price when title looks event-like (optional skip — keep simple).
-    let want_web = want_web
-        || (depth == AnalysisDepth::Deep
-            && matches!(cat, "index_price_level" | "political" | "economic"));
+    // Deep: always attempt web for news agent grounding (all categories).
+    let want_web = want_web || depth == AnalysisDepth::Deep;
 
     if want_web {
         let hits = crate::chat::web_context::snippets_for_market(
             &input.market_ticker,
             &input.title,
-            None,
+            brave,
         )
         .await;
         if !hits.is_empty() {
@@ -705,6 +714,8 @@ pub async fn kalshi_record_paper_decision(
                 full_decision_json: Some(decision_json.clone()),
         // Store selected-side entry in dollars [0,1] (not market_price_pct which is 0–100).
         entry_price: Some(decision.price_to_enter),
+        close_price: None,
+        clv: None,
         model_disagreement: decision.model_disagreement,
     };
 
@@ -769,11 +780,23 @@ pub async fn kalshi_record_paper_decision(
     } else {
         None
     };
-    let breakdown = serde_json::to_string(&opinion.contributions).ok();
+    // Prefer agent-style attribution: store LLM fair under breakdown.llm for calibration.
+    let breakdown = serde_json::to_string(&serde_json::json!({
+        "contributions": opinion.contributions,
+        "llm": {
+            "source": "paper_decision",
+            "fair_probability_pct": decision.fair_probability_pct,
+            "ticker": decision.ticker,
+        },
+        "llm_fair": p_model_raw,
+        "note": "p_model on this row is LLM fair shrunk toward market; Edge Board rows use sidecar agents",
+    }))
+    .ok();
 
     // Open a paper lot only on actionable TAKE with a real side + stake,
     // and only when breakers are not blocking new paper positions.
     // WATCH/PASS must not debit cash even if contract_side is YES/NO.
+    // Hard cash check: refuse lot if paper cash < stake + estimated fee.
     let trade_input = if !paper_lots_blocked
         && decision.decision == crate::chat::decision_schema::DecisionAction::TAKE
         && decision.contract_side != crate::chat::decision_schema::ContractSide::PASS
@@ -781,19 +804,43 @@ pub async fn kalshi_record_paper_decision(
         let entry_cents = crate::paper::normalize_entry_cents(decision.price_to_enter);
         let stake = decision.recommended_stake_dollars.max(0.0);
         if stake > 0.0 && entry_cents > 0.0 && entry_cents < 100.0 {
-            let qty = stake / (entry_cents / 100.0);
-            let side = format!("{:?}", decision.contract_side);
-            Some(crate::paper::PaperTradeInput {
-                ticker: decision.ticker.clone(),
-                title: decision.market_title.clone(),
-                category: decision.category.clone(),
-                side,
-                qty,
-                entry_price_cents: entry_cents,
-                source: crate::paper::PaperTradeSource::AiDecision,
-                decision_json: Some(decision_json.clone()),
-                prediction_id: Some(prediction_id.clone()),
-            })
+            let entry_d = entry_cents / 100.0;
+            let qty = stake / entry_d;
+            let fee_mult = edge_cfg.fee_multiplier;
+            let fee = crate::edge_engine::order_fee(entry_d, qty, fee_mult);
+            let total_needed = stake + fee;
+            let cash = crate::paper::get_account(&db_pool)
+                .await
+                .map(|a| a.balance_dollars)
+                .unwrap_or(0.0);
+            if total_needed > cash + 1e-9 {
+                demotion_notes.push(format!(
+                    "insufficient paper cash: need ${:.2} (stake+fee), have ${:.2} — journal only (no lot)",
+                    total_needed, cash
+                ));
+                if !decision
+                    .risk_flags
+                    .contains(&crate::chat::decision_schema::RiskFlag::BankrollLimitExceeded)
+                {
+                    decision
+                        .risk_flags
+                        .push(crate::chat::decision_schema::RiskFlag::BankrollLimitExceeded);
+                }
+                None
+            } else {
+                let side = format!("{:?}", decision.contract_side);
+                Some(crate::paper::PaperTradeInput {
+                    ticker: decision.ticker.clone(),
+                    title: decision.market_title.clone(),
+                    category: decision.category.clone(),
+                    side,
+                    qty,
+                    entry_price_cents: entry_cents,
+                    source: crate::paper::PaperTradeSource::AiDecision,
+                    decision_json: Some(decision_json.clone()),
+                    prediction_id: Some(prediction_id.clone()),
+                })
+            }
         } else {
             if decision.decision == crate::chat::decision_schema::DecisionAction::TAKE {
                 demotion_notes.push(
@@ -861,6 +908,161 @@ pub async fn kalshi_record_paper_decision(
         demotion_notes,
         paper_lots_blocked,
     })
+}
+
+/// One-click paper TAKE from an Edge Board row (agent p_final as fair — no LLM re-ask).
+#[tauri::command]
+pub async fn kalshi_paper_from_edge(
+    ticker: String,
+    side: String,
+    stake_dollars: Option<f64>,
+    session_id: Option<String>,
+    tracker: State<'_, Arc<Mutex<crate::predictions::tracker::PredictionTracker>>>,
+    kalshi: State<'_, KalshiState>,
+    bridge: State<'_, Arc<crate::fincept_bridge::FinceptBridge>>,
+    db_pool: State<'_, Pool<Sqlite>>,
+) -> Result<crate::paper::PaperRecordResult, String> {
+    let side_u = side.trim().to_ascii_uppercase();
+    if side_u != "YES" && side_u != "NO" {
+        return Err("side must be YES or NO".into());
+    }
+    // Re-run standard analyze so fair = agent p_final when available.
+    let edge = analyze_market_edge_inner(
+        &ticker,
+        kalshi.as_ref(),
+        bridge.as_ref(),
+        &db_pool,
+    )
+    .await?;
+    let client = kalshi.as_ref();
+    let market = client
+        .find_cached_market(&ticker)
+        .or(client.fetch_market(&ticker).await.ok())
+        .ok_or_else(|| format!("market {ticker} not found"))?;
+    let title = market.display_title();
+    let category = market
+        .category
+        .clone()
+        .unwrap_or_else(|| market.infer_category().to_string());
+    let p_market = edge.p_market.clamp(0.01, 0.99);
+    let p_fair = edge.p_model.unwrap_or(edge.p_final).clamp(0.01, 0.99);
+    // Side-specific: for NO, fair is 1-p_yes, market is 1-p_yes mid-ish.
+    let (market_pct, fair_pct, price_enter) = if side_u == "YES" {
+        (
+            p_market * 100.0,
+            p_fair * 100.0,
+            market.yes_ask().clamp(0.01, 0.99),
+        )
+    } else {
+        (
+            (1.0 - p_market) * 100.0,
+            (1.0 - p_fair) * 100.0,
+            market.no_ask().clamp(0.01, 0.99),
+        )
+    };
+    let edge_pts = fair_pct - market_pct;
+    let stake = stake_dollars.unwrap_or_else(|| {
+        // Conservative: 1% of paper cash or $25, capped by max bet later.
+        25.0_f64
+    });
+    let mut decision = crate::chat::decision_schema::KalshiTradeDecision {
+        ticker: ticker.clone(),
+        market_title: title,
+        category,
+        contract_side: if side_u == "YES" {
+            crate::chat::decision_schema::ContractSide::YES
+        } else {
+            crate::chat::decision_schema::ContractSide::NO
+        },
+        market_price_pct: market_pct,
+        fair_probability_pct: fair_pct,
+        edge_points: edge_pts,
+        spread_cents: ((market.yes_ask() - market.yes_bid()) * 100.0).max(0.0),
+        liquidity_score: 50.0,
+        ev_per_contract_cents: edge_pts,
+        ev_roi_pct: if market_pct > 0.0 {
+            edge_pts / market_pct * 100.0
+        } else {
+            0.0
+        },
+        raw_kelly_pct: edge_pts.max(0.0),
+        fractional_kelly_pct: (edge_pts.max(0.0) * 0.25).min(5.0),
+        recommended_stake_dollars: stake,
+        max_position_dollars: stake,
+        decision: crate::chat::decision_schema::DecisionAction::TAKE,
+        confidence_tier: crate::chat::decision_schema::ConfidenceTier::Medium,
+        thesis: format!(
+            "Edge Board one-click paper: agent p_final={:.1}% verdict={} (forecast #{})",
+            edge.p_final * 100.0,
+            edge.verdict,
+            edge.forecast_id
+        ),
+        evidence: vec![format!(
+            "sidecar agents opining {}/{}",
+            edge.signals_opining, edge.signals_received
+        )],
+        risk_flags: vec![],
+        data_quality: crate::chat::decision_schema::DataQuality::Live,
+        price_to_enter: price_enter,
+        model_disagreement: false,
+    };
+    if edge.p_model.is_none() {
+        decision.risk_flags.push(
+            crate::chat::decision_schema::RiskFlag::StaleData,
+        );
+        decision.thesis.push_str(" [no agent p_model — using market-shrunk prior]");
+    }
+    kalshi_record_paper_decision(
+        session_id.unwrap_or_else(|| "edge-board".into()),
+        decision,
+        tracker,
+        kalshi,
+        db_pool,
+    )
+    .await
+}
+
+/// Continuous AssetSignal from sidecar (gated until calibration gate open).
+#[tauri::command]
+pub async fn kalshi_get_asset_signal(
+    ticker: String,
+    horizon_days: Option<i32>,
+    bridge: State<'_, Arc<crate::fincept_bridge::FinceptBridge>>,
+    db_pool: State<'_, Pool<Sqlite>>,
+) -> Result<serde_json::Value, String> {
+    let resolved = crate::kalshi::forecast::resolved_forecasts_for_calibration(&db_pool)
+        .await
+        .unwrap_or_default();
+    let paper_pnl = crate::paper::get_analytics(&db_pool, None)
+        .await
+        .map(|a| a.realized_pnl)
+        .unwrap_or(0.0);
+    let gate = crate::edge_engine::calibration::evaluate_gate(
+        &resolved,
+        paper_pnl,
+        &crate::edge_engine::calibration::GateConfig::default(),
+    );
+    let body = serde_json::json!({
+        "ticker": ticker,
+        "horizon_days": horizon_days.unwrap_or(21),
+        "calibration_gate_open": gate.passed,
+        "closes": [],
+    });
+    bridge
+        .post_json("/api/v1/agents/asset-signal", &body)
+        .await
+}
+
+/// Set bankroll.json total to current paper equity (optional dual-ledger reconcile).
+#[tauri::command]
+pub async fn paper_sync_bankroll_to_equity(
+    db_pool: State<'_, Pool<Sqlite>>,
+) -> Result<crate::bankroll::BankrollConfig, String> {
+    let analytics = crate::paper::get_analytics(&db_pool, None).await?;
+    let mut cfg = crate::bankroll::load_bankroll_config();
+    cfg.total_bankroll = analytics.equity.max(0.0);
+    crate::bankroll::save_bankroll_config(&cfg)?;
+    Ok(cfg)
 }
 
 // ═══════════════════════════════════════════════════════════════

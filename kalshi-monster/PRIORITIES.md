@@ -1,6 +1,15 @@
 # Kalshi Monster — Priority Roadmap
 
-Last updated: 2026-07-15
+Last updated: 2026-07-16
+
+## Maintenance notes (2026-07-16) — post-program gaps S8–S12
+
+- Paper cash precheck before lot; Edge Board **Paper YES/NO (agent fair)**
+- FRED secret in Settings + analyze context; Brave wired for deep web
+- CLV/close on prediction cards; Brier CSV export; bankroll=paper equity button
+- AssetSignal IPC; ModelDisagreement when LLM vs p_final ≥10pts; macro calendar caveats
+- Dual-writer note: paper forecast stores `llm`/`llm_fair` in agent_breakdown
+- **Next:** operator AGPL public push; live tape KB-1 credentials
 
 ## Maintenance notes (2026-07-15) — MASTER sprints 0–7 complete
 
@@ -8,7 +17,6 @@ Last updated: 2026-07-15
 - **7.1** `docs/AGPL-SIDECAR-SPLIT.md` + `scripts/split-fincept-sidecar.ps1`
 - **7.2–7.3** Real-data agents only; gated `POST /asset-signal`
 - Paper sim test + roadmap: `reports/sprint-6-7-paper-test-and-roadmap.md`
-- **Next:** S8 paper hard cash check + Edge Board → paper; public AGPL push
 
 ## Maintenance notes (2026-07-15) — Sprint 4+5 macro + calibration flywheel
 

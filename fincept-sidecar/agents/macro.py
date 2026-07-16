@@ -346,5 +346,36 @@ def estimate_sync(
     )
 
 
+# Approximate recurring macro print windows (UTC month/day heuristics for catalysts).
+# Not a full calendar — honest labels when series maps.
+RELEASE_CATALOG: list[tuple[str, str]] = [
+    ("CPIAUCSL", "BLS CPI release (typically mid-month)"),
+    ("CPILFESL", "BLS Core CPI release (typically mid-month)"),
+    ("UNRATE", "BLS Employment Situation / unemployment (typically first Friday)"),
+    ("PAYEMS", "BLS Nonfarm payrolls (typically first Friday)"),
+    ("FEDFUNDS", "FOMC policy decision window (eight times/year)"),
+    ("DFF", "FOMC / effective funds — watch FOMC statement dates"),
+    ("PCEPI", "BEA PCE price index (end of month)"),
+    ("A191RL1Q225SBEA", "BEA GDP advance/second/third estimate"),
+    ("ICSA", "Initial jobless claims (weekly, Thursdays)"),
+]
+
+
+def release_catalysts_for_mapping(mapping: MacroMapping | None) -> list[str]:
+    if mapping is None:
+        return []
+    out = []
+    for fid, desc in RELEASE_CATALOG:
+        if fid == mapping.fred_id:
+            out.append(f"{desc} — series {fid}")
+    return out
+
+
 async def estimate(req: MarketOpinionRequest) -> AgentSignal:
-    return estimate_sync(req)
+    sig = estimate_sync(req)
+    # Attach release-calendar caveats even when probability is null (useful catalysts).
+    mapping = infer_macro_mapping(req)
+    for c in release_catalysts_for_mapping(mapping):
+        if c not in sig.caveats:
+            sig.caveats.append(f"calendar:{c}")
+    return sig

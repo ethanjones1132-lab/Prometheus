@@ -31,6 +31,12 @@ pub struct Prediction {
     pub full_decision_json: Option<String>,
     /// Entry price (market implied probability at time of decision, 0-1)
     pub entry_price: Option<f64>,
+    /// Closing mid at resolution (0-1), when graded.
+    #[serde(default)]
+    pub close_price: Option<f64>,
+    /// Closing line value: close_price − entry_price (same units as entry).
+    #[serde(default)]
+    pub clv: Option<f64>,
     /// Whether the model's fair probability diverged significantly from market implied prob
     pub model_disagreement: bool,
 }
@@ -388,6 +394,8 @@ impl PredictionTracker {
             created_at: now.to_string(),
             full_decision_json: None,
             entry_price: None,
+            close_price: None,
+            clv: None,
             model_disagreement: false,
         })
     }
@@ -469,6 +477,8 @@ impl PredictionTracker {
             } else {
                 Some((decision.market_price_pct / 100.0).clamp(0.0, 1.0))
             },
+            close_price: None,
+            clv: None,
             model_disagreement: decision.model_disagreement,
         })
     }
@@ -498,6 +508,8 @@ impl PredictionTracker {
                 created_at: now.to_string(),
                 full_decision_json: None,
                 entry_price: None,
+                close_price: None,
+                clv: None,
                 model_disagreement: false,
             };
 
@@ -1231,6 +1243,8 @@ impl PredictionTracker {
             thesis: thesis_text,
             data_quality,
             decision: decision_action,
+            close_price: r.prediction.close_price,
+            clv: r.prediction.clv,
         })
     }
 

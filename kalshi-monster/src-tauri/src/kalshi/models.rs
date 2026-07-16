@@ -120,6 +120,11 @@ impl KalshiMarket {
         self.yes_bid_dollars.parse().unwrap_or(0.0)
     }
 
+    /// Price to buy NO ≈ 1 − yes_bid (sell YES to the bid).
+    pub fn no_ask(&self) -> f64 {
+        (1.0 - self.yes_bid()).clamp(0.0, 1.0)
+    }
+
     /// Midpoint price between yes ask and yes bid
     pub fn yes_mid(&self) -> f64 {
         let ask = self.yes_ask();
@@ -441,6 +446,12 @@ pub struct KalshiPrediction {
     pub thesis: Option<String>,
     pub data_quality: Option<String>,
     pub decision: Option<String>,
+    /// Closing mid at grade (0–1), when available.
+    #[serde(default)]
+    pub close_price: Option<f64>,
+    /// CLV = close − entry (same units as entry_price / price_to_enter).
+    #[serde(default)]
+    pub clv: Option<f64>,
 }
 
 /// Stats for Kalshi predictions

@@ -279,6 +279,8 @@ pub async fn create_prediction_from_ocr(
         created_at: now,
         full_decision_json: None,
         entry_price: None,
+        close_price: None,
+        clv: None,
         model_disagreement: false,
     };
 

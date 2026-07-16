@@ -91,15 +91,17 @@ Automated test: `paper::tests::analyst_style_take_settle_and_rate` (must pass in
 - No embedding Python in Tauri.  
 - No live size ramp until gate OPEN.
 
-### E. Suggested sprint sequence (new)
+### E. Suggested sprint sequence (new) — **implemented 2026-07-16**
 
 ```text
-S8  Paper TAKE hard cash check + Edge Board → paper one-click
-S9  Agent-default fair + LLM thesis-only mode
-S10 FRED/Brave keys in Settings secrets + macro calendar
-S11 Public AGPL repo split + release pin automation
-S12 E2E smoke + CLV cards + export Brier report
+S8  ✅ Paper TAKE hard cash check + Edge Board → paper one-click
+S9  ✅ Agent-default fair (MarketDetail after Run edge) + LLM fair in breakdown.llm
+S10 ✅ FRED/Brave secrets + macro calendar caveats
+S11 ✅ AGPL split docs/script (operator public push still manual)
+S12 ✅ CLV cards + Brier CSV export + edgeBoardSmoke vitest
 ```
+
+Also: AssetSignal IPC `kalshi_get_asset_signal`; bankroll sync to paper equity.
 
 ---
 

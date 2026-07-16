@@ -242,6 +242,18 @@ export function KalshiPredictionsPanel() {
                 {pred.market_price_at_entry != null && (
                   <span>Entry {pred.market_price_at_entry.toFixed(1)}%</span>
                 )}
+                {pred.price_to_enter != null && (
+                  <span>Price ${(pred.price_to_enter).toFixed(2)}</span>
+                )}
+                {pred.clv != null && Number.isFinite(pred.clv) && (
+                  <span className={pred.clv >= 0 ? 'pos' : 'neg'}>
+                    CLV {pred.clv >= 0 ? '+' : ''}
+                    {(pred.clv * 100).toFixed(1)}¢
+                  </span>
+                )}
+                {pred.close_price != null && Number.isFinite(pred.close_price) && (
+                  <span>Close {(pred.close_price * 100).toFixed(1)}%</span>
+                )}
                 {pred.pnl != null && <span>PnL ${pred.pnl.toFixed(2)}</span>}
               </div>
               {!pending && (

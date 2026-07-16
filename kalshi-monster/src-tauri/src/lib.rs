@@ -349,10 +349,13 @@ pub fn run() {
             commands::kalshi_snapshot_prices,
             commands::kalshi_get_price_history,
             commands::kalshi_record_paper_decision,
+            commands::kalshi_paper_from_edge,
+            commands::kalshi_get_asset_signal,
             commands::paper_get_analytics,
             commands::paper_get_positions,
             commands::paper_settle_pending,
             commands::paper_reset_account,
+            commands::paper_sync_bankroll_to_equity,
             // Bot integration
             commands::get_bot_config,
             commands::save_bot_config,

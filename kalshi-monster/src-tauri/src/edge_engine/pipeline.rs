@@ -175,6 +175,8 @@ pub struct AnalyzeMarketInput {
     pub web_snippets: Vec<WebSnippet>,
     /// Agent fan-out tier (quick / standard / deep).
     pub depth: AnalysisDepth,
+    /// Optional FRED key for macro agent (from OS secrets / env).
+    pub fred_api_key: Option<String>,
     pub flags: Vec<String>,
 }
 
@@ -269,6 +271,11 @@ pub async fn analyze_and_log_forecast(
             "web_snippets".into(),
             serde_json::json!(input.web_snippets),
         );
+    }
+    if let Some(ref key) = input.fred_api_key {
+        if !key.is_empty() {
+            context.insert("fred_api_key".into(), serde_json::json!(key));
+        }
     }
     // Depth hint for sidecar orchestrator (quick/standard/deep).
     context.insert("depth".into(), serde_json::json!(input.depth.as_str()));
