@@ -7,16 +7,17 @@ This file remains the Fincept integration **ship log**; prefer MASTER-PLAN for �
 
 ---
 
-## Current next steps (reconciled 2026-07-15 → see MASTER-PLAN)
+## Current next steps (reconciled 2026-07-16 → see MASTER-PLAN + fleet backlog)
 
 | # | Item | Status | Notes |
 |---|------|--------|--------|
-| **0** | **Master plan** | Active | `docs/MASTER-PLAN.md` |
-| **1** | Fincept Phase A | ✅ Done | Agent priors in chat; opinion_input; unified analyze path |
-| **2** | Paper settle + prediction sync | ✅ Done | Side-aware settle; grade/auto-grade settle paper |
-| **3** | **Next: Sprint 0** | Todo | Paper trust polish (structured IPC, equity MTM, close_time) |
-| **4** | **Then: Sprint 1** | Todo | Fincept B — technical coverage + news agent |
-| **5** | Sprints 2–7 | Planned | Edge Board → depth tiers → macro → calibration → paper polish → AGPL |
+| **0** | **Master plan** | Sprints 0–7 ✅ | Post-program: `reports/sprint-6-7-paper-test-and-roadmap.md` (S8–S12 ✅) |
+| **1** | Fincept Phase A–D (in-repo) | ✅ Done | Agents, Edge Board, macro, AGPL split docs/script |
+| **2** | Paper + calibration flywheel | ✅ Shipped | Auto-grade, settle sync, gate UI; accumulate ≥200 resolved forecasts (ops) |
+| **3** | **KB-1** live tape | 🟡 Blocked | Code path fixed; user must verify Markets tab with valid Kalshi credentials |
+| **4** | **KB-2** Analyst UX | ✅ Done | All five slices shipped |
+| **5** | Operator AGPL public push | Manual | Run `scripts/split-fincept-sidecar.ps1` → public repo pin |
+| **6** | P3 multi-category ML | ⬜ Gated | Needs 10+ graded rows per category in `predictions.db` |
 
 ---
 

@@ -1,6 +1,14 @@
 # Kalshi Monster — Priority Roadmap
 
-Last updated: 2026-07-16 (evening maintenance pass)
+Last updated: 2026-07-16 (cron maintenance pass)
+
+## Maintenance notes (2026-07-16, cron) — health green; docs reconciled
+
+- Health: `cargo check`, `tsc`, **259** lib tests, vitest **55/55**; git tree clean at start
+- KB-1: still 🟡 — live Kalshi credential verification on user machine (not cron-automatable)
+- KB-2: ✅ complete; Sprints 0–7 + S8–S12 per MASTER-PLAN / sprint-6-7 roadmap
+- Reconciled stale “Next: Sprint 0” table in `docs/fincept-integration-progress.md`
+- **Next:** operator AGPL public push; KB-1 live Markets acceptance; calibration n→200
 
 ## Maintenance notes (2026-07-16, evening) — inline monster-edge-core
 
