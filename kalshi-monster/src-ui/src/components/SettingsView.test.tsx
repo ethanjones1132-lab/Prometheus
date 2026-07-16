@@ -233,7 +233,7 @@ describe('SettingsView', () => {
 
   test('shows Fincept sidecar status card', async () => {
     render(<SettingsView />);
-    expect(await screen.findByText('Fincept sidecar (Phase 1)')).toBeInTheDocument();
+    expect(await screen.findByText('Fincept sidecar (AGPL)')).toBeInTheDocument();
     expect(screen.getByText(/offline/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Start dev sidecar/i })).toBeInTheDocument();
     expect(await screen.findByLabelText('Sidecar agent ops')).toBeInTheDocument();

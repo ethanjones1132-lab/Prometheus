@@ -11,6 +11,7 @@ import type {
   ChatSession,
   DataSourceStatus,
   EdgeAnalysisInput,
+  IntegrationSecretsHealth,
   ModelInfo,
   OpenRouterResponse,
   PredictionRecord,
@@ -30,6 +31,9 @@ export const configApi = {
   save: (config: AppConfig) => invoke<void>('save_config', { config }),
 
   checkApiStatus: () => invoke<ApiStatus>('check_api_status'),
+
+  checkIntegrationSecretsHealth: () =>
+    invoke<IntegrationSecretsHealth>('check_integration_secrets_health'),
 
   getSecurityPosture: () => invoke<SecurityPosture>('get_security_posture'),
 

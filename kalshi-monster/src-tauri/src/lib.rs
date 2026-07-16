@@ -18,6 +18,7 @@ pub mod line_tracker;
 pub mod ml_predictor;
 pub mod paper;
 pub mod secrets;
+pub mod integration_secrets;
 
 use chat::ChatState;
 use football::api_client::{SportsApiClient, SportsApiConfig};
@@ -247,6 +248,7 @@ pub fn run() {
             commands::get_config,
             commands::save_config,
             commands::check_api_status,
+            commands::check_integration_secrets_health,
             commands::get_security_posture,
             commands::get_available_models,
             commands::get_secrets,

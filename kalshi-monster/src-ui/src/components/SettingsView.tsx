@@ -11,6 +11,7 @@ import type {
   ModelInfo,
   NotificationSettings,
   SecurityPosture,
+  IntegrationSecretsHealth,
 } from '../types';
 
 const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings = {
@@ -119,6 +120,8 @@ export function SettingsView() {
   const [bankrollLoading, setBankrollLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
+  const [probingDataKeys, setProbingDataKeys] = useState(false);
+  const [integrationHealth, setIntegrationHealth] = useState<IntegrationSecretsHealth | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -399,6 +402,42 @@ export function SettingsView() {
     } finally {
       setTesting(false);
     }
+  };
+
+  const handleProbeDataKeys = async () => {
+    setProbingDataKeys(true);
+    setMessage(null);
+    setError(null);
+    try {
+      await Promise.all([
+        braveKeyInput.trim() && configApi.saveSecret('brave_api_key', braveKeyInput.trim()),
+        fredKeyInput.trim() && configApi.saveSecret('fred_api_key', fredKeyInput.trim()),
+      ].filter(Boolean));
+      if (braveKeyInput.trim()) {
+        setConfig((c) => ({ ...c, brave_api_key: braveKeyInput.trim() }));
+        setBraveKeyInput('');
+      }
+      if (fredKeyInput.trim()) {
+        setConfig((c) => ({ ...c, fred_api_key: fredKeyInput.trim() }));
+        setFredKeyInput('');
+      }
+      const health = await configApi.checkIntegrationSecretsHealth();
+      setIntegrationHealth(health);
+      const lines = [
+        `Brave: ${health.brave.ok ? 'OK' : health.brave.configured ? 'fail' : 'not set'}`,
+        `FRED: ${health.fred.ok ? 'OK' : health.fred.configured ? 'fail' : 'not set'}`,
+      ];
+      setMessage(`Data key probes — ${lines.join(' · ')}`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setProbingDataKeys(false);
+    }
+  };
+
+  const probePillClass = (configured: boolean, ok: boolean) => {
+    if (!configured) return 'statusPill';
+    return ok ? 'statusPill ok' : 'statusPill bad';
   };
 
   const provider = config.llm_provider || 'openrouter';
@@ -1190,6 +1229,42 @@ export function SettingsView() {
               </span>
             </label>
           </div>
+          <div className="rowActions" style={{ marginTop: '0.75rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+            <button
+              type="button"
+              className="ghostBtn"
+              disabled={probingDataKeys}
+              onClick={() => void handleProbeDataKeys()}
+            >
+              {probingDataKeys ? 'Probing…' : 'Probe Brave & FRED'}
+            </button>
+            {integrationHealth && (
+              <>
+                <span className={probePillClass(integrationHealth.brave.configured, integrationHealth.brave.ok)}>
+                  Brave{' '}
+                  {integrationHealth.brave.ok
+                    ? 'OK'
+                    : integrationHealth.brave.configured
+                      ? 'error'
+                      : 'optional'}
+                </span>
+                <span className={probePillClass(integrationHealth.fred.configured, integrationHealth.fred.ok)}>
+                  FRED{' '}
+                  {integrationHealth.fred.ok
+                    ? 'OK'
+                    : integrationHealth.fred.configured
+                      ? 'error'
+                      : 'optional'}
+                </span>
+              </>
+            )}
+          </div>
+          {integrationHealth && (
+            <p className="fieldHint" style={{ marginTop: '0.5rem' }}>
+              {integrationHealth.brave.detail ? `Brave — ${integrationHealth.brave.detail}. ` : ''}
+              {integrationHealth.fred.detail ? `FRED — ${integrationHealth.fred.detail}.` : ''}
+            </p>
+          )}
         </div>
 
         <div className="card">

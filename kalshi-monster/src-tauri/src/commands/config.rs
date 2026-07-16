@@ -50,6 +50,9 @@ pub async fn save_config(
         if config.brave_api_key.is_empty() {
             config.brave_api_key = guard.brave_api_key.clone();
         }
+        if config.fred_api_key.is_empty() {
+            config.fred_api_key = guard.fred_api_key.clone();
+        }
         if config.kalshi_password.is_empty() {
             config.kalshi_password = guard.kalshi_password.clone();
         }
@@ -73,6 +76,14 @@ pub async fn check_api_status(
 ) -> Result<config::ApiStatus, String> {
     let config = state.lock().await.clone();
     Ok(config::check_api_status(&config).await)
+}
+
+#[tauri::command]
+pub async fn check_integration_secrets_health(
+    state: State<'_, Arc<Mutex<AppConfig>>>,
+) -> Result<crate::integration_secrets::IntegrationSecretsHealth, String> {
+    let config = state.lock().await.clone();
+    Ok(crate::integration_secrets::check_integration_secrets_health(&config).await)
 }
 
 #[tauri::command]

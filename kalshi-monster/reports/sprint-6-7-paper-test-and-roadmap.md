@@ -81,7 +81,7 @@ Automated test: `paper::tests::analyst_style_take_settle_and_rate` (must pass in
 | **Sidecar latency on chat** | Prior batch can delay first token | Keep 8s timeout; consider priors only on “deep” chat mode |
 | **No order path** | Correct for research posture | Keep demo/live orders behind calibration gate + breakers |
 | **AssetSignal unconnected to Rust** | Continuous book dead code | Wire IPC only after gate OPEN; size with separate asset Kelly later |
-| **Secrets sprawl** | OpenRouter / FRED / Brave keys | Single secrets panel with health probes |
+| **Secrets sprawl** | OpenRouter / FRED / Brave keys | ✅ Brave/FRED HTTP probes in Settings (2026-07-16); LLM still uses Test connection |
 | **Test env ≠ product** | Vitest/cargo strong; E2E UI thin | Add Playwright smoke: open Command desk → Edge Board → paper |
 
 ### D. Explicit non-goals (keep)

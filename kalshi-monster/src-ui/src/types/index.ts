@@ -230,6 +230,18 @@ export interface ApiStatus {
   error?: string;
 }
 
+export interface SecretServiceProbe {
+  service: string;
+  configured: boolean;
+  ok: boolean;
+  detail?: string;
+}
+
+export interface IntegrationSecretsHealth {
+  brave: SecretServiceProbe;
+  fred: SecretServiceProbe;
+}
+
 export interface SecurityPosture {
   csp_enforced: boolean;
   secrets_redacted: boolean;

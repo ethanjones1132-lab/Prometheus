@@ -2,6 +2,13 @@
 
 Last updated: 2026-07-16
 
+## Maintenance notes (2026-07-16) — integration secret health probes
+
+- `check_integration_secrets_health` IPC: live HTTP probes for Brave + FRED (env fallback for FRED)
+- Settings **Probe Brave & FRED** + status pills; `save_config` preserves `fred_api_key` in memory
+- Security posture lists brave/fred in redacted field inventory
+- **Next:** operator AGPL public push; live tape KB-1 credentials
+
 ## Maintenance notes (2026-07-16) — post-program gaps S8–S12
 
 - Paper cash precheck before lot; Edge Board **Paper YES/NO (agent fair)**
