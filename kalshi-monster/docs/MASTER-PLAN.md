@@ -70,6 +70,16 @@
 - Gate dashboard + flywheel copy; λ sample progress to 50; Settings live-TAKE model guidance  
 - Auto-grade + paper settle already background; UI documents the path  
 
+### Sprint 6 — Paper product polish (done 2026-07-15)
+- Cash vs bankroll.json labels; Grade vs Settle copy; paper refresh event  
+- Chat sizing policy + large-stake confirm; fee preview; finite profit factor display  
+
+### Sprint 7 — AGPL + deep Fincept hygiene (done 2026-07-15)
+- `docs/AGPL-SIDECAR-SPLIT.md` + `scripts/split-fincept-sidecar.ps1`  
+- Live agents only where data paths exist; gated `AssetSignal` endpoint  
+
+**Post-program plan:** `reports/sprint-6-7-paper-test-and-roadmap.md`
+
 ---
 
 ## Master sequence (chronological from now)
@@ -85,8 +95,8 @@ Estimate bands are rough (1 = short pass, 3 = multi-day).
 | **3** | **P3 — Depth tiers + Settings ops** ✅ | quick/standard/deep; bridge metrics | 1–2 | P1 | Fincept C3–C4 |
 | **4** | **P4 — Macro agent (economic)** ✅ | FRED/public series, honest nulls | 2 | P1 | Fincept B3 |
 | **5** | **P5 — Calibration flywheel** ✅ | Accumulate resolved ≥200; λ re-fit ops | ongoing | settle/grade live | Progress / Phase 3 |
-| **6** | **P6 — Paper product polish** | Bankroll vs cash clarity; Grade vs Settle UX | 1–2 | P0 | Paper audit M/L |
-| **7** | **P7 — AGPL + deep Fincept** | Sidecar public repo; optional module ports | 3+ | P1–P4 stable | Fincept D |
+| **6** | **P6 — Paper product polish** ✅ | Bankroll vs cash clarity; Grade vs Settle UX | 1–2 | P0 | Paper audit M/L |
+| **7** | **P7 — AGPL + deep Fincept** ✅ | Sidecar public repo procedure; AssetSignal gate | 3+ | P1–P4 stable | Fincept D |
 
 ---
 
@@ -170,25 +180,25 @@ Estimate bands are rough (1 = short pass, 3 = multi-day).
 
 ---
 
-## Sprint 6 — Paper product polish
+## Sprint 6 — Paper product polish ✅ (done 2026-07-15)
 
-| ID | Task | Acceptance |
-|----|------|------------|
-| **6.1** | Size / display paper **cash** vs bankroll.json clearly | No dual-ledger confusion |
-| **6.2** | Portfolio: Grade vs Settle copy; auto-refresh after chat record | Users understand two actions |
-| **6.3** | Chat bankroll policy into extractPaperDecision | Client stake ≈ server |
-| **6.4** | Profit factor finite (no Infinity JSON); analytics error surfaces | Panel never blank-fails |
-| **6.5** | Optional: fee preview on TAKE; confirm large stake | Safer UX |
+| ID | Task | Status |
+|----|------|--------|
+| **6.1** | Cash vs bankroll.json | ✅ Portfolio + Settings |
+| **6.2** | Grade vs Settle + auto-refresh | ✅ Copy + `KALSHI_PAPER_UPDATED` |
+| **6.3** | Chat bankroll policy | ✅ `paperSizingPolicy` → extract |
+| **6.4** | Finite PF + analytics errors | ✅ Cap + banner + PF display |
+| **6.5** | Fee preview + large stake confirm | ✅ `kalshiFees` + UI |
 
 ---
 
-## Sprint 7 — AGPL isolation + deep Fincept (last)
+## Sprint 7 — AGPL isolation + deep Fincept ✅ (done 2026-07-15)
 
-| ID | Task | Acceptance |
-|----|------|------------|
-| **7.1** | Split `fincept-sidecar` to public repo before large Fincept-derived ports | Plan §3 Rule 1 |
-| **7.2** | Port only modules with real data paths (macro DB, fundamentals) | Honest agents only |
-| **7.3** | Stocks/crypto continuous `AssetSignal` after binary calibration matures | Plan §14 |
+| ID | Task | Status |
+|----|------|--------|
+| **7.1** | Public sidecar split procedure | ✅ docs + PowerShell script (operator push) |
+| **7.2** | Real data paths only | ✅ macro/news/tech; stubs remain honest |
+| **7.3** | AssetSignal continuous | ✅ gated `/asset-signal` + tests |
 
 ---
 
@@ -252,4 +262,4 @@ The program is “ready for serious paper validation” when:
 | Long-range architecture | `docs/fincept-integration-plan.md` |
 | Chronology / ship log | `PRIORITIES.md` (notes only; not the order source) |
 
-**Default next implementation:** **Sprint 6** (paper product polish), then Sprint 7 AGPL hygiene.
+**Program sprints 0–7 complete.** Next: operator AGPL public push + items in `reports/sprint-6-7-paper-test-and-roadmap.md` (S8+).

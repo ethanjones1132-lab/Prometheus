@@ -10,6 +10,7 @@ import {
   type SizingPolicy,
 } from '../utils/paperFromChat';
 import { notifyPaperUpdated } from '../utils/paperEvents';
+import { formatFeePreviewLine } from '../utils/kalshiFees';
 
 const FALLBACK_PROMPTS = [
   {
@@ -235,8 +236,9 @@ export function ChatView({
       stake > 0 &&
       (stake >= 250 || (bankroll > 0 && stake >= bankroll * maxPct * 0.75));
     if (largeStake) {
+      const feeLine = formatFeePreviewLine(stake, decision.price_to_enter);
       const ok = window.confirm(
-        `Record paper TAKE on ${decision.ticker} with ~$${stake.toFixed(0)} stake? (Sized from bankroll.json caps — paper cash must cover the lot.)`,
+        `Record paper TAKE on ${decision.ticker} with ~$${stake.toFixed(0)} stake?\n${feeLine}\n(Sized from bankroll.json caps — paper cash must cover the lot.)`,
       );
       if (!ok) return;
     }
@@ -249,9 +251,13 @@ export function ChatView({
         res.demotion_notes?.length > 0
           ? ` Notes: ${res.demotion_notes.slice(0, 3).join('; ')}`
           : '';
+      const feeNote =
+        res.lot_opened && res.stake > 0
+          ? ` ${formatFeePreviewLine(res.stake, res.price_to_enter)}`
+          : '';
       setPaperMsg(
         res.lot_opened
-          ? `Paper TAKE ${res.contract_side} ${res.ticker} @ $${res.price_to_enter.toFixed(2)} · stake ~$${res.stake.toFixed(0)} · lot ${res.lot_id?.slice(0, 8) ?? 'opened'} (pred ${idShort}…). Auto-settles when Kalshi resolves.${notes}`
+          ? `Paper TAKE ${res.contract_side} ${res.ticker} @ $${res.price_to_enter.toFixed(2)} · stake ~$${res.stake.toFixed(0)} · lot ${res.lot_id?.slice(0, 8) ?? 'opened'} (pred ${idShort}…). Auto-settles when Kalshi resolves.${notes}${feeNote}`
           : `Logged ${res.final_decision} on ${res.ticker} (pred ${idShort}…) — journal only, no cash lot.${notes}`,
       );
       notifyPaperUpdated();

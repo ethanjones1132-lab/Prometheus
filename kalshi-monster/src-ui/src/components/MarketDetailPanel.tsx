@@ -10,6 +10,8 @@ import type {
   StakeAdjustment,
 } from '../types/kalshi';
 import { PriceHistoryChart } from './PriceHistoryChart';
+import { formatFeePreviewLine } from '../utils/kalshiFees';
+import { notifyPaperUpdated } from '../utils/paperEvents';
 
 interface Props {
   market: KalshiMarketSummary;
@@ -244,17 +246,35 @@ export function MarketDetailPanel({ market, onClose, onAnalyzeMarket }: Props) {
     setMessage(null);
     try {
       const decision = buildDecision(side, action);
+      if (action === 'TAKE' && decision.recommended_stake_dollars >= 250) {
+        const feeLine = formatFeePreviewLine(
+          decision.recommended_stake_dollars,
+          decision.price_to_enter,
+        );
+        const ok = window.confirm(
+          `Record paper TAKE ${side} ${market.ticker} ~$${decision.recommended_stake_dollars.toFixed(0)}?\n${feeLine}\nPaper cash (not bankroll.json) is debited.`,
+        );
+        if (!ok) {
+          setBusy(false);
+          return;
+        }
+      }
       const res = await kalshiApi.recordPaperDecision('paper-sim', decision);
       const idShort = res.prediction_id.slice(0, 8);
       const notes =
         res.demotion_notes?.length > 0
           ? ` — ${res.demotion_notes.slice(0, 2).join('; ')}`
           : '';
+      const feeNote =
+        res.lot_opened && res.stake > 0
+          ? ` ${formatFeePreviewLine(res.stake, res.price_to_enter)}`
+          : '';
       setMessage(
         res.lot_opened
-          ? `Paper lot opened: ${res.contract_side} ${res.ticker} ~$${res.stake.toFixed(0)} (pred ${idShort}…)${notes}`
+          ? `Paper lot opened: ${res.contract_side} ${res.ticker} ~$${res.stake.toFixed(0)} (pred ${idShort}…)${notes}${feeNote}`
           : `${res.final_decision} logged on ${res.ticker} (pred ${idShort}…) — no cash lot${notes}`,
       );
+      notifyPaperUpdated();
     } catch (e) {
       setMessage(e instanceof Error ? e.message : String(e));
     } finally {
@@ -466,6 +486,12 @@ export function MarketDetailPanel({ market, onClose, onAnalyzeMarket }: Props) {
           {!canRecordSelected && (
             <p className="warnText">Recording is disabled until this side has positive edge and a valid price.</p>
           )}
+          <p className="muted small" aria-label="Fee preview">
+            {formatFeePreviewLine(
+              Math.min(rawStake || 0, maxStakeDollars || 0),
+              sideAsk(market, contractSide),
+            )}
+          </p>
           <div className="decisionActions">
             <button
               type="button"

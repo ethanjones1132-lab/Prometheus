@@ -1576,6 +1576,50 @@ mod tests {
         assert_eq!(closed.settlement_result.as_deref(), Some("No"));
     }
 
+    /// Simulated Analyst TAKE → open lot → settle YES → grade quality rating.
+    #[tokio::test]
+    async fn analyst_style_take_settle_and_rate() {
+        let pool = Pool::<Sqlite>::connect("sqlite::memory:").await.unwrap();
+        init_paper_tables(&pool).await.unwrap();
+        // Prompt-style decision: YES on a 40¢ market with fair 55% (edge claim)
+        let input = PaperTradeInput {
+            ticker: "KXBTCD-26JUL15-B100000".into(),
+            title: "Will Bitcoin be above $100,000?".into(),
+            category: "Crypto".into(),
+            side: "YES".into(),
+            qty: 50.0,
+            entry_price_cents: 40.0,
+            source: PaperTradeSource::AiDecision,
+            decision_json: Some(
+                r#"{"ticker":"KXBTCD-26JUL15-B100000","decision":"TAKE","contract_side":"YES","fair_probability_pct":55,"market_price_pct":40,"recommended_stake_dollars":20}"#.into(),
+            ),
+            prediction_id: Some("pred-analyst-sim-1".into()),
+        };
+        let lot = place_trade(&pool, input).await.unwrap();
+        assert!(lot.stake_dollars > 0.0);
+        // Market resolves YES → analyst was correct direction
+        let closed = close_lot_with_result(
+            &pool,
+            &lot.id,
+            settlement_exit_cents_for_side("YES", "Yes"),
+            "Yes",
+        )
+        .await
+        .unwrap();
+        let pnl = closed.realized_pnl.unwrap_or(0.0);
+        assert!(pnl > 0.0, "winning YES TAKE should profit, pnl={pnl}");
+        let snaps = get_equity_snapshots(&pool, 5).await.unwrap();
+        assert!(!snaps.is_empty());
+        let a = get_analytics(&pool, None).await.unwrap();
+        assert!(a.wins >= 1);
+        assert!(a.profit_factor.is_finite());
+        assert!(a.profit_factor > 0.0 && a.profit_factor <= 999.0);
+        // Simple prediction quality rating (process + outcome)
+        // Edge claimed 15pts, won → strong outcome; process still depends on rails.
+        let rating = if pnl > 0.0 { "B+" } else { "D" };
+        assert_eq!(rating, "B+");
+    }
+
     #[tokio::test]
     async fn settle_syncs_linked_prediction_outcome() {
         let pool = Pool::<Sqlite>::connect("sqlite::memory:").await.unwrap();

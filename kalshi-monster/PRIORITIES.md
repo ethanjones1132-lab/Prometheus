@@ -2,6 +2,14 @@
 
 Last updated: 2026-07-15
 
+## Maintenance notes (2026-07-15) — MASTER sprints 0–7 complete
+
+- **6.4–6.5** Fee preview (`kalshiFees`), profit factor display, MarketDetail confirm + notify
+- **7.1** `docs/AGPL-SIDECAR-SPLIT.md` + `scripts/split-fincept-sidecar.ps1`
+- **7.2–7.3** Real-data agents only; gated `POST /asset-signal`
+- Paper sim test + roadmap: `reports/sprint-6-7-paper-test-and-roadmap.md`
+- **Next:** S8 paper hard cash check + Edge Board → paper; public AGPL push
+
 ## Maintenance notes (2026-07-15) — Sprint 4+5 macro + calibration flywheel
 
 - **4.x** `fincept-sidecar/agents/macro.py`: FRED map (CPI/Fed/payrolls/GDP/UNRATE); null if unmapped/no key/no threshold; pytest `test_macro.py`
@@ -9,14 +17,12 @@ Last updated: 2026-07-15
 - **5.1–5.3** Calibration flywheel card; gate dashboard model-vs-market; λ sample bar (n/50)
 - **5.4** Settings: prefer stronger model for live TAKE (free tier ok for paper/WATCH)
 - Set `FRED_API_KEY` env for live macro opinions
-- **Next:** Sprint 6 paper product polish
 
 ## Maintenance notes (2026-07-15, afternoon pass) — Sprint 6 paper product polish
 
 - **6.1** Settings bankroll card: "Cash / bankroll.json" ledger explainer.
 - **6.2** Paper portfolio: inline Grade vs Settle copy; auto-refresh after Analyst paper record via `KALSHI_PAPER_UPDATED` event; analytics error banner (no more silent blank).
 - **6.3** Chat bankroll policy loaded into `extractPaperDecision` — client stake uses real Kelly caps from bankroll.json + max_bet_pct. Large-stake confirm dialog for TAKE ≥$250 or ≥75% of cap.
-- **Next:** revisit KB-1 live credential verification or advance to Sprint 7 AGPL.
 
 ## Maintenance notes (2026-07-15) — Sprint 3 depth tiers + sidecar ops
 

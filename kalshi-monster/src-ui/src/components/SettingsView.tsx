@@ -612,10 +612,14 @@ export function SettingsView() {
       </div>
 
       <div className="card settingsWide">
-        <h3>Fincept sidecar (Phase 1)</h3>
+        <h3>Fincept sidecar (AGPL)</h3>
         <p className="muted" style={{ marginTop: 0 }}>
-          AGPL Python world-markets bridge. Dev mode spawns <code>fincept-sidecar/main.py</code> when
-          present; status reflects handshake + health check.
+          AGPL Python analysis process (HTTP only — never embedded). Dev mode spawns{' '}
+          <code>fincept-sidecar/main.py</code>; release bundles ship{' '}
+          <code>fincept-sidecar.exe</code> via Tauri <code>externalBin</code>. Source offer:{' '}
+          monorepo <code>fincept-sidecar/</code> (split procedure in{' '}
+          <code>docs/AGPL-SIDECAR-SPLIT.md</code>). Agents: technical, contract_tape, news, macro
+          (FRED_API_KEY). Continuous <code>AssetSignal</code> is gated until the calibration gate is OPEN.
         </p>
         {finceptBridgeError ? <div className="banner error">{finceptBridgeError}</div> : null}
         {finceptBridge ? (

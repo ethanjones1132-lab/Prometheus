@@ -92,8 +92,8 @@ class MarketOpinionResponse(BaseModel):
 
 class AssetSignal(BaseModel):
     """Continuous-payoff contract for the stocks/crypto expansion
-    (plan §14.4). Included now so the wire contract is forward-stable;
-    no endpoint serves it yet."""
+    (plan §14.4). Served by POST /api/v1/agents/asset-signal (Sprint 7.3);
+    gated until binary calibration matures."""
 
     agent: str
     ticker: str
@@ -105,6 +105,20 @@ class AssetSignal(BaseModel):
     confidence: float = Field(ge=0.0, le=1.0)
     rationale: str
     inputs_used: list[DataRef] = Field(default_factory=list)
+
+
+class AssetSignalRequest(BaseModel):
+    """POST /api/v1/agents/asset-signal — continuous book (gated)."""
+
+    ticker: str = Field(description="Equity/crypto symbol, e.g. SPY or BTC-USD")
+    horizon_days: int = Field(default=21, gt=0, le=365)
+    # Caller (Rust) passes whether the binary calibration gate is open.
+    calibration_gate_open: bool = Field(
+        default=False,
+        description="Must be true only when Kalshi forecast gate criteria pass",
+    )
+    # Optional injected closes for tests / offline; production may leave empty.
+    closes: list[float] = Field(default_factory=list)
 
 
 class HealthResponse(BaseModel):

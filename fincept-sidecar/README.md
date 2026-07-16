@@ -8,24 +8,25 @@ estimates, macro indicators, portfolio analytics. It is stateless apart from
 its caches, holds no bankroll state, and never talks to Kalshi's trading
 endpoints. The Rust core owns **decisions and money**.
 
-## Status
+## Status (2026-07)
 
-Phase 1 scaffold. Implemented:
+Implemented:
 
 - FastAPI app with per-launch bearer-token auth (constant-time compare)
 - Ephemeral-port startup handshake: binds `127.0.0.1:0`, prints
-  `FINCEPT_READY port=<n>` on stdout for the parent process (see "Handshake
-  design note" below)
+  `FINCEPT_READY port=<n>` on stdout for the parent process
 - `GET /api/v1/health`, `GET /api/v1/version`
+- `POST /api/v1/agents/market-opinion` — technical, contract_tape, news, macro
+  (depth tiers: quick / standard / deep)
+- `POST /api/v1/agents/asset-signal` — continuous book scaffold; **gated** until
+  binary calibration is OPEN (§14.4)
 - Pydantic contracts: `AgentSignal`, `MarketOpinionRequest/Response`,
-  `CatalystEvent`, `AssetSignal` (§5, §14.4) — the schema the Rust
-  `edge_engine` deserializes
-- Market-data router stubs over yfinance (optional dependency; endpoints
-  return 503 with a clear error when it isn't installed)
-- Tests: auth, schema contracts, and a real subprocess handshake test
+  `CatalystEvent`, `AssetSignal` / `AssetSignalRequest`
+- Market data via yfinance (optional); FRED for macro when `FRED_API_KEY` set
+- Tests: auth, schemas, technical math, news/macro null paths, asset gate
 
-Not yet implemented: the 9 agents (`agents/` is where Fincept-derived code
-will land), EconDB client, portfolio analytics, agent caching.
+Not yet: sentiment/fundamentals/valuation with real DBs; full Fincept EconDB
+extract (requires public AGPL split — see monorepo `docs/AGPL-SIDECAR-SPLIT.md`).
 
 ## Run
 

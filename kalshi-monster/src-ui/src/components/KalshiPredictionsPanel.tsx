@@ -167,6 +167,20 @@ export function KalshiPredictionsPanel() {
             <span className="muted">Unrealized</span>
             <strong className={analytics.unrealized_pnl >= 0 ? 'pos' : 'neg'}>{formatDollars(analytics.unrealized_pnl)}</strong>
           </div>
+          <div>
+            <span className="muted">Profit factor</span>
+            <strong>
+              {Number.isFinite(analytics.profit_factor)
+                ? analytics.profit_factor >= 999
+                  ? '∞ (no losses)'
+                  : analytics.profit_factor.toFixed(2)
+                : '—'}
+            </strong>
+          </div>
+          <div>
+            <span className="muted">Starting cash</span>
+            <strong>{formatDollars(analytics.starting_balance)}</strong>
+          </div>
         </div>
       )}
 
