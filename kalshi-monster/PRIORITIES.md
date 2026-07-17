@@ -1,6 +1,19 @@
 # Kalshi Monster — Priority Roadmap
 
-Last updated: 2026-07-17 (cron maintenance pass)
+Last updated: 2026-07-17 (cron afternoon — calibration resolve ops)
+
+## Maintenance notes (2026-07-17, afternoon cron) — health green; resolved 3 settled forecasts
+
+- Health: `cargo check`, `tsc`, **268** lib tests (0 failed, 9 ignored); working tree **clean**
+- KB-1: still 🟡 — code path fixed; live cache has **200** markets (fetched 2026-07-16); user UI acceptance still required
+- KB-2: ✅ complete; Master sprints 0–7 + S8–S12 complete
+- **Calibration ops (live DB `~/.openclaw/kalshi-monster/predictions.db`):** public Kalshi API showed 3 finalized gold markets still unresolved; wrote outcomes + Brier for rows 48–50
+  - Progress: **38 / 200** resolved (was 35); unresolved 21 (long-dated actives)
+  - Mean Brier: p_final **0.3316** vs p_market **0.3358** vs p_model **0.4133** (p_final slightly beats market on n=38; gate still LOCKED)
+  - All ledger verdicts remain `pass` (sample-building only; no paper lots open)
+- Bare `tokio::spawn` only in paper unit tests (production uses `tauri::async_runtime`)
+- **Blocked next (ops):** operator AGPL public push; KB-1 live Markets UI acceptance; leave app running so auto-grade closes short-dated settles; n→200
+- **No Phase 1+ code advancement** — remaining plan items are true blockers (credentials/UI verify / data / operator)
 
 ## Maintenance notes (2026-07-17, cron) — health green; release-build hygiene
 
