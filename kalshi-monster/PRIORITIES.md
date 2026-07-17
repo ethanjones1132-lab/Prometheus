@@ -1,6 +1,16 @@
 # Kalshi Monster — Priority Roadmap
 
-Last updated: 2026-07-16 (cron maintenance pass)
+Last updated: 2026-07-17 (cron maintenance pass)
+
+## Maintenance notes (2026-07-17, cron) — health green; release-build hygiene
+
+- Health: `cargo check`, `tsc`, **268** lib tests (0 failed, 9 ignored); tree dirty only with release-merge artifacts
+- Auto-remediation: gitignore `tauri.conf.release.merged.json` / `.nobuild.json` + stray `hermes-gateway.service`
+- Added `scripts/merge_release_config.py` — deep-merges release overlay + clears `beforeBuildCommand` (Windows MSYS pitfall)
+- KB-1: still 🟡 — live Kalshi credential verification on user machine (not cron-automatable)
+- KB-2: ✅ complete; Master sprints 0–7 + S8–S12 complete; forecast→outcome poller wired in auto-grade
+- **Blocked next (ops):** operator AGPL public push; KB-1 live Markets acceptance; calibration n→200 resolved forecasts
+- **No Phase 1+ code advancement** — plan-defined items remaining are true blockers (credentials / data / operator)
 
 ## Maintenance notes (2026-07-16, cron) — health green; docs reconciled
 

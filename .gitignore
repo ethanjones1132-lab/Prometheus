@@ -43,3 +43,10 @@ kalshi-monster/scripts/add_*.py
 
 # Ephemeral helper scripts at repo root (cron one-offs)
 scripts/_*.py
+
+# Ephemeral Tauri release-build merge outputs (see kalshi-cron release-build ref)
+kalshi-monster/src-tauri/tauri.conf.release.merged.json
+kalshi-monster/src-tauri/tauri.conf.release.nobuild.json
+
+# Stray Hermes host unit (not part of Kalshi Monster)
+hermes-gateway.service

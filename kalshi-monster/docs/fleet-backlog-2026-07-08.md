@@ -65,4 +65,4 @@ Canonical copy also lives in `C:\Users\ethan\OneDrive\Desktop\kalshi-monster-fin
 
 **Next:** Resume Phase 1 items in the integration plan when KB-1 live verification confirms acceptance.
 
-**Last updated by maintenance pass:** 2026-07-16 cron — KB-1 🟡 pending live credential verification; health 259 lib + 55 vitest green; no code changes required.
+**Last updated by maintenance pass:** 2026-07-17 cron — KB-1 🟡 pending live credential verification; health 268 lib tests green; release-build gitignore + merge_release_config.py; no product code change (plan items blocked).
