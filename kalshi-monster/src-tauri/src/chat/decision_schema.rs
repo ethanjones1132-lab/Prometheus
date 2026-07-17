@@ -3,6 +3,19 @@
 //! Every market analysis output should support this structured format,
 //! enabling the frontend to render trade tickets, journal entries,
 //! and risk alerts with full data fidelity.
+//!
+//! # Probability-space convention (single source of truth)
+//!
+//! - **Wire/display space** — `market_price_pct`, `fair_probability_pct`, and
+//!   `price_to_enter` are **selected-side**: for `contract_side == NO` they are
+//!   the NO ask, P(NO), and the NO entry cost. This is what the LLM emits and
+//!   what the trade ticket shows.
+//! - **Internal/math space** — all edge/EV/Kelly math, calibration, the
+//!   edge_engine, and the forecast ledger (`p_market`/`p_model`/`p_final`,
+//!   Brier-scored against outcome = 1 if YES) are **YES-space**: P(YES) and
+//!   YES dollar prices.
+//! - **Boundary** — the `yes_*` helper methods below are the ONLY conversion
+//!   points. Internal consumers must use them and never re-derive the space.
 
 use serde::{Deserialize, Serialize};
 
@@ -17,10 +30,12 @@ pub struct KalshiTradeDecision {
     pub category: String,
     /// Which side of the contract: YES, NO, or PASS
     pub contract_side: ContractSide,
-    /// Selected-side market price as percent of $1 (0–100). Prefer writing dollars in prompts;
+    /// Selected-side market price as percent of $1 (0–100): the YES price when
+    /// side is YES, the NO ask when side is NO. Prefer writing dollars in prompts;
     /// post-process coerces 0–1 dollar inputs to this unit.
     pub market_price_pct: f64,
-    /// Model's fair probability estimate (0.0–100.0)
+    /// Model's fair probability that the SELECTED side wins (0.0–100.0):
+    /// P(YES) when side is YES, P(NO) when side is NO.
     pub fair_probability_pct: f64,
     /// Edge in percentage points (fair_probability – market_price * 100)
     pub edge_points: f64,
@@ -561,6 +576,51 @@ impl KalshiTradeDecision {
         }
     }
 
+    // ── YES-space boundary (see module header for the convention) ────────
+
+    /// P(YES) market price percent, converted from selected-side wire space.
+    pub fn yes_market_price_pct(&self) -> f64 {
+        match self.contract_side {
+            ContractSide::NO => 100.0 - self.market_price_pct,
+            _ => self.market_price_pct,
+        }
+    }
+
+    /// P(YES) fair probability percent, converted from selected-side wire space.
+    pub fn yes_fair_probability_pct(&self) -> f64 {
+        match self.contract_side {
+            ContractSide::NO => 100.0 - self.fair_probability_pct,
+            _ => self.fair_probability_pct,
+        }
+    }
+
+    /// YES-space (market mid, model fair) in 0–1, clamped to tradable range.
+    /// This is the ONLY conversion point for internal math and ledger writes.
+    pub fn yes_space_probs(&self) -> (f64, f64) {
+        (
+            (self.yes_market_price_pct() / 100.0).clamp(0.01, 0.99),
+            (self.yes_fair_probability_pct() / 100.0).clamp(0.01, 0.99),
+        )
+    }
+
+    /// YES-space top-of-book quote derived from the selected-side entry price,
+    /// centered on `mid_yes` (mid-symmetric approximation — the decision only
+    /// carries one side of the book).
+    ///
+    /// Buying NO at cost c ≡ YES bid = 1 − c; buying YES at cost c ≡ YES ask = c.
+    pub fn yes_space_quote(&self, mid_yes: f64) -> crate::edge_engine::Quote {
+        let entry = coerce_price_to_dollars(self.price_to_enter).clamp(0.01, 0.99);
+        if self.contract_side == ContractSide::NO {
+            let yes_bid = (1.0 - entry).clamp(0.0, 1.0);
+            let yes_ask = (2.0 * mid_yes - yes_bid).clamp(0.01, 0.99);
+            crate::edge_engine::Quote { yes_bid, yes_ask }
+        } else {
+            let yes_ask = entry;
+            let yes_bid = (2.0 * mid_yes - yes_ask).clamp(0.0, 1.0);
+            crate::edge_engine::Quote { yes_bid, yes_ask }
+        }
+    }
+
     /// Compute edge, EV, and Kelly sizing from market price and fair probability.
     /// Uses default max bet of 5% of bankroll.
     pub fn compute(&mut self, bankroll_dollars: f64, kelly_fraction: f64) {
@@ -576,8 +636,10 @@ impl KalshiTradeDecision {
     ) {
         self.sanitize_units_and_caps(bankroll_dollars, kelly_fraction, max_bet_pct);
 
-        let market_price = self.market_price_pct / 100.0;
-        let fair_prob = self.fair_probability_pct / 100.0;
+        // Boundary conversion: wire/display fields are selected-side; the math
+        // below is entirely YES-space (see module header for the convention).
+        let market_price = self.yes_market_price_pct() / 100.0;
+        let fair_prob = self.yes_fair_probability_pct() / 100.0;
 
         if market_price <= 0.0 || market_price >= 1.0 || fair_prob <= 0.0 || fair_prob >= 1.0 {
             self.edge_points = 0.0;
@@ -690,11 +752,16 @@ impl KalshiTradeDecision {
         max_bet_pct: f64,
     ) {
         if apply_calibrator {
+            // Calibrator is YES-space — calibrate the YES-space fair, then
+            // convert back to selected-side wire/display space.
             let cal = crate::analysis::calibration::calibrate_yes_probability_pct(
-                self.fair_probability_pct,
+                self.yes_fair_probability_pct(),
             );
             if cal.applied {
-                self.fair_probability_pct = cal.calibrated_pct;
+                self.fair_probability_pct = match self.contract_side {
+                    ContractSide::NO => 100.0 - cal.calibrated_pct,
+                    _ => cal.calibrated_pct,
+                };
             }
         }
         self.compute_with_policy(bankroll_dollars, kelly_fraction, max_bet_pct);
@@ -764,10 +831,10 @@ RULES:
 - "confidence_tier" must be "High", "Medium", "Low", or "None".
 - "data_quality" must be "Live", "Fresh", "Stale", "Inferential", or "Speculative".
 - "risk_flags" can include: SpreadExceedsEdge, InsufficientLiquidity, CorrelatedExposure, ProvisionalSettlement, EarlyCloseRisk, ExtremeProbability, AmbiguousResolution, StaleData, ConcentrationRisk, ModelDisagreement, MarketSettledOrClosed.
-- PRICE UNITS (critical):
-  - market_price_pct = selected-side cost as percent of $1 (55.0 means $0.55 / 55¢). Do NOT write raw cents as if they were percent.
+- PRICE UNITS (critical) — all three price/probability fields describe the SELECTED side (contract_side):
+  - market_price_pct = selected-side cost as percent of $1 (55.0 means $0.55 / 55¢). For NO this is the NO ask, NOT the YES price. Do NOT write raw cents as if they were percent.
   - price_to_enter = dollars per contract on [0, 1] (0.55 means 55¢). Never cents (55) and never "0.1¢" style.
-  - fair_probability_pct = probability percent on [0, 100].
+  - fair_probability_pct = your probability that the SELECTED side wins, percent on [0, 100]. For NO this is P(NO), not P(YES).
 - KELLY POLICY: prefer quarter-Kelly. fractional_kelly_pct is % of bankroll and must stay ≤ 5 unless user policy says otherwise. Never output fractional_kelly near 100% for long-shots.
 - RESOLUTION FIRST: quote the injected settlement rules. For multi-candidate / jungle primaries, only the named candidate resolves YES; mutual exclusivity with siblings applies — do not treat a party-level narrative as the contract.
 - JSON must be valid. No trailing commas. Place it FIRST in the response.
@@ -853,9 +920,11 @@ mod tests {
 
     #[test]
     fn test_contract_side_no_ev() {
+        // Selected-side wire inputs: NO ask = 40¢, model P(NO) = 60%.
+        // YES-space: YES price 60¢ vs P(YES) 40% → NO edge +20 points.
         let mut decision = KalshiTradeDecision::new("KX-TEST", "Test");
-        decision.market_price_pct = 60.0;
-        decision.fair_probability_pct = 40.0;
+        decision.market_price_pct = 40.0;
+        decision.fair_probability_pct = 60.0;
         decision.contract_side = ContractSide::NO;
         decision.compute(1000.0, 0.25);
 
@@ -863,6 +932,66 @@ mod tests {
         assert!((decision.raw_kelly_pct - 33.33).abs() < 0.05);
         // fractional Kelly is quarter-Kelly then hard-capped at max_bet 5% of bankroll
         assert!((decision.fractional_kelly_pct - 5.0).abs() < 0.05);
+    }
+
+    #[test]
+    fn test_contract_side_no_negative_edge_zero_kelly() {
+        // Selected-side wire inputs: NO ask = 60¢, model P(NO) = 40% → bad trade.
+        // (Pre-fix this exact input read as +20 edge / 33% Kelly — see audit.)
+        let mut decision = KalshiTradeDecision::new("KX-TEST", "Test");
+        decision.market_price_pct = 60.0;
+        decision.fair_probability_pct = 40.0;
+        decision.contract_side = ContractSide::NO;
+        decision.compute(1000.0, 0.25);
+
+        assert!((decision.edge_points + 20.0).abs() < 0.01);
+        assert_eq!(decision.raw_kelly_pct, 0.0);
+        assert_eq!(decision.fractional_kelly_pct, 0.0);
+        assert_eq!(decision.recommended_stake_dollars, 0.0);
+    }
+
+    #[test]
+    fn test_yes_space_boundary_conversion() {
+        // NO ask 30¢, P(NO) = 40% → YES price 70¢, P(YES) = 60%.
+        let mut d = KalshiTradeDecision::new("KX-TEST", "Test");
+        d.contract_side = ContractSide::NO;
+        d.market_price_pct = 30.0;
+        d.fair_probability_pct = 40.0;
+        assert!((d.yes_market_price_pct() - 70.0).abs() < 1e-9);
+        assert!((d.yes_fair_probability_pct() - 60.0).abs() < 1e-9);
+        let (pm, pf) = d.yes_space_probs();
+        assert!((pm - 0.70).abs() < 1e-9);
+        assert!((pf - 0.60).abs() < 1e-9);
+
+        // Audit regression: a genuine +10¢ NO edge must size UP, not zero out.
+        d.compute(1000.0, 0.25);
+        assert!((d.edge_points - 10.0).abs() < 0.01);
+        assert!(d.raw_kelly_pct > 0.0);
+        assert!(d.recommended_stake_dollars > 0.0);
+    }
+
+    #[test]
+    fn test_yes_space_quote_preserves_side_economics() {
+        // NO entry 30¢ with YES mid 0.70: quote mid stays 0.70 and no_ask()
+        // round-trips to the actual 30¢ entry cost.
+        let mut d = KalshiTradeDecision::new("KX-TEST", "Test");
+        d.contract_side = ContractSide::NO;
+        d.market_price_pct = 30.0;
+        d.price_to_enter = 0.30;
+        let (mid, _) = d.yes_space_probs();
+        let q = d.yes_space_quote(mid);
+        assert!((q.mid() - 0.70).abs() < 1e-9);
+        assert!((q.no_ask() - 0.30).abs() < 1e-9);
+
+        // YES entry 55¢ with YES mid 0.55: quote ask is the entry.
+        let mut d = KalshiTradeDecision::new("KX-TEST", "Test");
+        d.contract_side = ContractSide::YES;
+        d.market_price_pct = 55.0;
+        d.price_to_enter = 0.55;
+        let (mid, _) = d.yes_space_probs();
+        let q = d.yes_space_quote(mid);
+        assert!((q.mid() - 0.55).abs() < 1e-9);
+        assert!((q.yes_ask - 0.55).abs() < 1e-9);
     }
 
     #[test]

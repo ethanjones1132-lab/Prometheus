@@ -798,7 +798,7 @@ JSON RULES:
 - "confidence_tier" must be "High", "Medium", "Low", or "None".
 - "data_quality" must be "Live", "Fresh", "Stale", "Inferential", or "Speculative".
 - "risk_flags" can include: SpreadExceedsEdge, InsufficientLiquidity, CorrelatedExposure, ProvisionalSettlement, EarlyCloseRisk, ExtremeProbability, AmbiguousResolution, StaleData, ConcentrationRisk.
-- market_price_pct: 0–100 (% of $1). price_to_enter: 0–1 dollars. fair_probability_pct: 0–100.
+- market_price_pct: 0–100 (selected-side cost as % of $1; for NO use the NO ask, not the YES price). price_to_enter: 0–1 dollars. fair_probability_pct: 0–100 (probability the SELECTED side wins; for NO this is P(NO)).
 - JSON must be valid. No trailing commas. Place it FIRST in the response. ticker must appear in the injected tape.
 
 After the JSON, provide a concise readable summary:

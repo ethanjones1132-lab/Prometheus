@@ -190,6 +190,26 @@ impl AppConfig {
         LlmProvider::from_config(&self.llm_provider)
     }
 
+    /// Clone safe to return to the webview: every keyring-managed secret field
+    /// is replaced by `SECRET_MASK` (empty stays empty). The real values stay
+    /// in process memory and the OS credential store only. Non-secret fields
+    /// (including kalshi_email and telegram_chat_id) pass through unchanged.
+    pub fn redacted_for_ipc(&self) -> AppConfig {
+        use crate::secrets::mask_secret;
+        AppConfig {
+            openrouter_api_key: mask_secret(&self.openrouter_api_key),
+            opencode_api_key: mask_secret(&self.opencode_api_key),
+            openweathermap_api_key: mask_secret(&self.openweathermap_api_key),
+            api_sports_key: mask_secret(&self.api_sports_key),
+            brave_api_key: mask_secret(&self.brave_api_key),
+            fred_api_key: mask_secret(&self.fred_api_key),
+            kalshi_password: mask_secret(&self.kalshi_password),
+            discord_webhook_url: mask_secret(&self.discord_webhook_url),
+            telegram_bot_token: mask_secret(&self.telegram_bot_token),
+            ..self.clone()
+        }
+    }
+
     /// OpenAI-compatible base URL (no trailing slash) for chat/completions + models.
     pub fn llm_base_url(&self) -> String {
         match self.llm_provider_enum() {
@@ -277,7 +297,7 @@ Always output your primary analysis in JSON format first for the engine to track
 ```
 
 PRICE / SIZE UNITS:
-- market_price_pct is percent of $1 (55.0 = $0.55). price_to_enter is dollars on [0,1]. fair_probability_pct is 0–100.
+- market_price_pct is selected-side cost as percent of $1 (55.0 = $0.55; for NO use the NO ask). price_to_enter is dollars on [0,1]. fair_probability_pct is 0–100 for the SELECTED side (for NO this is P(NO)).
 - Prefer quarter-Kelly; fractional_kelly_pct is % of bankroll and should stay ≤ 5 under default policy.
 - Always ground TAKE/PASS in the injected resolution rules (jungle/multi-candidate = named outcome only).
 

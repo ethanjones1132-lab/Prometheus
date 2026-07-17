@@ -438,10 +438,15 @@ pub fn recommend_parlay(
 
     // Calculate combined probability (with correlation adjustment)
     let raw_combined: f64 = legs.iter().map(|l| l.win_probability / 100.0).product();
-    // Correlation adjustment: blend between fully correlated (max prob) and independent (product)
-    let max_single_prob = legs.iter().map(|l| l.win_probability / 100.0).fold(0.0, f64::max);
+    // Correlation adjustment: blend between fully correlated and independent.
+    // Fully correlated (cf=0) joint = MIN leg prob (Fréchet bound — the joint
+    // can never exceed the smallest marginal); independent (cf=1) = product.
+    let min_single_prob = legs
+        .iter()
+        .map(|l| l.win_probability / 100.0)
+        .fold(1.0, f64::min);
     let adjusted_combined =
-        correlation_factor * raw_combined + (1.0 - correlation_factor) * max_single_prob;
+        correlation_factor * raw_combined + (1.0 - correlation_factor) * min_single_prob;
 
     // Parlay odds (approximate for standard -110 legs)
     let n_legs = legs.len() as f64;
@@ -1014,6 +1019,45 @@ mod tests {
         assert_eq!(parlay.legs.len(), 2);
         assert!(parlay.combined_probability > 0.0);
         assert!(parlay.combined_probability < 100.0);
+    }
+
+    #[test]
+    fn test_parlay_fully_correlated_uses_min_not_max() {
+        // Audit regression: fully correlated (cf=0) joint probability is the
+        // MIN leg prob (Fréchet bound), not the max — max overstated the
+        // combined probability up to 2×, inflating parlay Kelly stake.
+        let config = BankrollConfig::default();
+        let legs = vec![
+            PickInput {
+                player_name: "Leg A".into(),
+                prop_category: "Passing Yards".into(),
+                line: 250.5,
+                pick_type: "Over".into(),
+                win_probability: 90.0,
+                confidence_score: Some(80),
+            },
+            PickInput {
+                player_name: "Leg B".into(),
+                prop_category: "Rushing Yards".into(),
+                line: 60.5,
+                pick_type: "Over".into(),
+                win_probability: 50.0,
+                confidence_score: Some(70),
+            },
+        ];
+
+        // Fully correlated: joint = min(0.9, 0.5) = 0.5 (was 0.9 before fix).
+        // combined_probability is stored in percent (0–100).
+        let correlated = recommend_parlay(&config, &legs, 0.0);
+        assert!((correlated.combined_probability - 50.0).abs() < 1e-9);
+
+        // Independent: joint = 0.9 * 0.5 = 0.45.
+        let independent = recommend_parlay(&config, &legs, 1.0);
+        assert!((independent.combined_probability - 45.0).abs() < 1e-9);
+
+        // Mid blend: 0.5 * 0.45 + 0.5 * 0.5 = 0.475.
+        let blended = recommend_parlay(&config, &legs, 0.5);
+        assert!((blended.combined_probability - 47.5).abs() < 1e-9);
     }
 
     #[test]

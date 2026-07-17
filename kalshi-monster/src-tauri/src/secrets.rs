@@ -9,6 +9,28 @@ use serde::{Deserialize, Serialize};
 
 const SERVICE_NAME: &str = "com.kalshimonster.desktop";
 
+/// Placeholder returned to the webview in place of a real secret value.
+/// Non-empty so "is configured" UI checks keep working, but never usable as
+/// a credential. Matches the Settings UI's `maskSecret` output for short values.
+pub const SECRET_MASK: &str = "\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}";
+
+/// True when an IPC-supplied secret field carries no new value — either empty
+/// ("preserve current") or the redaction mask echoed back by the frontend
+/// (the settings form round-trips unchanged fields). `save_config` must treat
+/// both as "no change" and never persist them.
+pub fn is_masked_or_empty(value: &str) -> bool {
+    value.is_empty() || value == SECRET_MASK
+}
+
+/// Mask a secret for IPC: empty stays empty, anything else becomes SECRET_MASK.
+pub fn mask_secret(value: &str) -> String {
+    if value.is_empty() {
+        String::new()
+    } else {
+        SECRET_MASK.to_string()
+    }
+}
+
 /// Named secrets stored in the OS credential store.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SecretKey {
@@ -90,6 +112,22 @@ impl AppSecrets {
             discord_webhook_url: get_secret(SecretKey::DiscordWebhookUrl),
             telegram_bot_token: get_secret(SecretKey::TelegramBotToken),
         })
+    }
+
+    /// Redacted copy safe to return to the webview: every non-empty secret is
+    /// replaced by `SECRET_MASK`. The real values never leave the process.
+    pub fn redacted(&self) -> Self {
+        Self {
+            openrouter_api_key: mask_secret(&self.openrouter_api_key),
+            opencode_api_key: mask_secret(&self.opencode_api_key),
+            openweathermap_api_key: mask_secret(&self.openweathermap_api_key),
+            api_sports_key: mask_secret(&self.api_sports_key),
+            brave_api_key: mask_secret(&self.brave_api_key),
+            fred_api_key: mask_secret(&self.fred_api_key),
+            kalshi_password: mask_secret(&self.kalshi_password),
+            discord_webhook_url: mask_secret(&self.discord_webhook_url),
+            telegram_bot_token: mask_secret(&self.telegram_bot_token),
+        }
     }
 
     /// Apply these secrets to an `AppConfig` so existing callers that take an
@@ -262,5 +300,23 @@ mod tests {
         secrets.apply_to(&mut config);
         assert_eq!(config.openrouter_api_key, "sk-or-test");
         assert_eq!(config.telegram_bot_token, "123:abc");
+    }
+
+    #[test]
+    fn redacted_masks_only_non_empty() {
+        let mut secrets = AppSecrets::default();
+        secrets.openrouter_api_key = "sk-or-secret".into();
+        // kalshi_password left empty
+        let r = secrets.redacted();
+        assert_eq!(r.openrouter_api_key, SECRET_MASK);
+        assert_eq!(r.kalshi_password, "");
+        assert_ne!(r.openrouter_api_key, "sk-or-secret");
+    }
+
+    #[test]
+    fn masked_or_empty_detection() {
+        assert!(is_masked_or_empty(""));
+        assert!(is_masked_or_empty(SECRET_MASK));
+        assert!(!is_masked_or_empty("sk-or-real-value"));
     }
 }

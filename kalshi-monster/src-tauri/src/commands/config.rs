@@ -22,7 +22,8 @@ use tokio::sync::{Mutex, mpsc};
 
 #[tauri::command]
 pub async fn get_config(state: State<'_, Arc<Mutex<AppConfig>>>) -> Result<AppConfig, String> {
-    Ok(state.lock().await.clone())
+    // Never hand plaintext secrets to the webview — masked shape only.
+    Ok(state.lock().await.redacted_for_ipc())
 }
 
 #[tauri::command]
@@ -32,34 +33,36 @@ pub async fn save_config(
 ) -> Result<(), String> {
     // If the frontend did not send secret values (common when secrets are loaded
     // separately), preserve the currently cached secrets in memory so they are
-    // not accidentally cleared.
+    // not accidentally cleared. The redaction mask echoed back by the settings
+    // form (which only ever sees masked values) also means "no change".
     {
         let guard = state.lock().await;
-        if config.openrouter_api_key.is_empty() {
+        use crate::secrets::is_masked_or_empty as no_change;
+        if no_change(&config.openrouter_api_key) {
             config.openrouter_api_key = guard.openrouter_api_key.clone();
         }
-        if config.opencode_api_key.is_empty() {
+        if no_change(&config.opencode_api_key) {
             config.opencode_api_key = guard.opencode_api_key.clone();
         }
-        if config.openweathermap_api_key.is_empty() {
+        if no_change(&config.openweathermap_api_key) {
             config.openweathermap_api_key = guard.openweathermap_api_key.clone();
         }
-        if config.api_sports_key.is_empty() {
+        if no_change(&config.api_sports_key) {
             config.api_sports_key = guard.api_sports_key.clone();
         }
-        if config.brave_api_key.is_empty() {
+        if no_change(&config.brave_api_key) {
             config.brave_api_key = guard.brave_api_key.clone();
         }
-        if config.fred_api_key.is_empty() {
+        if no_change(&config.fred_api_key) {
             config.fred_api_key = guard.fred_api_key.clone();
         }
-        if config.kalshi_password.is_empty() {
+        if no_change(&config.kalshi_password) {
             config.kalshi_password = guard.kalshi_password.clone();
         }
-        if config.discord_webhook_url.is_empty() {
+        if no_change(&config.discord_webhook_url) {
             config.discord_webhook_url = guard.discord_webhook_url.clone();
         }
-        if config.telegram_bot_token.is_empty() {
+        if no_change(&config.telegram_bot_token) {
             config.telegram_bot_token = guard.telegram_bot_token.clone();
         }
     }
@@ -96,7 +99,8 @@ pub async fn get_security_posture(
 
 #[tauri::command]
 pub async fn get_secrets() -> Result<AppSecrets, String> {
-    AppSecrets::load()
+    // Masked shape only — the webview learns whether a secret is set, never its value.
+    AppSecrets::load().map(|s| s.redacted())
 }
 
 #[tauri::command]

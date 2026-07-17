@@ -64,10 +64,14 @@ impl Calibrator {
     }
 
     /// Calibrate a probability in 0–1.
+    ///
+    /// The output is clamped to (0, 1): no finite fitting sample justifies
+    /// emitting certainty (0% or 100%) into staking math, and a leaky fit
+    /// must never surface "Win Prob: 100%".
     pub fn apply(&self, raw: f64) -> f64 {
         let p = raw.clamp(self.clamp_lo, self.clamp_hi);
         let iso = &self.kind.isotonic;
-        interpolate(&iso.xs, &iso.ys, p)
+        interpolate(&iso.xs, &iso.ys, p).clamp(0.01, 0.99)
     }
 }
 
@@ -96,4 +100,52 @@ fn interpolate(xs: &[f64], ys: &[f64], x: f64) -> f64 {
         }
     }
     ys[ys.len() - 1]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cal(xs: Vec<f64>, ys: Vec<f64>) -> Calibrator {
+        Calibrator {
+            kind: CalibratorKind {
+                isotonic: IsotonicCalibrator { xs, ys },
+            },
+            n_fit: 10,
+            clamp_lo: 0.01,
+            clamp_hi: 0.99,
+        }
+    }
+
+    #[test]
+    fn apply_never_emits_certainty() {
+        // A leaky fit mapping to 0.0 / 1.0 must still clamp to (0, 1).
+        let c = cal(vec![0.1, 0.5, 0.9], vec![0.0, 0.5, 1.0]);
+        assert!(c.apply(0.999) <= 0.99);
+        assert!(c.apply(0.9) <= 0.99);
+        assert!(c.apply(0.1) >= 0.01);
+        assert!(c.apply(0.001) >= 0.01);
+    }
+
+    #[test]
+    fn apply_identity_artifact_is_noop() {
+        let c = cal(vec![0.01, 0.99], vec![0.01, 0.99]);
+        assert!((c.apply(0.55) - 0.55).abs() < 1e-9);
+        assert!((c.apply(0.5) - 0.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn interpolate_mismatched_lengths_returns_input() {
+        assert!((interpolate(&[0.1, 0.2], &[0.5], 0.15) - 0.15).abs() < 1e-9);
+        assert!((interpolate(&[], &[], 0.42) - 0.42).abs() < 1e-9);
+    }
+
+    #[test]
+    fn apply_respects_clamp_band_on_input() {
+        let c = cal(vec![0.2, 0.8], vec![0.3, 0.7]);
+        // Below clamp_lo → input clamps to 0.01 → curve floor ys[0] = 0.3.
+        assert!((c.apply(0.0) - 0.3).abs() < 1e-9);
+        // Above clamp_hi → input clamps to 0.99 → curve ceiling ys[last] = 0.7.
+        assert!((c.apply(1.0) - 0.7).abs() < 1e-9);
+    }
 }

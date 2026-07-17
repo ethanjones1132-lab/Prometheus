@@ -393,7 +393,8 @@ async fn persist_chat_forecast_unified(
         return None;
     }
 
-    let llm_fair = (decision.fair_probability_pct / 100.0).clamp(0.01, 0.99);
+    // Forecast ledger is YES-space: convert the selected-side fair at the boundary.
+    let llm_fair = (decision.yes_fair_probability_pct() / 100.0).clamp(0.01, 0.99);
     let llm_meta = serde_json::json!({
         "source": "chat_llm",
         "ticker": decision.ticker,
@@ -455,7 +456,7 @@ async fn persist_chat_forecast_unified(
 
     // Path 2: LLM-only row (sidecar offline / tape miss). p_model is LLM fair;
     // agent_breakdown marks source so calibration can filter if needed.
-    let p_market = (decision.market_price_pct / 100.0).clamp(0.01, 0.99);
+    let p_market = (decision.yes_market_price_pct() / 100.0).clamp(0.01, 0.99);
     let p_final = llm_fair;
     let verdict = match (&decision.decision, &decision.contract_side) {
         (

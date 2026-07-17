@@ -739,14 +739,10 @@ pub async fn kalshi_record_paper_decision(
     // model opinion so columns are never left blank with a raw unshrunk number.
     // Sprint 0.2: use market close/expiry from tape when known.
     let close_time = market_close_time;
-    // market_price_pct is percent 0–100; price_to_enter is dollars 0–1 after sanitize.
-    let p_market_raw = (decision.market_price_pct / 100.0).clamp(0.01, 0.99);
-    let p_model_raw = (decision.fair_probability_pct / 100.0).clamp(0.01, 0.99);
-    let yes_ask = crate::chat::decision_schema::coerce_price_to_dollars(decision.price_to_enter)
-        .clamp(0.01, 0.99);
-    // Approximate bid as mid-symmetric when only entry price is known.
-    let yes_bid = (2.0 * p_market_raw - yes_ask).clamp(0.0, 1.0);
-    let quote = crate::edge_engine::Quote { yes_bid, yes_ask };
+    // Forecast ledger is YES-space (Brier-scored against outcome = 1 if YES):
+    // convert the selected-side wire fields at this single boundary.
+    let (p_market_raw, p_model_raw) = decision.yes_space_probs();
+    let quote = decision.yes_space_quote(p_market_raw);
     let opinion = crate::edge_engine::ModelOpinion {
         p_model: p_model_raw,
         confidence: match decision.confidence_tier {
@@ -786,6 +782,7 @@ pub async fn kalshi_record_paper_decision(
         "llm": {
             "source": "paper_decision",
             "fair_probability_pct": decision.fair_probability_pct,
+            "contract_side": format!("{:?}", decision.contract_side),
             "ticker": decision.ticker,
         },
         "llm_fair": p_model_raw,

@@ -12,10 +12,16 @@ use std::sync::OnceLock;
 
 use crate::analysis::edge_calculator;
 
-/// Calibrator artifact embedded at build time.
+/// Calibrator artifact embedded at build time — validated like any override.
 fn embedded_calibrator() -> Option<edge_eval::Calibrator> {
     let json = include_str!("calibrator.json");
-    serde_json::from_str(json).ok()
+    let cal: edge_eval::Calibrator = serde_json::from_str(json).ok()?;
+    if validate_calibrator(&cal) {
+        Some(cal)
+    } else {
+        log::warn!("calibrator: embedded artifact failed validation");
+        None
+    }
 }
 
 fn override_path() -> PathBuf {
@@ -25,11 +31,41 @@ fn override_path() -> PathBuf {
     PathBuf::from(home).join(".openclaw/kalshi-monster/calibrator.json")
 }
 
-/// Parse a calibrator from a JSON file, rejecting obviously unusable ones.
+/// Parse a calibrator from a JSON file, rejecting malformed or non-isotonic
+/// artifacts (knot/curve length mismatch, out-of-range or non-finite values,
+/// non-monotonic knots or curve, degenerate clamp band).
 pub fn load_from_file(path: &std::path::Path) -> Option<edge_eval::Calibrator> {
     let content = std::fs::read_to_string(path).ok()?;
     let cal: edge_eval::Calibrator = serde_json::from_str(&content).ok()?;
-    Some(cal)
+    if validate_calibrator(&cal) {
+        Some(cal)
+    } else {
+        log::warn!("calibrator: rejected invalid artifact at {}", path.display());
+        None
+    }
+}
+
+/// Structural contract for any calibrator artifact (embedded or runtime
+/// override): at least 2 knots, everything finite in [0, 1], knots strictly
+/// increasing, curve monotonic non-decreasing, valid clamp band.
+fn validate_calibrator(cal: &edge_eval::Calibrator) -> bool {
+    let iso = &cal.kind.isotonic;
+    if iso.xs.len() < 2 || iso.xs.len() != iso.ys.len() {
+        return false;
+    }
+    let unit = |v: &f64| v.is_finite() && *v >= 0.0 && *v <= 1.0;
+    if !iso.xs.iter().all(unit) || !iso.ys.iter().all(unit) {
+        return false;
+    }
+    if !cal.clamp_lo.is_finite()
+        || !cal.clamp_hi.is_finite()
+        || cal.clamp_lo < 0.0
+        || cal.clamp_hi > 1.0
+        || cal.clamp_lo >= cal.clamp_hi
+    {
+        return false;
+    }
+    iso.xs.windows(2).all(|w| w[1] > w[0]) && iso.ys.windows(2).all(|w| w[1] >= w[0])
 }
 
 /// The calibrator the app applies to edge_calculator output, if any.
@@ -186,6 +222,42 @@ mod tests {
         assert!(load_from_file(&bad).is_none());
         assert!(load_from_file(&dir.join("km-cal-test-missing.json")).is_none());
         let _ = std::fs::remove_file(&bad);
+    }
+
+    #[test]
+    fn load_from_file_rejects_non_monotonic_artifact() {
+        let dir = std::env::temp_dir();
+        let bad = dir.join("km-cal-test-nonmono.json");
+        std::fs::write(
+            &bad,
+            r#"{"kind":{"Isotonic":{"xs":[0.2,0.8],"ys":[0.9,0.1]}},"n_fit":5,"clamp_lo":0.01,"clamp_hi":0.99}"#,
+        )
+        .unwrap();
+        assert!(load_from_file(&bad).is_none());
+        let _ = std::fs::remove_file(&bad);
+    }
+
+    #[test]
+    fn load_from_file_rejects_out_of_range_curve() {
+        let dir = std::env::temp_dir();
+        let bad = dir.join("km-cal-test-range.json");
+        std::fs::write(
+            &bad,
+            r#"{"kind":{"Isotonic":{"xs":[0.2,0.8],"ys":[0.2,1.5]}},"n_fit":5,"clamp_lo":0.01,"clamp_hi":0.99}"#,
+        )
+        .unwrap();
+        assert!(load_from_file(&bad).is_none());
+        let _ = std::fs::remove_file(&bad);
+    }
+
+    #[test]
+    fn embedded_artifact_is_valid_and_never_certain() {
+        let cal = embedded_calibrator().expect("embedded");
+        assert!(cal.apply(0.999) < 1.0);
+        assert!(cal.apply(0.001) > 0.0);
+        // Identity placeholder: no adjustment until a real refit ships.
+        assert_eq!(cal.n_fit, 0);
+        assert!((cal.apply(0.55) - 0.55).abs() < 1e-9);
     }
 
     #[test]
