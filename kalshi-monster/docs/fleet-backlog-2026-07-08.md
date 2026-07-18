@@ -65,4 +65,4 @@ Canonical copy also lives in `C:\Users\ethan\OneDrive\Desktop\kalshi-monster-fin
 
 **Next:** Resume Phase 1 items in the integration plan when KB-1 live verification confirms acceptance.
 
-**Last updated by maintenance pass:** 2026-07-18 morning cron — KB-1 🟡 (cache 200 markets on disk; UI accept still user); calibration **43/200** after resolving 5 finalized MLB forecast rows via public API; added `scripts/resolve_settled_forecasts.py`; health 268 lib green; tree clean after docs+script commit.
+**Last updated by maintenance pass:** 2026-07-18 afternoon cron — KB-1 🟡; calibration **43/200** (unchanged resolves); logged **73** short-horizon market-only forecasts via new `scripts/log_short_horizon_forecasts.py` (ledger 132/43/89); health 268 lib green.

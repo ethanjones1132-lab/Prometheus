@@ -1,6 +1,25 @@
 # Kalshi Monster — Priority Roadmap
 
-Last updated: 2026-07-18 (cron morning — calibration resolve ops + script)
+Last updated: 2026-07-18 (cron afternoon — short-horizon sample-build + log script)
+
+## Maintenance notes (2026-07-18, afternoon cron) — health green; short-horizon sample-build
+
+- Health: `cargo check`, `tsc`, **268** lib tests (0 failed, 9 ignored); working tree **clean** at start
+- KB-1: still 🟡 — code path fixed; live cache has **200** markets (fetched 2026-07-16); user UI acceptance still required
+- KB-2: ✅ complete; Master sprints 0–7 + S8–S12 complete
+- **Resolve ops:** `resolve_settled_forecasts.py --dry-run` → 0 new settles (16 long-dated actives still open; gate **43/200** LOCKED)
+- **Shipped:** `scripts/log_short_horizon_forecasts.py` — public-API sample-builder for Phase 3 n→200
+  - Honest market-only rows (`p_model=NULL`, `p_final=p_market`, `verdict=pass`) matching Rust pipeline offline path
+  - Series filters (MLB/weather/crypto/INX), quote quality + mid∈(0.04,0.96), per-series diversity cap
+  - Dedupes unresolved + last-12h tickers; dry-run supported
+- **Live DB action:** logged **73** short-horizon forecasts (close mostly Jul 18–20)
+  - Ledger: **132** total / **43** resolved / **89** unresolved (was 59/43/16)
+  - Horizon mix unresolved: Jul18=7, Jul19=18, Jul20=48 + 16 long-dated leftovers
+  - Mean Brier unchanged until settles land (p_final 0.3046 vs market 0.3082 on n=43)
+- **Next cron:** re-run `resolve_settled_forecasts.py` as weather/crypto/MLB print; optional another `--limit 40` sample-build if short book thins
+- Bare `tokio::spawn` only in paper unit tests (production uses `tauri::async_runtime`)
+- **Blocked next (ops):** operator AGPL public push; KB-1 live Markets UI acceptance; leave app running so auto-grade closes short-dated settles; n→200 now unblocked by sample pipeline
+- **No Phase 1+ code advancement** — remaining plan items are true blockers (credentials/UI verify / data / operator)
 
 ## Maintenance notes (2026-07-18, morning cron) — health green; resolved 5 settled MLB forecasts
 
