@@ -1,6 +1,21 @@
 # Kalshi Monster — Priority Roadmap
 
-Last updated: 2026-07-17 (cron afternoon — calibration resolve ops)
+Last updated: 2026-07-18 (cron morning — calibration resolve ops + script)
+
+## Maintenance notes (2026-07-18, morning cron) — health green; resolved 5 settled MLB forecasts
+
+- Health: `cargo check`, `tsc`, **268** lib tests (0 failed, 9 ignored); working tree **clean** at start
+- KB-1: still 🟡 — code path fixed; live cache has **200** markets (fetched 2026-07-16); user UI acceptance still required
+- KB-2: ✅ complete; Master sprints 0–7 + S8–S12 complete
+- **Calibration ops (live DB `~/.openclaw/kalshi-monster/predictions.db`):** public Kalshi API showed 4 finalized MLB markets (5 forecast rows) still unresolved; wrote outcomes + Brier
+  - Rows: 52–53 `KXMLBTEAMTOTAL-…TOR8` → No; 57 `KXMLBTOTAL-…CWSTOR-4` → Yes; 58–59 `KXMLBTOTAL-…SDKC-14/15` → No
+  - Progress: **43 / 200** resolved (was 38); unresolved **16** (all long-dated actives: Senate/House/NCAAF/Oscar/Pres/etc.)
+  - Mean Brier: p_final **0.3046** vs p_market **0.3082** vs p_model **0.3834** (p_final still slightly beats market on n=43; gate still LOCKED)
+  - predictions table: 19 rows, **0 pending**; paper_lots: 0 open
+- **Shipped:** `scripts/resolve_settled_forecasts.py` — reusable public-API resolve companion for when the desktop app is not running (dry-run supported). Matches Rust Brier math (outcome 1=Yes/0=No).
+- Bare `tokio::spawn` only in paper unit tests (production uses `tauri::async_runtime`)
+- **Blocked next (ops):** operator AGPL public push; KB-1 live Markets UI acceptance; leave app running so auto-grade closes short-dated settles; n→200 (need short-horizon forecasts — long-dated book won't move the gate)
+- **No Phase 1+ code advancement** — remaining plan items are true blockers (credentials/UI verify / data / operator)
 
 ## Maintenance notes (2026-07-17, afternoon cron) — health green; resolved 3 settled forecasts
 
