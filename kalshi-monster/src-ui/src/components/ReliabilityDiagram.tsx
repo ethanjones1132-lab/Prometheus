@@ -54,24 +54,33 @@ export function ReliabilityDiagram({ title, buckets, compareBuckets, compareLabe
           role="img"
           aria-label={`${title} reliability chart`}
         >
-          <line x1={PAD} y1={H - PAD} x2={W - PAD} y2={H - PAD} stroke="var(--border,#444)" />
-          <line x1={PAD} y1={PAD} x2={PAD} y2={H - PAD} stroke="var(--border,#444)" />
-          <path d={perfect} fill="none" stroke="var(--muted,#888)" strokeDasharray="4 3" />
+          {[0.25, 0.5, 0.75].map((g) => (
+            <g key={g}>
+              <line x1={toX(g)} y1={PAD} x2={toX(g)} y2={H - PAD} stroke="rgba(212,175,55,0.08)" />
+              <line x1={PAD} y1={toY(g)} x2={W - PAD} y2={toY(g)} stroke="rgba(212,175,55,0.08)" />
+            </g>
+          ))}
+          <line x1={PAD} y1={H - PAD} x2={W - PAD} y2={H - PAD} stroke="rgba(212,175,55,0.22)" />
+          <line x1={PAD} y1={PAD} x2={PAD} y2={H - PAD} stroke="rgba(212,175,55,0.22)" />
+          <path d={perfect} fill="none" stroke="rgba(240,234,219,0.2)" strokeDasharray="4 4" />
           {cmp.length > 0 && (
             <path
               d={poly(cmp)}
               fill="none"
-              stroke="var(--muted,#888)"
-              strokeWidth={2}
-              opacity={0.85}
+              stroke="#a89e86"
+              strokeWidth={1.75}
+              opacity={0.75}
             />
           )}
           {pts.length > 0 && (
             <path
               d={poly(pts)}
               fill="none"
-              stroke="var(--accent,#4a7dff)"
+              stroke="#d4af37"
               strokeWidth={2.5}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              style={{ filter: 'drop-shadow(0 0 5px rgba(212,175,55,0.45))' }}
             />
           )}
           {pts.map((p) => (
@@ -80,17 +89,22 @@ export function ReliabilityDiagram({ title, buckets, compareBuckets, compareLabe
               cx={toX(p.x)}
               cy={toY(p.y)}
               r={3 + Math.min(6, Math.sqrt(p.n))}
-              fill="var(--accent,#4a7dff)"
-              opacity={0.9}
+              fill="#ecd27a"
+              stroke="#d4af37"
+              strokeWidth={1}
+              opacity={0.95}
             />
           ))}
-          <text x={PAD} y={H - 6} fontSize={10} fill="var(--muted,#888)">
+          <text x={PAD} y={H - 6} fontSize={10} fill="#716a58">
             0
           </text>
-          <text x={W - PAD - 8} y={H - 6} fontSize={10} fill="var(--muted,#888)">
+          <text x={W - PAD - 8} y={H - 6} fontSize={10} fill="#716a58">
             1
           </text>
-          <text x={4} y={PAD + 4} fontSize={10} fill="var(--muted,#888)">
+          <text x={W / 2} y={H - 6} fontSize={10} fill="#716a58" textAnchor="middle">
+            pred
+          </text>
+          <text x={4} y={PAD + 4} fontSize={10} fill="#716a58">
             freq
           </text>
         </svg>

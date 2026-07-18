@@ -11,6 +11,9 @@ import {
 } from '../utils/paperFromChat';
 import { notifyPaperUpdated } from '../utils/paperEvents';
 import { formatFeePreviewLine } from '../utils/kalshiFees';
+import { PrometheusMark } from './brand/PrometheusMark';
+import { StreamConstellation } from './brand/StreamConstellation';
+import { LiveDot } from './brand/LiveDot';
 
 const FALLBACK_PROMPTS = [
   {
@@ -270,6 +273,7 @@ export function ChatView({
 
   const tapeCold = kalshiContextStatus?.degraded === true;
   const tapeCount = kalshiContextStatus?.tape_market_count ?? 0;
+  const tapeDotTone = isStreaming ? 'gold' : tapeCold ? 'idle' : 'live';
 
   return (
     <section className="page analystPage" aria-label="Analyst workspace">
@@ -376,6 +380,7 @@ export function ChatView({
           </div>
           <div className="analystHeaderMeta">
             <span className={`statusPill ${tapeCold ? 'warn' : 'ok'}`}>
+              <LiveDot tone={tapeDotTone} />
               {tapeCold ? `Tape limited (${tapeCount})` : `Tape ready · ${tapeCount} markets`}
             </span>
             <span
@@ -383,6 +388,7 @@ export function ChatView({
               title="Fincept sidecar — technical, contract_tape, news agents"
               aria-label="Sidecar status"
             >
+              <LiveDot tone={sidecarOnline === true ? 'live' : 'idle'} />
               {sidecarOnline === true
                 ? `Sidecar online${lastOpining != null ? ` · ${lastOpining} agents opining` : ' · agents ready'}`
                 : sidecarOnline === false
@@ -461,6 +467,9 @@ export function ChatView({
         <div className="analystMessages" role="log" aria-live="polite">
           {messages.length === 0 && !isStreaming && (
             <div className="analystEmpty">
+              <div className="analystEmptyEmblem">
+                <PrometheusMark variant="medallion" alt="" />
+              </div>
               <h3>Ask with the book in view</h3>
               {tapeCold ? (
                 <>
@@ -495,13 +504,17 @@ export function ChatView({
 
           {isStreaming && (
             <div className="messageBubble assistantBubble streamingBubble">
+              <AssistantHead />
               <div className="streamingToolbar">
-                <span className="streamingDots" aria-live="polite">
-                  {streamingText
-                    ? 'Streaming…'
-                    : streamingThought
-                      ? 'Model thinking…'
-                      : 'Waiting for model…'}
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                  <StreamConstellation />
+                  <span className="streamingDots" aria-live="polite">
+                    {streamingText
+                      ? 'Streaming…'
+                      : streamingThought
+                        ? 'Model thinking…'
+                        : 'Waiting for model…'}
+                  </span>
                 </span>
                 <button type="button" className="ghostBtn" onClick={cancelStream}>
                   Stop
@@ -591,6 +604,17 @@ export function ChatView({
   );
 }
 
+function AssistantHead() {
+  return (
+    <div className="assistantHead">
+      <span className="assistantAvatar">
+        <PrometheusMark variant="medallion" alt="" />
+      </span>
+      <span className="assistantName">Prometheus</span>
+    </div>
+  );
+}
+
 function MessageBubble({
   message,
   onRecordPaper,
@@ -618,6 +642,7 @@ function MessageBubble({
 
   return (
     <div className={`messageBubble ${isUser ? 'userBubble' : 'assistantBubble'}`}>
+      {!isUser && <AssistantHead />}
       {hasSeparateReasoning && (
         <details className="reasoning">
           <summary>Reasoning</summary>
