@@ -65,4 +65,4 @@ Canonical copy also lives in `C:\Users\ethan\OneDrive\Desktop\kalshi-monster-fin
 
 **Next:** Resume Phase 1 items in the integration plan when KB-1 live verification confirms acceptance.
 
-**Last updated by maintenance pass:** 2026-07-18 afternoon cron — KB-1 🟡; calibration **43/200** (unchanged resolves); logged **73** short-horizon market-only forecasts via new `scripts/log_short_horizon_forecasts.py` (ledger 132/43/89); health 268 lib green.
+**Last updated by maintenance pass:** 2026-07-18 evening cron — KB-1 🟡; calibration **62/200** (+19 resolves BTC/ETH/MLB); logged +40 short-horizon forecasts (ledger 172/62/110); Prometheus UI brand committed; health 268 lib green.

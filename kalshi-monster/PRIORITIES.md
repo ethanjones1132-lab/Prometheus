@@ -1,6 +1,23 @@
 # Kalshi Monster — Priority Roadmap
 
-Last updated: 2026-07-18 (cron afternoon — short-horizon sample-build + log script)
+Last updated: 2026-07-18 (cron evening — Prometheus brand + resolve 19 + sample +40)
+
+## Maintenance notes (2026-07-18, evening cron) — health green; Prometheus brand + calibration flywheel
+
+- Health: `cargo check`, `tsc` clean, **268** lib tests (0 failed, 9 ignored)
+- Auto-remediation: committed coherent WIP **Prometheus luxury brand system** (obsidian/antique gold design tokens, Cinzel+Inter fonts, constellation backdrop, nav icons, LiveDot, chart restyle, brand assets/favicon). Dropped unused CSSProperties/LiveDot imports so tsc stays clean.
+- KB-1: still 🟡 — code path fixed; live credential/UI acceptance still required on user machine
+- KB-2: ✅ complete
+- **Resolve ops:** `resolve_settled_forecasts.py` wrote **19** outcomes (BTC/ETH hourly + PIT@CLE MLB game/totals)
+  - Progress: **62 / 200** resolved (was 43); unresolved **110** after sample-build (was 89 before resolve, then +40 logs)
+  - Mean Brier: p_final **0.2575** vs p_market **0.2600** (p_final still slightly beats market; gate LOCKED)
+- **Sample-build:** logged **40** more short-horizon market-only forecasts (KXBTC 12 / KXMLBTOTAL 12 / KXETH 10 / KXMLBTEAMTOTAL 4 / KXMLBGAME 2)
+  - Ledger: **172** total / **62** resolved / **110** unresolved
+  - Unresolved horizon mix: Jul18=4, Jul19=36, Jul20=36, Jul21=18 + long-dated leftovers
+- **Next cron:** re-run resolve as crypto/MLB print; optional another `--limit 40` if short book thins; leave app running for auto-grade
+- **Blocked next (ops):** operator AGPL public push; KB-1 live Markets UI acceptance; n→200 calibration gate
+- **No Phase 1+ code advancement** — remaining plan items are true blockers (credentials/UI verify / data / operator)
+
 
 ## Maintenance notes (2026-07-18, afternoon cron) — health green; short-horizon sample-build
 
