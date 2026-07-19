@@ -9,22 +9,23 @@ the public market has status finalized/determined/settled or a Yes/No result.
 Usage (from anywhere):
   python kalshi-monster/scripts/resolve_settled_forecasts.py
   python kalshi-monster/scripts/resolve_settled_forecasts.py --dry-run
+  python kalshi-monster/scripts/resolve_settled_forecasts.py --poll-minutes 45 --poll-interval 90
 
 DB default: ~/.openclaw/kalshi-monster/predictions.db
 """
 from __future__ import annotations
 
 import argparse
-import json
 import sqlite3
 import sys
+import time
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
 API_BASE = "https://api.elections.kalshi.com/trade-api/v2"
-UA = "kalshi-monster-cron/resolve-settled-forecasts/1.0"
+UA = "kalshi-monster-cron/resolve-settled-forecasts/1.1"
 
 
 def default_db() -> Path:
@@ -37,8 +38,14 @@ def fetch_market(ticker: str) -> dict:
         url, headers={"Accept": "application/json", "User-Agent": UA}
     )
     with urllib.request.urlopen(req, timeout=25) as resp:
-        data = json.loads(resp.read().decode())
+        data = json_loads(resp.read().decode())
     return data.get("market") or data
+
+
+def json_loads(s: str):
+    import json
+
+    return json.loads(s)
 
 
 def normalize_result(raw: str | None) -> str | None:
@@ -68,26 +75,13 @@ def brier(p: float, outcome: int) -> float:
     return (float(p) - float(outcome)) ** 2
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument(
-        "--db",
-        type=Path,
-        default=default_db(),
-        help="Path to predictions.db",
-    )
-    ap.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Probe API and print actions without writing",
-    )
-    args = ap.parse_args()
+def iso_now() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
 
-    if not args.db.exists():
-        print(f"ERROR: DB not found: {args.db}", file=sys.stderr)
-        return 2
 
-    con = sqlite3.connect(str(args.db))
+def run_once(db: Path, dry_run: bool, quiet_open: bool = False) -> dict:
+    """One resolve pass. Returns stats dict including 'updated' count."""
+    con = sqlite3.connect(str(db))
     con.row_factory = sqlite3.Row
     cur = con.cursor()
 
@@ -102,16 +96,21 @@ def main() -> int:
     if not unres:
         print("No unresolved forecasts.")
         print_summary(cur)
-        return 0
+        con.close()
+        return {
+            "updated": 0,
+            "skipped_active": 0,
+            "skipped_unknown": 0,
+            "errors": 0,
+            "unresolved_start": 0,
+        }
 
     by_ticker: dict[str, list] = {}
     for r in unres:
         by_ticker.setdefault(r["market_ticker"], []).append(r)
 
     print(f"Unresolved rows: {len(unres)} across {len(by_ticker)} tickers")
-    resolved_at = (
-        datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
-    )
+    resolved_at = iso_now()
     updated: list[dict] = []
     skipped_active = 0
     skipped_unknown = 0
@@ -137,17 +136,18 @@ def main() -> int:
                 )
                 skipped_unknown += 1
             else:
-                print(
-                    f"  OPEN {ticker}: status={status} result={result_raw!r} "
-                    f"({len(rows)} rows)"
-                )
+                if not quiet_open:
+                    print(
+                        f"  OPEN {ticker}: status={status} result={result_raw!r} "
+                        f"({len(rows)} rows)"
+                    )
                 skipped_active += 1
             continue
 
         outcome = 1 if actual == "Yes" else 0
         print(
             f"  FINAL {ticker}: result={actual} → outcome={outcome} "
-            f"({len(rows)} rows){' [dry-run]' if args.dry_run else ''}"
+            f"({len(rows)} rows){' [dry-run]' if dry_run else ''}"
         )
 
         for r in rows:
@@ -156,7 +156,7 @@ def main() -> int:
             bm = brier(pm, outcome)
             bf = brier(pf, outcome)
             bmod = brier(pmod, outcome) if pmod is not None else None
-            if not args.dry_run:
+            if not dry_run:
                 cur.execute(
                     """
                     UPDATE forecasts
@@ -179,13 +179,13 @@ def main() -> int:
                 }
             )
 
-    if updated and not args.dry_run:
+    if updated and not dry_run:
         con.commit()
 
     print()
     print(
         f"Resolved {len(updated)} row(s)"
-        f"{' (dry-run, not written)' if args.dry_run else ''} "
+        f"{' (dry-run, not written)' if dry_run else ''} "
         f"at {resolved_at}"
     )
     for u in updated:
@@ -199,7 +199,101 @@ def main() -> int:
     )
     print_summary(cur)
     con.close()
-    return 0 if errors == 0 else 1
+    return {
+        "updated": len(updated),
+        "skipped_active": skipped_active,
+        "skipped_unknown": skipped_unknown,
+        "errors": errors,
+        "unresolved_start": len(unres),
+    }
+
+
+def main() -> int:
+    try:
+        sys.stdout.reconfigure(line_buffering=True)  # type: ignore[attr-defined]
+    except Exception:
+        pass
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument(
+        "--db",
+        type=Path,
+        default=default_db(),
+        help="Path to predictions.db",
+    )
+    ap.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Probe API and print actions without writing",
+    )
+    ap.add_argument(
+        "--poll-minutes",
+        type=float,
+        default=0.0,
+        help=(
+            "If >0, keep re-probing for this many minutes when the first pass "
+            "finds zero new settles (useful near hourly crypto close times). "
+            "First pass always runs immediately."
+        ),
+    )
+    ap.add_argument(
+        "--poll-interval",
+        type=float,
+        default=90.0,
+        help="Seconds between poll retries (default 90)",
+    )
+    ap.add_argument(
+        "--quiet-open",
+        action="store_true",
+        help="Suppress per-ticker OPEN lines (summary still prints)",
+    )
+    args = ap.parse_args()
+
+    if not args.db.exists():
+        print(f"ERROR: DB not found: {args.db}", file=sys.stderr)
+        return 2
+
+    deadline = None
+    if args.poll_minutes and args.poll_minutes > 0:
+        deadline = time.time() + (args.poll_minutes * 60.0)
+        print(
+            f"Poll mode: up to {args.poll_minutes:g} min, "
+            f"interval={args.poll_interval:g}s"
+        )
+
+    attempt = 0
+    total_updated = 0
+    last_errors = 0
+    while True:
+        attempt += 1
+        if attempt > 1:
+            print(f"\n--- poll attempt {attempt} at {iso_now()} ---")
+        stats = run_once(args.db, args.dry_run, quiet_open=args.quiet_open)
+        total_updated += int(stats["updated"])
+        last_errors = int(stats["errors"])
+
+        if deadline is None:
+            break
+        # Stop early once we got at least one settle this session, OR time up
+        if stats["updated"] > 0:
+            print(
+                f"\nPoll complete: +{stats['updated']} this pass "
+                f"(session total +{total_updated})"
+            )
+            break
+        remaining = deadline - time.time()
+        if remaining <= 0:
+            print("\nPoll window exhausted with 0 new settles this session.")
+            break
+        sleep_for = min(float(args.poll_interval), max(1.0, remaining))
+        print(
+            f"No new settles; sleeping {sleep_for:.0f}s "
+            f"({remaining:.0f}s left in poll window)…"
+        )
+        time.sleep(sleep_for)
+
+    if attempt > 1:
+        print(f"\nSession resolved total: {total_updated} row(s)")
+    return 0 if last_errors == 0 else 1
 
 
 def print_summary(cur: sqlite3.Cursor) -> None:

@@ -1,6 +1,25 @@
 # Kalshi Monster — Priority Roadmap
 
-Last updated: 2026-07-19 (cron evening — resolve 9 BTC/ETH 13:00Z + sample +39)
+Last updated: 2026-07-19 (cron late-afternoon — resolve 15 BTC/ETH 14:00Z; gate 141/200)
+
+## Maintenance notes (2026-07-19, late-afternoon cron) — health green; calibration 141/200
+
+- Health: `cargo check`, `tsc` clean, **268** lib tests (0 failed, 9 ignored); working tree **clean** at start
+- Auto-remediation: none needed (clean tree)
+- KB-1: still 🟡 — code path fixed; live credential/UI acceptance still required on user machine
+- KB-2: ✅ complete
+- **Resolve ops:** waited through 18:00Z close; `resolve_settled_forecasts.py` wrote **15** Jul-19 14:00Z BTC/ETH hourly outcomes
+  - BTC×7 (B64350–B65050; 1 Yes / 6 No) + ETH×8 (B1767–B1887; 0 Yes / 8 No)
+  - Progress: **141 / 200** resolved (was 126 evening; +15 this pass → **70.5%**)
+  - Mean Brier: p_final **0.1848** vs p_market **0.1859** vs p_model **0.3834** (p_final still slightly beats market; gate LOCKED)
+- **Sample-build:** only **+1** new short-horizon row (book saturated; 103 candidates already unresolved/recent)
+  - Logged: KXETH-26JUL1914-B1887 (resolved later this pass)
+  - Ledger: **298** total / **141** resolved / **157** unresolved
+  - Unresolved close mix: Jul19=18, Jul20=36, Jul21=30, Jul22=45 + long-dated leftovers
+- **Shipped:** `scripts/resolve_settled_forecasts.py` v1.1 — `--poll-minutes` / `--poll-interval` / `--quiet-open` so crons can wait near hourly crypto closes without ad-hoc sleep scripts
+- **Next cron:** re-run resolve after BTC/ETH 17:00Z hourlies (close 21:00Z) + Jul19 weather print overnight + any finalized MLB; sample-build only if short book thins; leave app running for auto-grade
+- **Blocked next (ops):** operator AGPL public push; KB-1 live Markets UI acceptance; n→200 calibration gate (70.5%)
+- **No Phase 1+ code advancement** — remaining plan items are true blockers (credentials/UI verify / data / operator)
 
 ## Maintenance notes (2026-07-19, evening cron) — health green; calibration 126/200
 
