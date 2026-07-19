@@ -1,6 +1,26 @@
 # Kalshi Monster — Priority Roadmap
 
-Last updated: 2026-07-19 (cron afternoon — resolve 12 BTC/ETH hourly + sample +40)
+Last updated: 2026-07-19 (cron evening — resolve 9 BTC/ETH 13:00Z + sample +39)
+
+## Maintenance notes (2026-07-19, evening cron) — health green; calibration 126/200
+
+- Health: `cargo check`, `tsc` clean, **268** lib tests (0 failed, 9 ignored); working tree **clean** at start
+- Auto-remediation: none needed (clean tree)
+- KB-1: still 🟡 — code path fixed; live credential/UI acceptance still required on user machine
+- KB-2: ✅ complete
+- **Resolve ops:** `resolve_settled_forecasts.py` wrote **9** Jul-19 13:00Z BTC/ETH hourly outcomes
+  - BTC×4 (B64350–B64650; 1 Yes / 3 No) + ETH×5 (B1852–B1882; 0 Yes / 5 No)
+  - Progress: **126 / 200** resolved (was 117 afternoon; +9 this pass → **63.0%**)
+  - Mean Brier: p_final **0.2007** vs p_market **0.2019** vs p_model **0.3834** (p_final still slightly beats market; gate LOCKED)
+  - Unresolved after resolve: **132** before sample-build
+- **Sample-build:** logged **39** short-horizon market-only forecasts
+  - Mix: KXMLBTEAMTOTAL 11 / KXMLBTOTAL 10 / KXBTC 7 / KXETH 7 / KXMLBGAME 2 / KXHIGHMIA 1 / KXHIGHDEN 1
+  - Includes ~0.03d BTC/ETH 14:00Z hourlies (same-day resolve) + CWS@TOR game/totals/team totals + Jul-20 MIA/DEN highs
+  - Ledger: **297** total / **126** resolved / **171** unresolved
+  - Unresolved close mix: Jul19=32, Jul20=36, Jul21=30, Jul22=45 + long-dated leftovers
+- **Next cron:** re-run resolve after BTC/ETH 14:00–17:00Z hourlies + Jul19 weather print + any finalized MLB (LAD@NYY / CWS@TOR still active on public API at pass time); optional another `--limit 40` if short book thins; leave app running for auto-grade
+- **Blocked next (ops):** operator AGPL public push; KB-1 live Markets UI acceptance; n→200 calibration gate (63.0%)
+- **No Phase 1+ code advancement** — remaining plan items are true blockers (credentials/UI verify / data / operator)
 
 ## Maintenance notes (2026-07-19, afternoon cron) — health green; calibration 117/200
 

@@ -65,4 +65,4 @@ Canonical copy also lives in `C:\Users\ethan\OneDrive\Desktop\kalshi-monster-fin
 
 **Next:** Resume Phase 1 items in the integration plan when KB-1 live verification confirms acceptance.
 
-**Last updated by maintenance pass:** 2026-07-19 afternoon cron — KB-1 🟡; calibration **117/200** (+12 BTC/ETH hourly resolves); logged +40 short-horizon forecasts (ledger 258/117/141); health 268 lib green.
+**Last updated by maintenance pass:** 2026-07-19 evening cron — KB-1 🟡; calibration **126/200** (+9 BTC/ETH 13:00Z resolves); logged +39 short-horizon forecasts (ledger 297/126/171); health 268 lib green.
