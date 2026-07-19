@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react';
 import { finceptApi } from '../services/tauri';
 import { kalshiApi } from '../services/kalshi';
 import type { EdgeAnalysisResult, ForecastCalibrationReport, BreakerDecision, LambdaFit, EdgeConfig } from '../types/kalshi';
 import { ReliabilityDiagram } from './ReliabilityDiagram';
+import { LiveDot } from './brand/LiveDot';
 import { notifyPaperUpdated } from '../utils/paperEvents';
 import { formatFeePreviewLine } from '../utils/kalshiFees';
 
@@ -44,6 +45,14 @@ function agentSignalRows(breakdown: unknown): Array<{
       rationale: typeof row.rationale === 'string' ? row.rationale : undefined,
     };
   });
+}
+
+function stagger(i: number): CSSProperties {
+  return {
+    '--i': i,
+    animation: 'fadeRise 0.55s var(--ease-luxe) both',
+    animationDelay: 'calc(var(--i, 0) * 70ms)',
+  } as CSSProperties;
 }
 
 export function CalibrationView() {
@@ -234,6 +243,7 @@ export function CalibrationView() {
     <section className="page kalshiPage" aria-label="Calibration surface">
       <header className="kalshiHeader">
         <div>
+          <p className="eyebrow">Forecast evidence</p>
           <h2>Calibration</h2>
           <p className="muted">
             Forecast ledger, Brier scores, and the live-trading gate. Evidence only — never synthetic
@@ -254,6 +264,7 @@ export function CalibrationView() {
       <div className="insightCard" style={{ marginBottom: '1rem' }} aria-label="Flywheel status">
         <span>Calibration flywheel (Sprint 5)</span>
         <strong className={gateOk ? 'pos' : 'neg'}>
+          <LiveDot tone={gateOk ? 'live' : 'idle'} />{' '}
           {gateOk ? 'Gate OPEN — paper/live edge validated path' : 'Gate LOCKED — accumulate resolved rows'}
         </strong>
         <p className="muted">
@@ -266,7 +277,10 @@ export function CalibrationView() {
       {bridge && (
         <div className={`insightCard ${bridge.online ? 'accent' : ''}`}>
           <span>Fincept agents</span>
-          <strong>{bridge.online ? 'Online' : bridge.degraded ? 'Degraded' : 'Offline'}</strong>
+          <strong>
+            <LiveDot tone={bridge.online ? 'live' : 'idle'} />{' '}
+            {bridge.online ? 'Online' : bridge.degraded ? 'Degraded' : 'Offline'}
+          </strong>
           <p>
             {bridge.online
               ? 'Agents: technical + contract_tape + news + macro (FRED when keyed). Board scan uses depth=quick.'
@@ -327,21 +341,21 @@ export function CalibrationView() {
       )}
 
       <div className="mechanicsGrid" style={{ marginBottom: '1rem' }}>
-        <div>
+        <div style={stagger(0)}>
           <span>Gate</span>
           <strong className={gateOk ? 'pos' : 'neg'}>{gateOk ? 'OPEN' : 'LOCKED'}</strong>
         </div>
-        <div>
+        <div style={stagger(1)}>
           <span>Resolved</span>
-          <strong>
+          <strong className="goldText">
             {report?.resolved_count ?? '—'} / 200
           </strong>
         </div>
-        <div>
+        <div style={stagger(2)}>
           <span>Unresolved</span>
           <strong>{report?.unresolved_count ?? '—'}</strong>
         </div>
-        <div>
+        <div style={stagger(3)}>
           <span>Paper P&amp;L</span>
           <strong className={(report?.paper_pnl ?? 0) > 0 ? 'pos' : 'neg'}>
             {money(report?.paper_pnl)}
@@ -376,34 +390,36 @@ export function CalibrationView() {
       </div>
 
       <section className="modalSection" aria-label="Gate dashboard">
+        <p className="eyebrow" style={{ marginBottom: 4 }}>Scoring</p>
         <h4>Gate dashboard — model vs market</h4>
         <div className="mechanicsGrid">
-          <div>
+          <div style={stagger(0)}>
             <span>Brier(p_market)</span>
-            <strong>{brier(report?.brier_market)}</strong>
+            <strong className="goldText">{brier(report?.brier_market)}</strong>
           </div>
-          <div>
+          <div style={stagger(1)}>
             <span>Brier(p_final)</span>
-            <strong className={finalBeatsMarket ? 'pos' : undefined}>
+            <strong className={finalBeatsMarket ? 'pos' : 'goldText'}>
               {brier(report?.brier_final)}
               {finalBeatsMarket ? ' ≤ mkt' : ''}
             </strong>
           </div>
-          <div>
+          <div style={stagger(2)}>
             <span>Brier(p_model)</span>
-            <strong className={modelBeatsMarket ? 'pos' : undefined}>
+            <strong className={modelBeatsMarket ? 'pos' : 'goldText'}>
               {brier(report?.brier_model)}
               {report && report.n_model > 0 ? ` (n=${report.n_model})` : ''}
               {modelBeatsMarket ? ' ≤ mkt' : ''}
             </strong>
           </div>
-          <div>
+          <div style={stagger(3)}>
             <span>Market on model rows</span>
-            <strong>{brier(report?.brier_market_on_model_rows)}</strong>
+            <strong className="goldText">{brier(report?.brier_market_on_model_rows)}</strong>
           </div>
         </div>
         <p className="muted" style={{ marginTop: '0.5rem' }}>
-          Paper equity P&amp;L (realized): <strong>{money(report?.paper_pnl)}</strong>
+          Paper equity P&amp;L (realized):{' '}
+          <strong className={(report?.paper_pnl ?? 0) > 0 ? 'pos' : 'neg'}>{money(report?.paper_pnl)}</strong>
           {' · '}
           Gate needs paper P&amp;L &gt; 0 after fees.
         </p>
@@ -417,6 +433,7 @@ export function CalibrationView() {
       </section>
 
       <section className="modalSection" aria-label="Shrinkage lambda re-fit">
+        <p className="eyebrow" style={{ marginBottom: 4 }}>Model tuning</p>
         <h4>Shrinkage λ (§4.1)</h4>
         <p className="muted" style={{ marginBottom: '0.75rem' }}>
           Grid re-fit from resolved forecast rows with model opinions. Successful re-fit persists λ to
@@ -457,19 +474,19 @@ export function CalibrationView() {
         </div>
         {lambdaFit && (
           <div className="mechanicsGrid" style={{ marginBottom: '0.75rem' }}>
-            <div>
+            <div style={stagger(0)}>
               <span>Fitted λ</span>
               <strong>{lambdaFit.lambda.toFixed(3)}</strong>
             </div>
-            <div>
+            <div style={stagger(1)}>
               <span>Brier @ fit</span>
               <strong>{brier(lambdaFit.brier_at_fit)}</strong>
             </div>
-            <div>
+            <div style={stagger(2)}>
               <span>Brier @ λ=0 (market)</span>
               <strong>{brier(lambdaFit.brier_at_market)}</strong>
             </div>
-            <div>
+            <div style={stagger(3)}>
               <span>Rows (n)</span>
               <strong>{lambdaFit.n}</strong>
             </div>
@@ -495,6 +512,7 @@ export function CalibrationView() {
       </section>
 
       <section className="modalSection" aria-label="Reliability diagram">
+        <p className="eyebrow" style={{ marginBottom: 4 }}>Calibration curve</p>
         <h4>Reliability (resolved forecasts)</h4>
         <p className="muted" style={{ marginBottom: '0.75rem' }}>
           Predicted probability vs observed Yes rate per bucket. Points on the diagonal are well calibrated.
@@ -510,6 +528,7 @@ export function CalibrationView() {
       </section>
 
       <section className="modalSection" aria-label="Edge Board actions">
+        <p className="eyebrow" style={{ marginBottom: 4 }}>Market scanner</p>
         <h4>Edge Board</h4>
         <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
           <button

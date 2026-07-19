@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, type CSSProperties } from 'react';
 import { kalshiApi } from '../services/kalshi';
 import type { KalshiPrediction, PaperAnalytics, PaperPosition } from '../types/kalshi';
 import { kalshiBetWon } from '../types/kalshi';
@@ -12,6 +12,14 @@ function formatDollars(value?: number | null): string {
 function formatCents(value?: number | null): string {
   if (value == null || !Number.isFinite(value)) return 'No mark';
   return `${value.toFixed(1)}c`;
+}
+
+function stagger(i: number): CSSProperties {
+  return {
+    '--i': i,
+    animation: 'fadeRise 0.55s var(--ease-luxe) both',
+    animationDelay: 'calc(var(--i, 0) * 45ms)',
+  } as CSSProperties;
 }
 
 export function KalshiPredictionsPanel() {
@@ -111,7 +119,10 @@ export function KalshiPredictionsPanel() {
   return (
     <section className="predictionsPanel">
       <div className="panelToolbar">
-        <h4>Kalshi paper trades</h4>
+        <div style={{ flex: 1 }}>
+          <p className="eyebrow" style={{ marginBottom: 4 }}>Paper ledger</p>
+          <h4>Kalshi paper trades</h4>
+        </div>
         <button type="button" className="ghostBtn" onClick={() => void load()} disabled={loading}>
           Refresh
         </button>
@@ -223,13 +234,14 @@ export function KalshiPredictionsPanel() {
       {message && <p className="muted small">{message}</p>}
       {loading && <p className="muted">Loading predictions...</p>}
       <div className="predList">
-        {predictions.map((pred) => {
+        {predictions.map((pred, idx) => {
           const won = kalshiBetWon(pred);
           const pending = pred.actual_outcome == null;
           return (
             <article
               key={pred.id}
               className={`predCard ${pending ? 'pending' : won ? 'win' : 'loss'}`}
+              style={stagger(idx)}
             >
               <header>
                 <code>{pred.ticker}</code>
@@ -254,7 +266,9 @@ export function KalshiPredictionsPanel() {
                 {pred.close_price != null && Number.isFinite(pred.close_price) && (
                   <span>Close {(pred.close_price * 100).toFixed(1)}%</span>
                 )}
-                {pred.pnl != null && <span>PnL ${pred.pnl.toFixed(2)}</span>}
+                {pred.pnl != null && (
+                  <span className={pred.pnl >= 0 ? 'pos' : 'neg'}>PnL ${pred.pnl.toFixed(2)}</span>
+                )}
               </div>
               {!pending && (
                 <strong className={won ? 'pos' : 'neg'}>{won ? 'Win' : 'Loss'}</strong>

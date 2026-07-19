@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import type { CSSProperties } from 'react';
 import { bankrollApi, configApi } from '../services/tauri';
 import type { AppConfig, BankrollConfig } from '../types';
 import { kalshiApi } from '../services/kalshi';
@@ -10,6 +11,7 @@ import type {
   StakeAdjustment,
 } from '../types/kalshi';
 import { PriceHistoryChart } from './PriceHistoryChart';
+import { LiveDot } from './brand/LiveDot';
 import { formatFeePreviewLine } from '../utils/kalshiFees';
 import { notifyPaperUpdated } from '../utils/paperEvents';
 
@@ -48,6 +50,14 @@ function sideFairProbability(fairYes: number, side: 'YES' | 'NO'): number {
 
 function sideAsk(market: KalshiMarketSummary, side: 'YES' | 'NO'): number {
   return side === 'YES' ? market.yes_ask : market.no_ask;
+}
+
+/** Gentle per-section rise so the deep-dive panel settles in sequence. */
+function sectionEntrance(index: number): CSSProperties {
+  return {
+    animation: 'fadeRise 0.45s var(--ease-luxe) both',
+    animationDelay: `${120 + index * 80}ms`,
+  };
 }
 
 export function MarketDetailPanel({ market, onClose, onAnalyzeMarket }: Props) {
@@ -336,12 +346,26 @@ export function MarketDetailPanel({ market, onClose, onAnalyzeMarket }: Props) {
           </p>
         )}
 
-        <section className="modalSection">
-          <h4>Price history</h4>
+        <section className="modalSection" style={sectionEntrance(0)}>
+          <p className="eyebrow">Recorded snapshots</p>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+            <h4>Price history</h4>
+            <span className="liveLabel">
+              <LiveDot
+                tone={historyLoading ? 'gold' : history && history.snapshots.length >= 2 ? 'live' : 'idle'}
+              />
+              {historyLoading
+                ? 'Syncing tape'
+                : history && history.snapshots.length >= 2
+                  ? 'Live snapshots'
+                  : 'No tape yet'}
+            </span>
+          </div>
           <PriceHistoryChart history={history} loading={historyLoading} />
         </section>
 
-        <section className="modalSection">
+        <section className="modalSection" style={sectionEntrance(1)}>
+          <p className="eyebrow">Contract detail</p>
           <h4>Market mechanics</h4>
           <div className="mechanicsGrid">
             <div>
@@ -374,7 +398,8 @@ export function MarketDetailPanel({ market, onClose, onAnalyzeMarket }: Props) {
           </div>
         </section>
 
-        <section className="modalSection tradeTicket">
+        <section className="modalSection tradeTicket" style={sectionEntrance(2)}>
+          <p className="eyebrow">Paper trade desk</p>
           <h4>Decision ticket</h4>
           <div className="ticketRow">
             <label>Side</label>

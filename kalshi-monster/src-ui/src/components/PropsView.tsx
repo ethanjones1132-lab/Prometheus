@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type CSSProperties } from 'react';
 import { analysisApi } from '../services/tauri';
 import type { EdgeAnalysisInput, PropScore, PropScoreInput, ScoredProp } from '../types';
 
@@ -82,6 +82,14 @@ function scoreInputToAnalysis(input: PropScoreInput): EdgeAnalysisInput {
   };
 }
 
+function stagger(i: number): CSSProperties {
+  return {
+    '--i': i,
+    animation: 'fadeRise 0.55s var(--ease-luxe) both',
+    animationDelay: 'calc(var(--i, 0) * 70ms)',
+  } as CSSProperties;
+}
+
 export function PropsView() {
   const [props, setProps] = useState<ScoredProp[]>([]);
   const [loading, setLoading] = useState(true);
@@ -162,9 +170,12 @@ export function PropsView() {
       </section>
 
       <section className="grid two">
-        <div className="card">
+        <div className="card" style={{ '--i': 0 } as CSSProperties}>
           <div className="cardHeader">
-            <h2>Prop board</h2>
+            <div>
+              <p className="eyebrow" style={{ marginBottom: 4 }}>Scored board</p>
+              <h2>Prop board</h2>
+            </div>
             <button type="button" className="ghostBtn" onClick={() => void loadProps()}>
               Refresh
             </button>
@@ -189,8 +200,12 @@ export function PropsView() {
           )}
 
           <div className="propList">
-            {filteredProps.map((prop) => (
-              <article className="propCard" key={`${prop.player_name}-${prop.stat_category}`}>
+            {filteredProps.map((prop, idx) => (
+              <article
+                className="propCard"
+                key={`${prop.player_name}-${prop.stat_category}`}
+                style={stagger(idx)}
+              >
                 <div className="propTop">
                   <span className="sport nfl">{prop.tier}</span>
                   <span className="risk">{prop.confidence}</span>
@@ -229,7 +244,8 @@ export function PropsView() {
         </div>
 
         <div className="stack">
-          <div className="card">
+          <div className="card" style={{ '--i': 1 } as CSSProperties}>
+            <p className="eyebrow" style={{ marginBottom: 4 }}>Manual entry</p>
             <h2>Quick prop scorer</h2>
             <p className="muted">Runs <code>analyze_prop</code> on a manual line/projection pair.</p>
             <div className="formGrid">
@@ -278,7 +294,8 @@ export function PropsView() {
             )}
           </div>
 
-          <div className="card">
+          <div className="card" style={{ '--i': 2 } as CSSProperties}>
+            <p className="eyebrow" style={{ marginBottom: 4 }}>Diagnostics</p>
             <h2>IPC status</h2>
             <ul className="checkList">
               <li>Chat → <code>send_message</code> / <code>new_chat_session</code></li>

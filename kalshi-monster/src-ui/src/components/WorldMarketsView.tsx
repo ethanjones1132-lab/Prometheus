@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, type CSSProperties } from 'react';
 import { finceptApi } from '../services/tauri';
+import { LiveDot } from './brand/LiveDot';
 
 type TrackerRow = {
   ticker?: string;
@@ -37,6 +38,14 @@ function formatPct(value: number | null | undefined): string {
   if (value == null || !Number.isFinite(value)) return '';
   const sign = value > 0 ? '+' : '';
   return `${sign}${value.toFixed(2)}%`;
+}
+
+function stagger(i: number): CSSProperties {
+  return {
+    '--i': i,
+    animation: 'fadeRise 0.55s var(--ease-luxe) both',
+    animationDelay: 'calc(var(--i, 0) * 45ms)',
+  } as CSSProperties;
 }
 
 export function WorldMarketsView() {
@@ -79,6 +88,7 @@ export function WorldMarketsView() {
     <section className="page kalshiPage">
       <header className="kalshiHeader">
         <div>
+          <p className="eyebrow">Cross-asset context</p>
           <h2>World markets</h2>
           <p className="muted">
             Cross-asset spot context from the Fincept sidecar (yfinance). Use for macro-linked Kalshi contracts — not trade signals.
@@ -92,7 +102,10 @@ export function WorldMarketsView() {
       {status && (
         <div className={`insightCard ${status.online ? 'accent' : ''}`}>
           <span>Fincept bridge</span>
-          <strong>{status.online ? 'Online' : status.degraded ? 'Degraded' : 'Offline'}</strong>
+          <strong>
+            <LiveDot tone={status.online ? 'live' : 'idle'} />{' '}
+            {status.online ? 'Online' : status.degraded ? 'Degraded' : 'Offline'}
+          </strong>
           <p>
             {status.online
               ? 'Analyst chat will append live snapshot context on each message.'
@@ -128,8 +141,8 @@ export function WorldMarketsView() {
 
           <div className="marketGrid" style={{ display: 'grid', gap: '0.75rem' }}>
             {rows.length === 0 && !loading && <p className="muted">No instruments in this view.</p>}
-            {rows.map((row) => (
-              <article key={`${row.category}-${row.ticker}`} className="insightCard">
+            {rows.map((row, idx) => (
+              <article key={`${row.category}-${row.ticker}`} className="insightCard" style={stagger(idx)}>
                 <span>{row.category ? CATEGORY_LABELS[row.category] ?? row.category : 'Instrument'}</span>
                 <strong>
                   {row.ticker}
@@ -138,7 +151,9 @@ export function WorldMarketsView() {
                 <p>
                   Last: {formatPrice(row.last_price ?? null)}
                   {row.change_pct != null && Number.isFinite(row.change_pct) && (
-                    <> · 1d {formatPct(row.change_pct)}</>
+                    <span className={row.change_pct > 0 ? 'pos' : row.change_pct < 0 ? 'neg' : undefined}>
+                      {' '}· 1d {formatPct(row.change_pct)}
+                    </span>
                   )}
                   {row.error && <> · {row.error}</>}
                 </p>

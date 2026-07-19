@@ -1,9 +1,11 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import type { CSSProperties } from 'react';
 import { kalshiApi } from '../services/kalshi';
 import { mlApi } from '../services/tauri';
 import type { KalshiCategoryStat, KalshiMarketSummary, MLPhase3DashboardSummary } from '../types/kalshi';
 import { MarketDetailPanel } from './MarketDetailPanel';
 import { KalshiPredictionsPanel } from './KalshiPredictionsPanel';
+import { LiveDot } from './brand/LiveDot';
 
 const INITIAL_MARKET_LIMIT = 30;
 
@@ -172,6 +174,9 @@ export function KalshiView({ onAnalyzeMarket }: KalshiViewProps = {}) {
   const [mlTraining, setMlTraining] = useState(false);
   const [mlTrainFlash, setMlTrainFlash] = useState<string | null>(null);
   const requestId = useRef(0);
+  const prevPricesRef = useRef<Record<string, number>>({});
+  const flashTimerRef = useRef<number | null>(null);
+  const [priceFlashes, setPriceFlashes] = useState<Record<string, 'up' | 'down'>>({});
 
   const loadMarkets = useCallback(async (opts?: { query?: string; category?: string }) => {
     const id = ++requestId.current;
@@ -235,6 +240,33 @@ export function KalshiView({ onAnalyzeMarket }: KalshiViewProps = {}) {
   useEffect(() => {
     void loadMarkets({ category: selectedCategory });
   }, [selectedCategory, loadMarkets]);
+
+  // Flash YES price cells whose price moved between tape reloads.
+  useEffect(() => {
+    const prev = prevPricesRef.current;
+    const next: Record<string, number> = {};
+    const diffs: Record<string, 'up' | 'down'> = {};
+    for (const market of markets) {
+      next[market.ticker] = market.yes_prob_pct;
+      const before = prev[market.ticker];
+      if (before != null && before !== market.yes_prob_pct) {
+        diffs[market.ticker] = market.yes_prob_pct > before ? 'up' : 'down';
+      }
+    }
+    prevPricesRef.current = next;
+    if (Object.keys(diffs).length > 0) {
+      setPriceFlashes(diffs);
+      if (flashTimerRef.current != null) window.clearTimeout(flashTimerRef.current);
+      flashTimerRef.current = window.setTimeout(() => setPriceFlashes({}), 900);
+    }
+  }, [markets]);
+
+  useEffect(
+    () => () => {
+      if (flashTimerRef.current != null) window.clearTimeout(flashTimerRef.current);
+    },
+    [],
+  );
 
   const runSearch = () => {
     void loadMarkets({ query: searchQuery, category: selectedCategory });
@@ -376,6 +408,18 @@ export function KalshiView({ onAnalyzeMarket }: KalshiViewProps = {}) {
     [partialCatalog, cacheStatus, dataQualityNotes],
   );
 
+  const tapeMarkets = useMemo(
+    () => [...markets].sort((a, b) => b.volume_24h - a.volume_24h).slice(0, 8),
+    [markets],
+  );
+
+  const tapeFeedTone: 'live' | 'gold' | 'idle' =
+    refreshing || dataQualityNotes.some((note) => note.includes('refresh in progress'))
+      ? 'gold'
+      : dataQualityNotes.some((note) => note.includes('older than 60s'))
+        ? 'idle'
+        : 'live';
+
   const heroStats = [
     { label: 'Open market tape', value: marketCount || markets.length, detail: `${categoryCount || categories.length} categories` },
     { label: 'Visible liquidity', value: formatCompactMoney(visibleLiquidity), detail: `${formatCompactMoney(visibleVolume)} 24h volume` },
@@ -416,6 +460,25 @@ export function KalshiView({ onAnalyzeMarket }: KalshiViewProps = {}) {
           ))}
         </div>
       </section>
+
+      {!loading && tapeMarkets.length > 0 && (
+        <section aria-label="Live tape">
+          <p className="eyebrow">Live tape</p>
+          <div className="tickerTape">
+            <div className="tickerTrack">
+              {[0, 1].map((copy) =>
+                tapeMarkets.map((market) => (
+                  <span className="tickerItem" key={`${copy}-${market.ticker}`}>
+                    <code>{market.ticker}</code>
+                    <strong>{market.yes_prob_pct.toFixed(0)}¢</strong>
+                    <span>{formatCompactMoney(market.volume_24h)} vol</span>
+                  </span>
+                )),
+              )}
+            </div>
+          </div>
+        </section>
+      )}
 
       <div className="dashboardStatus" aria-label="Market data status">
         <span>{cacheLabel(cacheStatus, partialCatalog)}</span>
@@ -608,14 +671,21 @@ export function KalshiView({ onAnalyzeMarket }: KalshiViewProps = {}) {
               <p className="panelEyebrow">Market tape</p>
               <h2>Searchable Kalshi catalog</h2>
             </div>
-            <span className="muted small">{markets.length} visible market{markets.length === 1 ? '' : 's'}</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+              <span className="liveLabel">
+                <LiveDot tone={tapeFeedTone} />
+                {tapeFeedTone === 'gold' ? 'Syncing' : tapeFeedTone === 'idle' ? 'Stale' : 'Live'}
+              </span>
+              <span className="muted small">{markets.length} visible market{markets.length === 1 ? '' : 's'}</span>
+            </div>
           </div>
           <div className="marketGrid">
-            {markets.map((market) => (
+            {markets.map((market, idx) => (
               <button
                 key={market.ticker}
                 type="button"
                 className="marketCard"
+                style={{ '--i': idx } as CSSProperties}
                 onClick={() => setSelectedMarket(market)}
               >
                 <div className="marketCardTop">
@@ -624,7 +694,17 @@ export function KalshiView({ onAnalyzeMarket }: KalshiViewProps = {}) {
                 </div>
                 <h3>{market.title}</h3>
                 <div className="marketStats">
-                  <span>YES {formatProb(market.yes_prob_pct)}</span>
+                  <span
+                    className={
+                      priceFlashes[market.ticker] === 'up'
+                        ? 'tickFlashUp'
+                        : priceFlashes[market.ticker] === 'down'
+                          ? 'tickFlashDown'
+                          : undefined
+                    }
+                  >
+                    YES {formatProb(market.yes_prob_pct)}
+                  </span>
                   <span>Spread {formatSpread(market.spread)}</span>
                   <span>Vol {formatVolume(market.volume_24h)}</span>
                   <span>Liq {formatVolume(market.liquidity)}</span>

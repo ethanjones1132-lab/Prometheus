@@ -111,8 +111,8 @@ export function ReliabilityDiagram({ title, buckets, compareBuckets, compareLabe
       )}
       {hasData && compareBuckets && compareLabel && (
         <p className="muted" style={{ fontSize: '0.85rem', marginTop: '0.35rem' }}>
-          <span style={{ color: 'var(--accent,#4a7dff)' }}>●</span> p_final &nbsp;
-          <span style={{ color: 'var(--muted,#888)' }}>—</span> {compareLabel}
+          <span style={{ color: '#d4af37' }}>●</span> p_final &nbsp;
+          <span style={{ color: '#a89e86' }}>—</span> {compareLabel}
         </p>
       )}
     </div>
