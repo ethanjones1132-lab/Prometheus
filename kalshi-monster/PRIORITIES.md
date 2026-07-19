@@ -1,6 +1,24 @@
 # Kalshi Monster — Priority Roadmap
 
-Last updated: 2026-07-18 (cron evening — Prometheus brand + resolve 19 + sample +40)
+Last updated: 2026-07-19 (cron midday — resolve 18 weather highs + sample +25)
+
+## Maintenance notes (2026-07-19, midday cron) — health green; calibration 105/200
+
+- Health: `cargo check`, `tsc` clean, **268** lib tests (0 failed, 9 ignored); working tree **clean** at start
+- Auto-remediation: none needed (clean tree)
+- KB-1: still 🟡 — code path fixed; live credential/UI acceptance still required on user machine
+- KB-2: ✅ complete
+- **Resolve ops:** `resolve_settled_forecasts.py` wrote **18** Jul-18 city-high outcomes (CHI/DEN/LAX/MIA/NY/PHIL)
+  - Progress: **105 / 200** resolved (was ~87 before this pass; evening notes showed 62 — overnight/app + prior resolves filled gap)
+  - Mean Brier: p_final **0.2211** vs p_market **0.2226** vs p_model **0.3834** (p_final still slightly beats market; gate LOCKED)
+  - Unresolved after resolve: **88** before sample-build
+- **Sample-build:** logged **25** short-horizon market-only forecasts (KXMLBTOTAL 11 / KXBTC 6 / KXETH 6 / KXMLBGAME 2)
+  - Includes ~0.02d BTC/ETH hourly strikes (should resolve same day) + LAD@NYY totals/game
+  - Ledger: **218** total / **105** resolved / **113** unresolved
+  - Unresolved close mix: Jul19=30, Jul20=36, Jul22=19 + long-dated leftovers
+- **Next cron:** re-run resolve after BTC/ETH hourly + Jul19 weather print; optional another `--limit 40` if short book thins; leave app running for auto-grade
+- **Blocked next (ops):** operator AGPL public push; KB-1 live Markets UI acceptance; n→200 calibration gate (52.5%)
+- **No Phase 1+ code advancement** — remaining plan items are true blockers (credentials/UI verify / data / operator)
 
 ## Maintenance notes (2026-07-18, evening cron) — health green; Prometheus brand + calibration flywheel
 
