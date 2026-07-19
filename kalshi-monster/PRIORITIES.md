@@ -1,6 +1,26 @@
 # Kalshi Monster — Priority Roadmap
 
-Last updated: 2026-07-19 (cron midday — resolve 18 weather highs + sample +25)
+Last updated: 2026-07-19 (cron afternoon — resolve 12 BTC/ETH hourly + sample +40)
+
+## Maintenance notes (2026-07-19, afternoon cron) — health green; calibration 117/200
+
+- Health: `cargo check`, `tsc` clean, **268** lib tests (0 failed, 9 ignored); working tree **clean** at start
+- Auto-remediation: none needed (clean tree)
+- KB-1: still 🟡 — code path fixed; live credential/UI acceptance still required on user machine
+- KB-2: ✅ complete
+- **Resolve ops:** `resolve_settled_forecasts.py` wrote **12** Jul-19 09:00Z BTC/ETH hourly outcomes
+  - BTC×6 (B63950–B64450) + ETH×6 (B1857–B1887); 2 Yes / 10 No
+  - Progress: **117 / 200** resolved (was 105 midday; +12 this pass → **58.5%**)
+  - Mean Brier: p_final **0.2109** vs p_market **0.2123** vs p_model **0.3834** (p_final still slightly beats market; gate LOCKED)
+  - Unresolved after resolve: **101** before sample-build
+- **Sample-build:** logged **40** short-horizon market-only forecasts
+  - Mix: KXHIGHNY 6 / KXHIGHCHI 6 / KXETH 5 / KXHIGHLAX 5 / KXBTC 4 / KXHIGHPHIL 4 / KXHIGHDEN 4 / KXHIGHMIA 3 / KXMLBTEAMTOTAL 3
+  - Includes ~0.03d BTC/ETH 13:00Z hourlies (same-day resolve) + Jul-20 city highs + CWS@TOR team totals
+  - Ledger: **258** total / **117** resolved / **141** unresolved
+  - Unresolved close mix: Jul19=27, Jul20=36, Jul21=28, Jul22=22 + long-dated leftovers
+- **Next cron:** re-run resolve after BTC/ETH 13:00Z hourlies + remaining Jul19 weather/MLB print; optional another `--limit 40` if short book thins; leave app running for auto-grade
+- **Blocked next (ops):** operator AGPL public push; KB-1 live Markets UI acceptance; n→200 calibration gate (58.5%)
+- **No Phase 1+ code advancement** — remaining plan items are true blockers (credentials/UI verify / data / operator)
 
 ## Maintenance notes (2026-07-19, midday cron) — health green; calibration 105/200
 
