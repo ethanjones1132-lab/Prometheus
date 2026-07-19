@@ -1,6 +1,32 @@
 # Kalshi Monster — Priority Roadmap
 
-Last updated: 2026-07-19 (cron late-afternoon — resolve 15 BTC/ETH 14:00Z; gate 141/200)
+Last updated: 2026-07-19 (evening cron — calibration n=213/200 OPEN candidate; full gate still LOCKED on paper PnL)
+
+## Maintenance notes (2026-07-19, evening cron) — health green; **n≥200 sample-size gate crossed**
+
+- Health: `cargo check`, `tsc` clean, **268** lib tests (0 failed, 9 ignored); working tree **clean** at start
+- Auto-remediation: none needed (clean tree)
+- KB-1: still 🟡 — code path fixed; live credential/UI acceptance still required on user machine
+- KB-2: ✅ complete
+- **Resolve ops (this pass):** `resolve_settled_forecasts.py` wrote **+72** outcomes in waves
+  - Wave 1: **41** MLB finals — LAD@NYY game/totals + CWS@TOR game/team-totals/totals + TB@BOS KS (2 rows)
+  - Wave 2: **2** KXWORLDCUPHALFTIME-26-POS
+  - Wave 3: **9** NYM@PHI team-totals/totals (logged earlier this pass) + WORLDCUP SWA×2
+  - Wave 4 (21:03Z): **18** Jul-19 17:00Z BTC/ETH hourlies (BTC 1Y/8N; ETH 1Y/8N) + WORLDCUP SAB×2
+  - Progress: **213 / 200** resolved (was 141 late-afternoon; **+72** → **106.5%**)
+  - Mean Brier: p_final **0.1553** vs p_market **0.1559** vs p_model **0.2860** (p_final beats market by +0.0006)
+  - Script status: **OPEN candidate** (n≥200 AND Brier_final ≤ Brier_market)
+- **Full Phase 3 gate (code `evaluate_gate`) still LOCKED:** requires paper PnL after fees > 0 — `paper_lots` = **0 rows**. Do **not** flip live execution.
+- **Honesty / composition caveat:** all 213 resolved are `verdict=pass`; only **19/213** have `p_model` set. Book is dominated by market-only sample-build rows (`p_final≈p_market` by construction). Thin edge is real but not yet a model-edge proof.
+- **Sample-build:** logged **40** short-horizon market-only forecasts
+  - Mix: KXBTC 12 / KXMLBTEAMTOTAL 12 / KXETH 9 / KXMLBTOTAL 5 / KXHIGHPHIL 1 / KXHIGHDEN 1
+  - Includes Jul-20 17:00Z BTC/ETH hourlies + BAL@HOU / MIA@MIL / NYM@PHI leftovers + city highs
+  - Ledger: **338** total / **213** resolved / **125** unresolved
+  - Unresolved close mix: Jul20=57, Jul21=32, Jul22=14 + long-dated leftovers
+- **Resolved mix (all-time):** KXMLB* 85 / OTHER 39 / KXETH 33 / KXBTC 32 / KXHIGH* 18 / KXWORLDCUP* 6
+- **Next cron:** keep resolve flywheel on Jul20 weather/crypto/MLB; prefer agent/`p_model` forecasts over more pure market-only rows; open a few paper lots on high-conviction passes so the PnL leg of `evaluate_gate` can eventually trip; leave app running for auto-grade
+- **Blocked next (ops):** operator AGPL public push; KB-1 live Markets UI acceptance; full gate = paper PnL > 0 + sustained model-vs-market edge (not just n)
+- **No Phase 1+ / Phase 5 code advancement** — sample-size sub-gate open; live money still correctly blocked
 
 ## Maintenance notes (2026-07-19, late-afternoon cron) — health green; calibration 141/200
 

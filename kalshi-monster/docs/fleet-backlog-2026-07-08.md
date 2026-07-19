@@ -65,4 +65,4 @@ Canonical copy also lives in `C:\Users\ethan\OneDrive\Desktop\kalshi-monster-fin
 
 **Next:** Resume Phase 1 items in the integration plan when KB-1 live verification confirms acceptance.
 
-**Last updated by maintenance pass:** 2026-07-19 late-afternoon cron — KB-1 🟡; calibration **141/200** (+15 BTC/ETH 14:00Z resolves); sample +1 (book full); resolve script poll mode; ledger 298/141/157; health 268 lib green.
+**Last updated by maintenance pass:** 2026-07-19 evening cron — KB-1 🟡; calibration **213/200 OPEN candidate** (+72 resolves: MLB+WorldCup+BTC/ETH 17:00Z); sample +40; ledger 338/213/125; full Phase 3 gate still LOCKED (paper_lots=0); health 268 lib green.
