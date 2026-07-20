@@ -66,6 +66,20 @@ def bet_won(side: str, actual: str) -> bool | None:
     return None
 
 
+def resolve_row_stake(dec: dict | None, row: sqlite3.Row) -> float:
+    """Stake comes from recommended_stake_dollars only.
+
+    `row["line"]` is an overloaded DB column: the Kalshi decision path
+    (tracker.rs) stores stake there for some rows, but the sports-prop
+    path stores the prop line itself (e.g. 285.5, 235.5, 70.5) for
+    others. Falling back to it as a stake would size a "bet" off an
+    unrelated number and — because stake resolution runs before the
+    no-position check — could flip a genuine no-position row into a
+    fabricated bet. Never use it.
+    """
+    return resolve_stake((dec or {}).get("recommended_stake_dollars"))
+
+
 def entry_price(decision: dict | None, row: sqlite3.Row, side: str) -> float:
     if decision:
         pte = decision.get("price_to_enter")
@@ -191,9 +205,7 @@ def main() -> None:
 
     side = parse_side(dec, row["pick_type"])
     decision_field = (dec or {}).get("decision")
-    stake = resolve_stake((dec or {}).get("recommended_stake_dollars"))
-    if stake <= 0 and row["line"] is not None:
-        stake = resolve_stake(row["line"])
+    stake = resolve_row_stake(dec, row)
     print(f"parsed side={side} actual={actual}")
     no_position = is_no_position(side, decision_field, stake=stake)
     if no_position:
