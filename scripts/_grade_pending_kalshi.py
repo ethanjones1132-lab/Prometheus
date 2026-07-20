@@ -13,7 +13,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from grading_common import compute_clv, contract_pnl, is_no_position, resolve_stake
+from grading_common import (
+    compute_clv,
+    contract_pnl,
+    is_no_position,
+    is_placeholder_ticker,
+    normalize_result,
+    resolve_entry_price,
+    resolve_stake,
+)
 
 DB = Path(os.environ.get("USERPROFILE", os.environ.get("HOME", "."))) / ".openclaw/kalshi-monster/predictions.db"
 KALSHI = "https://api.elections.kalshi.com/trade-api/v2/markets"
@@ -25,29 +33,6 @@ def fetch_market(ticker: str) -> dict:
     with urllib.request.urlopen(req, timeout=30) as resp:
         data = json.loads(resp.read().decode())
     return data.get("market") or data
-
-
-def normalize_result(raw: str) -> str | None:
-    t = (raw or "").strip().lower()
-    if t in ("yes", "y", "true", "1"):
-        return "Yes"
-    if t in ("no", "n", "false", "0"):
-        return "No"
-    return None
-
-
-def entry_for_side(dec: dict, side: str) -> float:
-    pte = dec.get("price_to_enter")
-    if isinstance(pte, (int, float)) and 0 < float(pte) <= 1:
-        return float(pte)
-    if isinstance(pte, (int, float)) and 1 < float(pte) <= 100:
-        return float(pte) / 100.0
-    mkt = dec.get("market_price_pct")
-    if isinstance(mkt, (int, float)):
-        yes = float(mkt) / 100.0 if float(mkt) > 1 else float(mkt)
-        yes = max(0.01, min(0.99, yes))
-        return max(0.01, min(0.99, 1.0 - yes)) if side == "NO" else yes
-    return 0.5
 
 
 def main() -> None:
@@ -75,7 +60,7 @@ def main() -> None:
         ticker = str(dec.get("ticker") or r["player_name"] or "")
         if not ticker.upper().startswith("KX"):
             continue
-        if "TICKER" in ticker.upper() and len(ticker) < 20:
+        if is_placeholder_ticker(ticker):
             print(f"SKIP placeholder {ticker}")
             continue
 
@@ -108,8 +93,8 @@ def main() -> None:
             outcome, pnl, entry, stake, won, clv = "Push", 0.0, 0.0, 0.0, None, 0.0
         else:
             won = (side == "YES" and actual == "Yes") or (side == "NO" and actual == "No")
-            entry = entry_for_side(dec, side)
-            pnl = contract_pnl(stake, entry, bool(won))
+            entry = resolve_entry_price(dec, side, r["entry_price"])
+            pnl = contract_pnl(stake, entry, bool(won), fee_mult=0.07)
             outcome = "Win" if won else "Loss"
             clv = compute_clv(side, entry, close)
 
@@ -146,6 +131,13 @@ def main() -> None:
             )
             print(f"  forecast id={fid} brier_final={brier(pf)}")
 
+        # Commit per row rather than batching across the whole loop: each
+        # iteration does a ~network fetch_market() call before its writes,
+        # and the Tauri app writes to this same DB concurrently. Batching
+        # commits would hold an open write transaction across every
+        # subsequent row's network I/O.
+        conn.commit()
+
         graded.append(
             {
                 "id": r["id"],
@@ -164,8 +156,6 @@ def main() -> None:
             }
         )
         print(f"  -> {outcome} pnl={pnl:.4f}")
-
-    conn.commit()
 
     # Also void/skip placeholder pending
     conn.execute(

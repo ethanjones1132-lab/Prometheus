@@ -1297,13 +1297,16 @@ impl PredictionTracker {
         }
     }
 
-    /// Update CLV (Closing Line Value) for a prediction.
+    /// Update CLV (Closing Line Value) for a prediction. `side` is "YES" /
+    /// "NO" (case-insensitive); anything else grades CLV as 0.0. See
+    /// storage::update_prediction_clv for the side-aware formula.
     pub async fn update_prediction_clv(
         &self,
         prediction_id: &str,
         close_price: f64,
+        side: &str,
     ) -> Result<(), String> {
-        crate::predictions::storage::update_prediction_clv(&self.pool, prediction_id, close_price).await
+        crate::predictions::storage::update_prediction_clv(&self.pool, prediction_id, close_price, side).await
     }
 
     /// Set the entry price for a prediction.

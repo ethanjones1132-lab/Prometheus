@@ -14,6 +14,10 @@ written to the DB before that fix existed.
 
 A row is a repair candidate when:
   - full_decision_json is present, AND
+  - json_extract(full_decision_json, '$.ticker'), trimmed, is non-empty —
+    the repo's standard ticker gate (matches ml_predictor.rs's
+    KALSHI_TICKER_PREDICATE constant), so this script only ever touches
+    rows that genuinely carry a Kalshi decision, AND
   - it parses, AND
   - is_no_position(contract_side, decision, stake) is True per
     scripts/grading_common.py, AND
@@ -51,6 +55,19 @@ from grading_common import is_no_position, resolve_stake
 
 DB = Path(os.environ.get("USERPROFILE", os.environ.get("HOME", "."))) / ".openclaw/kalshi-monster/predictions.db"
 
+# The repo's standard ticker gate (matches ml_predictor.rs's
+# KALSHI_TICKER_PREDICATE constant: full_decision_json IS NOT NULL AND
+# trim(json_extract(full_decision_json, '$.ticker')) != ''), plus the
+# outcome/decision-JSON conditions this script applies in Python via
+# is_no_position(). Printed verbatim before any write so a reviewer can see
+# exactly what was matched without reading the source.
+SELECTION_CRITERIA = (
+    "SQL: outcome IN ('Win','Loss') "
+    "AND full_decision_json IS NOT NULL "
+    "AND trim(json_extract(full_decision_json, '$.ticker')) != '' "
+    "-- then in Python: is_no_position(contract_side, decision, resolve_stake(recommended_stake_dollars)) is True"
+)
+
 
 def find_candidates(conn: sqlite3.Connection) -> list[dict]:
     """Read-only scan for rows that need repair."""
@@ -60,6 +77,7 @@ def find_candidates(conn: sqlite3.Connection) -> list[dict]:
         FROM predictions
         WHERE outcome IN ('Win', 'Loss')
           AND full_decision_json IS NOT NULL
+          AND trim(json_extract(full_decision_json, '$.ticker')) != ''
         """
     ).fetchall()
 
@@ -110,6 +128,28 @@ def repair(conn: sqlite3.Connection, candidate: dict) -> None:
     )
 
 
+def backup_db(db_path: Path) -> Path:
+    """Back up the live DB to a timestamped sibling file before any write.
+
+    Uses sqlite3.Connection.backup() (an online/hot backup — safe even
+    while the Tauri app has the DB open) rather than a plain file copy.
+    This mutates a live financial-record DB; reversibility is worth the
+    three extra lines.
+    """
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    backup_path = db_path.with_name(f"{db_path.name}.bak-{ts}-repair")
+    src = sqlite3.connect(str(db_path))
+    try:
+        dst = sqlite3.connect(str(backup_path))
+        try:
+            src.backup(dst)
+        finally:
+            dst.close()
+    finally:
+        src.close()
+    return backup_path
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -135,6 +175,7 @@ def main() -> None:
 
     print(f"DB: {DB}")
     print(f"Mode: {'WRITE' if write_mode else 'DRY RUN'}")
+    print(f"Selection criteria: {SELECTION_CRITERIA}")
     print(f"Fabricated-grade candidates found: {len(candidates)}")
     for c in candidates:
         print(
@@ -154,14 +195,17 @@ def main() -> None:
         print(f"\nDry run only — no changes written. Re-run with --write to apply {len(candidates)} repair(s).")
         return
 
+    backup_path = backup_db(DB)
+    print(f"\nBacked up DB to: {backup_path}")
+
     rw_conn = sqlite3.connect(str(DB))
     try:
-        for c in candidates:
-            repair(rw_conn, c)
-        rw_conn.commit()
+        with rw_conn:
+            for c in candidates:
+                repair(rw_conn, c)
     finally:
         rw_conn.close()
-    print(f"\nRepaired {len(candidates)} row(s).")
+    print(f"Repaired {len(candidates)} row(s). Criteria applied: {SELECTION_CRITERIA}")
 
 
 if __name__ == "__main__":

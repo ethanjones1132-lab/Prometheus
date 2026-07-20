@@ -13,7 +13,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from grading_common import compute_clv, contract_pnl, is_no_position, resolve_stake
+from grading_common import (
+    compute_clv,
+    contract_pnl,
+    is_no_position,
+    is_placeholder_ticker,
+    normalize_result,
+    resolve_entry_price,
+    resolve_stake,
+)
 
 DB = Path(os.environ.get("USERPROFILE", os.environ.get("HOME", "."))) / ".openclaw/kalshi-monster/predictions.db"
 KALSHI = "https://api.elections.kalshi.com/trade-api/v2/markets"
@@ -29,15 +37,6 @@ def fetch_market(ticker: str) -> dict:
     url = f"{KALSHI}/{urllib.parse.quote(ticker, safe='')}"
     data = http_json(url)
     return data.get("market") or data
-
-
-def normalize_result(raw: str) -> str | None:
-    t = (raw or "").strip().lower()
-    if t in ("yes", "y", "true", "1"):
-        return "Yes"
-    if t in ("no", "n", "false", "0"):
-        return "No"
-    return None
 
 
 def parse_side(decision: dict | None, pick_type: str | None) -> str | None:
@@ -78,25 +77,6 @@ def resolve_row_stake(dec: dict | None, row: sqlite3.Row) -> float:
     fabricated bet. Never use it.
     """
     return resolve_stake((dec or {}).get("recommended_stake_dollars"))
-
-
-def entry_price(decision: dict | None, row: sqlite3.Row, side: str) -> float:
-    if decision:
-        pte = decision.get("price_to_enter")
-        if isinstance(pte, (int, float)) and 0 < pte <= 1:
-            return float(pte)
-        if isinstance(pte, (int, float)) and 1 < pte <= 100:
-            return float(pte) / 100.0
-        mkt = decision.get("market_price_pct")
-        if isinstance(mkt, (int, float)):
-            yes = float(mkt) / 100.0 if mkt > 1 else float(mkt)
-            if side == "NO":
-                return max(0.01, min(0.99, 1.0 - yes))
-            return max(0.01, min(0.99, yes))
-    ep = row["entry_price"]
-    if ep is not None and 0 < float(ep) <= 1:
-        return float(ep)
-    return 0.5
 
 
 def main() -> None:
@@ -144,7 +124,7 @@ def main() -> None:
         ticker = (dec or {}).get("ticker") or r["player_name"] or ""
         if not str(ticker).upper().startswith("KX"):
             continue
-        if "TICKER" in str(ticker).upper() and "EVENT" in str(ticker).upper():
+        if is_placeholder_ticker(str(ticker)):
             continue
         target = (r, dec, str(ticker))
         break
@@ -159,7 +139,7 @@ def main() -> None:
                 except json.JSONDecodeError:
                     pass
             ticker = (dec or {}).get("ticker") or r["player_name"] or ""
-            if str(ticker).upper().startswith("KX") and "TICKER" not in str(ticker).upper():
+            if str(ticker).upper().startswith("KX") and not is_placeholder_ticker(str(ticker)):
                 target = (r, dec, str(ticker))
                 break
 
@@ -216,8 +196,8 @@ def main() -> None:
         outcome_label = "Push"
     else:
         won = bet_won(side, actual)
-        entry = entry_price(dec, row, side)
-        pnl = contract_pnl(stake, entry, bool(won))
+        entry = resolve_entry_price(dec, side, row["entry_price"])
+        pnl = contract_pnl(stake, entry, bool(won), fee_mult=0.07)
         close_price = 1.0 if actual == "Yes" else 0.0
         clv = compute_clv(side, entry, close_price)
         outcome_label = "Win" if won else "Loss"

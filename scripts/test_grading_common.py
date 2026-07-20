@@ -9,10 +9,15 @@ to trade (contract_side="NO", decision="PASS", recommended_stake_dollars=0.0).
 """
 from __future__ import annotations
 
+import pytest
+
 from grading_common import (
     compute_clv,
     contract_pnl,
     is_no_position,
+    is_placeholder_ticker,
+    normalize_result,
+    resolve_entry_price,
     resolve_stake,
 )
 
@@ -80,30 +85,40 @@ def test_resolve_stake_positive_value_passes_through():
 
 
 # ---------------------------------------------------------------------------
-# contract_pnl — fee model: fee/contract = 0.07 * p * (1-p), contracts = stake/entry
+# contract_pnl — fee model: fee/contract = fee_mult * p * (1-p), contracts = stake/entry
+#
+# Hardcoded worked values, not re-derived from the formula under test: if
+# this re-derived `contracts - stake - fee` inline, the test would agree
+# with a shared misconception in the implementation and would pin no
+# magnitude. This is the same worked example as the Rust sibling test
+# (kalshi-monster/src-tauri/src/kalshi/grading.rs, contract_pnl_subtracts_
+# fees_on_win / _on_loss) — a cross-language pin so Python and Rust can't
+# silently drift apart on the fee math. fee_mult is REQUIRED (no default,
+# see contract_pnl's docstring), so it's passed explicitly everywhere,
+# including here.
 # ---------------------------------------------------------------------------
 
 def test_contract_pnl_zero_stake_is_zero_regardless_of_outcome():
-    assert contract_pnl(0.0, 0.12, won=True) == 0.0
-    assert contract_pnl(0.0, 0.12, won=False) == 0.0
+    assert contract_pnl(0.0, 0.12, won=True, fee_mult=0.07) == 0.0
+    assert contract_pnl(0.0, 0.12, won=False, fee_mult=0.07) == 0.0
 
 
-def test_contract_pnl_winning_yes_bet_is_positive():
-    stake, entry = 10.0, 0.40
-    pnl = contract_pnl(stake, entry, won=True)
-    contracts = stake / entry
-    fee = 0.07 * entry * (1.0 - entry) * contracts
-    assert pnl == contracts - stake - fee
-    assert pnl > 0
+def test_contract_pnl_winning_bet_worked_example():
+    # $100 stake at 50 cents -> 200 contracts. Gross win = $200 - $100 = $100.
+    # Fee = 0.07 * 0.50 * 0.50 * 200 = $3.50. Net PnL = $96.50.
+    pnl = contract_pnl(100.0, 0.50, won=True, fee_mult=0.07)
+    assert abs(pnl - 96.50) < 1e-9, f"expected 96.50, got {pnl}"
 
 
-def test_contract_pnl_losing_bet_is_negative_stake_plus_fee():
-    stake, entry = 10.0, 0.40
-    pnl = contract_pnl(stake, entry, won=False)
-    contracts = stake / entry
-    fee = 0.07 * entry * (1.0 - entry) * contracts
-    assert pnl == -(stake + fee)
-    assert pnl < 0
+def test_contract_pnl_losing_bet_worked_example():
+    # $100 stake at 50 cents -> 200 contracts. Fee = $3.50. Total loss = -$103.50.
+    pnl = contract_pnl(100.0, 0.50, won=False, fee_mult=0.07)
+    assert abs(pnl - (-103.50)) < 1e-9, f"expected -103.50, got {pnl}"
+
+
+def test_contract_pnl_fee_mult_is_required_no_silent_default():
+    with pytest.raises(TypeError):
+        contract_pnl(100.0, 0.50, won=True)  # missing fee_mult
 
 
 # ---------------------------------------------------------------------------
@@ -154,7 +169,7 @@ def test_real_world_pass_row_grades_to_push_zero_pnl_zero_clv():
     # contract_pnl/compute_clv with the "real bet" branch at all — but even
     # if it mistakenly did, stake=0 forces pnl=0, and a correctly-guarded
     # script reports clv=0.0 for no-position rows regardless of `side`.
-    pnl = 0.0 if is_no_position(side, decision_field, stake=stake) else contract_pnl(stake, entry, won=True)
+    pnl = 0.0 if is_no_position(side, decision_field, stake=stake) else contract_pnl(stake, entry, won=True, fee_mult=0.07)
     clv = 0.0 if is_no_position(side, decision_field, stake=stake) else compute_clv(side, entry, close=1.0)
 
     assert pnl == 0.0
@@ -175,7 +190,7 @@ def test_genuine_yes_bet_that_wins_has_positive_pnl_and_matching_clv():
 
     assert is_no_position(side, decision_json["decision"], stake=stake) is False
 
-    pnl = contract_pnl(stake, entry, won=True)
+    pnl = contract_pnl(stake, entry, won=True, fee_mult=0.07)
     clv = compute_clv(side, entry, close)
 
     assert pnl > 0
@@ -196,7 +211,7 @@ def test_genuine_no_bet_that_wins_has_positive_pnl_and_matching_clv():
 
     assert is_no_position(side, decision_json["decision"], stake=stake) is False
 
-    pnl = contract_pnl(stake, entry, won=True)
+    pnl = contract_pnl(stake, entry, won=True, fee_mult=0.07)
     clv = compute_clv(side, entry, close)
 
     assert pnl > 0
@@ -206,5 +221,90 @@ def test_genuine_no_bet_that_wins_has_positive_pnl_and_matching_clv():
 def test_zero_or_absent_stake_never_produces_nonzero_pnl():
     for raw_stake in (0.0, None, -1.0, "junk"):
         stake = resolve_stake(raw_stake)
-        assert contract_pnl(stake, 0.5, won=True) == 0.0
-        assert contract_pnl(stake, 0.5, won=False) == 0.0
+        assert contract_pnl(stake, 0.5, won=True, fee_mult=0.07) == 0.0
+        assert contract_pnl(stake, 0.5, won=False, fee_mult=0.07) == 0.0
+
+
+# ---------------------------------------------------------------------------
+# resolve_entry_price — precedence + side-aware clamp order (I1)
+# ---------------------------------------------------------------------------
+
+def test_entry_price_prefers_price_to_enter_decimal():
+    decision = {"price_to_enter": 0.35, "market_price_pct": 88.0}
+    assert resolve_entry_price(decision, "YES", row_entry_price=0.9) == 0.35
+
+
+def test_entry_price_price_to_enter_as_percent_is_converted():
+    decision = {"price_to_enter": 35.0}
+    assert resolve_entry_price(decision, "YES") == 0.35
+
+
+def test_entry_price_market_price_pct_yes_side():
+    decision = {"market_price_pct": 88.0}
+    assert resolve_entry_price(decision, "YES") == 0.88
+
+
+def test_entry_price_market_price_pct_no_side_is_one_minus_yes():
+    decision = {"market_price_pct": 88.0}
+    assert resolve_entry_price(decision, "NO") == pytest.approx(0.12)
+
+
+def test_entry_price_market_price_pct_clamped_at_extremes():
+    # yes=1.0 -> NO side would be 0.0, clamped up to 0.01.
+    assert resolve_entry_price({"market_price_pct": 100.0}, "NO") == 0.01
+    # yes=0.0 -> YES side clamped up to 0.01; NO side clamped down to 0.99.
+    assert resolve_entry_price({"market_price_pct": 0.0}, "YES") == 0.01
+    assert resolve_entry_price({"market_price_pct": 0.0}, "NO") == 0.99
+
+
+def test_entry_price_falls_back_to_row_entry_price_when_decision_has_neither_field():
+    decision = {"contract_side": "YES"}  # no price_to_enter, no market_price_pct
+    assert resolve_entry_price(decision, "YES", row_entry_price=0.42) == 0.42
+
+
+def test_entry_price_falls_back_to_neutral_default_when_nothing_available():
+    assert resolve_entry_price(None, "YES", row_entry_price=None) == 0.5
+    assert resolve_entry_price({}, "YES", row_entry_price=None) == 0.5
+
+
+# ---------------------------------------------------------------------------
+# is_placeholder_ticker — unified across both scripts (I5, partial)
+# ---------------------------------------------------------------------------
+
+def test_placeholder_ticker_exact_matches():
+    assert is_placeholder_ticker("KXEVENT-TICKER") is True
+    assert is_placeholder_ticker("TICKER") is True
+    assert is_placeholder_ticker("") is True
+    assert is_placeholder_ticker(None) is True
+
+
+def test_placeholder_ticker_suffix_and_keyword_matches():
+    assert is_placeholder_ticker("KX-FOO-TICKER") is True
+    assert is_placeholder_ticker("KXFOO-PLACEHOLDER-1") is True
+    assert is_placeholder_ticker("KXFOO-EXAMPLE-1") is True
+
+
+def test_placeholder_ticker_real_ticker_is_not_placeholder():
+    assert is_placeholder_ticker("KXNBASUMMERSPREAD-26JUL13MINPOR-POR16") is False
+    assert is_placeholder_ticker("KXMLBTEAMTOTAL-26JUL171915CWSTOR-TOR8") is False
+
+
+# ---------------------------------------------------------------------------
+# normalize_result — unified across both scripts (I5, partial)
+# ---------------------------------------------------------------------------
+
+def test_normalize_result_accepts_common_yes_no_spellings():
+    assert normalize_result("yes") == "Yes"
+    assert normalize_result("Y") == "Yes"
+    assert normalize_result("true") == "Yes"
+    assert normalize_result("1") == "Yes"
+    assert normalize_result("no") == "No"
+    assert normalize_result("N") == "No"
+    assert normalize_result("false") == "No"
+    assert normalize_result("0") == "No"
+
+
+def test_normalize_result_unrecognized_or_empty_is_none():
+    assert normalize_result("") is None
+    assert normalize_result(None) is None
+    assert normalize_result("maybe") is None

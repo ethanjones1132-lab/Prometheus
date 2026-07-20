@@ -524,12 +524,22 @@ pub async fn update_prediction_outcome(
 }
 
 /// Update CLV (Closing Line Value) for a prediction.
-/// CLV = close_price - entry_price (in cents).
-/// Positive CLV means the market moved in your favor after entry.
+///
+/// CLV is side-aware. `side` is "YES" / "NO" (case-insensitive); anything
+/// else (PASS, unknown, no position) grades CLV as 0.0:
+///   YES side: clv = close_price - entry_price
+///   NO side:  clv = (1.0 - close_price) - entry_price
+///
+/// This mirrors `compute_clv()` in scripts/grading_common.py — the Python
+/// cron grading scripts write the same `predictions.clv` column, so the two
+/// implementations must agree. A prior side-blind version of this function
+/// (`clv = close_price - entry_price` unconditionally) disagreed with the
+/// Python side on every NO-side row. Keep both in sync if either changes.
 pub async fn update_prediction_clv(
     pool: &Pool<Sqlite>,
     prediction_id: &str,
     close_price: f64,
+    side: &str,
 ) -> Result<(), String> {
     // First get the entry_price
     let row = sqlx::query("SELECT entry_price FROM predictions WHERE id = ?1")
@@ -543,7 +553,11 @@ pub async fn update_prediction_clv(
         None => return Err(format!("Prediction {} not found", prediction_id)),
     };
 
-    let clv = close_price - entry_price;
+    let clv = match side.trim().to_uppercase().as_str() {
+        "YES" => close_price - entry_price,
+        "NO" => (1.0 - close_price) - entry_price,
+        _ => 0.0,
+    };
 
     let rows = sqlx::query(
         r#"
@@ -893,5 +907,90 @@ fn row_to_record(r: &sqlx::sqlite::SqliteRow) -> PredictionRecord {
         actual_result: r.get("actual_result"),
         notes: r.get("notes"),
         resolved_at: r.get("resolved_at"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// In-memory DB with the real migrated schema (not a hand-rolled subset),
+    /// so these tests exercise the same columns/constraints production uses.
+    async fn test_pool() -> Pool<Sqlite> {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        ensure_migrations_table(&pool).await.unwrap();
+        run_migrations(&pool).await.unwrap();
+        pool
+    }
+
+    async fn insert_bare_prediction(pool: &Pool<Sqlite>, id: &str, entry_price: f64) {
+        sqlx::query(
+            "INSERT INTO predictions (id, session_id, created_at, entry_price) \
+             VALUES (?1, 's', '2026-01-01T00:00:00Z', ?2)",
+        )
+        .bind(id)
+        .bind(entry_price)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    /// The bug this fix closes: a NO-side contract entered at 0.12 that
+    /// resolves No (close_price = 0.0) has positive CLV — the market moved
+    /// in the NO bettor's favor (price fell). The old side-blind formula
+    /// (`close_price - entry_price` unconditionally) got this backwards:
+    /// 0.0 - 0.12 = -0.12, i.e. it reported negative CLV for a favorable
+    /// move. This must match scripts/grading_common.py::compute_clv exactly.
+    #[tokio::test]
+    async fn update_prediction_clv_is_side_aware_for_no_side() {
+        let pool = test_pool().await;
+        insert_bare_prediction(&pool, "no-side-row", 0.12).await;
+
+        update_prediction_clv(&pool, "no-side-row", 0.0, "NO")
+            .await
+            .unwrap();
+
+        let clv: f64 = sqlx::query_scalar("SELECT clv FROM predictions WHERE id = 'no-side-row'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        // (1.0 - close_price) - entry_price = (1.0 - 0.0) - 0.12 = 0.88
+        assert!((clv - 0.88).abs() < 1e-9, "expected clv=0.88, got {clv}");
+    }
+
+    #[tokio::test]
+    async fn update_prediction_clv_yes_side_matches_prior_formula() {
+        let pool = test_pool().await;
+        insert_bare_prediction(&pool, "yes-side-row", 0.30).await;
+
+        update_prediction_clv(&pool, "yes-side-row", 1.0, "YES")
+            .await
+            .unwrap();
+
+        let clv: f64 = sqlx::query_scalar("SELECT clv FROM predictions WHERE id = 'yes-side-row'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert!((clv - 0.70).abs() < 1e-9, "expected clv=0.70, got {clv}");
+    }
+
+    #[tokio::test]
+    async fn update_prediction_clv_no_position_side_is_zero() {
+        let pool = test_pool().await;
+        insert_bare_prediction(&pool, "pass-row", 0.12).await;
+
+        update_prediction_clv(&pool, "pass-row", 0.0, "PASS")
+            .await
+            .unwrap();
+
+        let clv: f64 = sqlx::query_scalar("SELECT clv FROM predictions WHERE id = 'pass-row'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert!(clv.abs() < 1e-9, "expected clv=0.0, got {clv}");
     }
 }
