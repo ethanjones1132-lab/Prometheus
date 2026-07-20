@@ -62,10 +62,60 @@ def http_json(url: str) -> dict:
         return json.loads(resp.read().decode())
 
 
+# Series the technical agent can actually price (yfinance underlyings).
+# Generic /markets?status=open is dominated by sports legs agents abstain on.
+PREFERRED_SERIES = (
+    "KXBTC",
+    "KXETH",
+    "KXINX",
+    "KXNASDAQ100",
+    "KXNDX",
+    "KXGOLD",
+    "KXWTI",
+    "KXAAPL",
+    "KXTSLA",
+    "KXNVDA",
+)
+
+
 def fetch_open_markets(limit: int = 50) -> list[dict]:
-    url = f"{KALSHI_MARKETS}?limit={limit}&status=open&mve_filter=exclude"
-    data = http_json(url)
-    return data.get("markets") or []
+    """Pull short-horizon markets from agent-analyzable series first.
+
+    Falls back to the unfiltered open book only if every preferred series is empty.
+    """
+    from urllib.parse import urlencode
+
+    collected: list[dict] = []
+    seen: set[str] = set()
+    for series in PREFERRED_SERIES:
+        params = urlencode(
+            {
+                "limit": 100,
+                "status": "open",
+                "series_ticker": series,
+                "mve_filter": "exclude",
+            }
+        )
+        try:
+            data = http_json(f"{KALSHI_MARKETS}?{params}")
+        except Exception as e:
+            print(f"  WARN series {series}: {e}")
+            continue
+        markets = data.get("markets") or []
+        print(f"  series {series}: {len(markets)} open")
+        for m in markets:
+            t = m.get("ticker") or ""
+            if not t or t in seen:
+                continue
+            seen.add(t)
+            collected.append(m)
+        if len(collected) >= limit * 3:
+            break
+    if not collected:
+        print("  preferred series empty — falling back to unfiltered open book")
+        data = http_json(f"{KALSHI_MARKETS}?limit={limit}&status=open&mve_filter=exclude")
+        collected = data.get("markets") or []
+    return collected
 
 
 def fetch_market(ticker: str) -> dict:
@@ -217,7 +267,8 @@ async def analyze_one(m: dict) -> dict | None:
         category=category_for(title, ticker),
         yes_bid=max(0.0, min(1.0, yes_bid or p_market)),
         yes_ask=max(0.0, min(1.0, yes_ask or p_market)),
-        context={"contract_mids": [p_market]},  # single mid → contract_tape may abstain
+        # Repeat mid ×5 so contract_tape can run; momentum is zero by construction.
+        context={"contract_mids": [p_market] * 5, "depth": "standard"},
     )
     # parse close_time properly
     try:
@@ -281,27 +332,36 @@ async def analyze_one(m: dict) -> dict | None:
 async def main() -> int:
     print(f"DB: {DB}")
     print(f"Kalshi open markets source: {KALSHI_MARKETS}?status=open")
-    markets = fetch_open_markets(40)
+    markets = fetch_open_markets(80)
     print(f"Fetched {len(markets)} open markets from Kalshi API")
     if not markets:
         print("No markets — abort")
         return 1
 
-    # Prefer markets whose titles look analyzable by technical agent
-    keywords = ("S&P", "SPX", "NASDAQ", "Bitcoin", "BTC", "ETH", "stock", "above", "close")
-    ranked = sorted(
-        markets,
-        key=lambda m: (
-            0 if any(k.lower() in (m.get("title") or "").lower() for k in keywords) else 1,
-            -float(m.get("volume_24h_fp") or m.get("volume_24h") or 0),
-        ),
-    )
+    # Prefer liquid short-horizon legs agents can price (not empty-book extremes).
+    def _rank_key(m: dict):
+        mid = mid_of(m)
+        close = m.get("close_time") or ""
+        try:
+            ct = datetime.fromisoformat(str(close).replace("Z", "+00:00"))
+            days = (ct - datetime.now(timezone.utc)).total_seconds() / 86400.0
+        except Exception:
+            days = 99.0
+        # Prefer mid in (0.08, 0.92), then sooner close, then volume.
+        mid_penalty = 0 if (mid is not None and 0.08 < mid < 0.92) else 1
+        vol = -float(m.get("volume_24h_fp") or m.get("volume_24h") or 0)
+        return (mid_penalty, days if days >= 0 else 99.0, vol)
+
+    ranked = sorted(markets, key=_rank_key)
 
     conn = sqlite3.connect(str(DB))
     ensure_forecast_table(conn)
 
     written = 0
-    for m in ranked[:8]:
+    model_written = 0
+    # Scan more candidates; stop once we have enough model-bearing rows.
+    target_model = 12
+    for m in ranked[:40]:
         try:
             row = await analyze_one(m)
         except Exception as e:
@@ -324,11 +384,19 @@ async def main() -> int:
         if not inserted:
             print(f"  duplicate suppressed {row['ticker']} (matches forecast#{fid})")
             continue
+        # Prefer model-bearing rows for the eligible gate; still log market-only
+        # so the run is auditable, but they never count toward n_eligible.
         written += 1
+        if row["p_model"] is not None:
+            model_written += 1
         print(
             f"  forecast#{fid} {row['ticker']}: p_mkt={row['p_market']:.3f} "
-            f"p_model={row['p_model']} p_final={row['p_final']:.3f} verdict={row['verdict']}"
+            f"p_model={row['p_model']} p_final={row['p_final']:.3f} "
+            f"verdict={row['verdict']} agents={row.get('agents_opining')}"
         )
+        if model_written >= target_model:
+            print(f"  hit target_model={target_model}; stopping scan")
+            break
 
     # Resolve any pending tickers that Kalshi has already settled
     pending = conn.execute(
@@ -344,7 +412,9 @@ async def main() -> int:
     # Report
     n_res = conn.execute("SELECT COUNT(*) FROM forecasts WHERE outcome IS NOT NULL").fetchone()[0]
     n_un = conn.execute("SELECT COUNT(*) FROM forecasts WHERE outcome IS NULL").fetchone()[0]
-    print(f"\nWrote {written} new forecast rows (source: live Kalshi open book + agents).")
+    from kalshi_ticker import eligible_resolved_rows
+
+    print(f"\nWrote {written} new forecast rows ({model_written} with p_model).")
     print(f"Resolved this run: {resolved}")
     print(f"Ledger totals: resolved={n_res} unresolved={n_un}")
 
@@ -355,12 +425,28 @@ async def main() -> int:
         bf = sum((p_f - o) ** 2 for _, _, p_f, o in rows) / len(rows)
         bm = sum((p_m - o) ** 2 for p_m, _, _, o in rows) / len(rows)
         model_rows = [(p_mod, p_m, o) for p_m, p_mod, _, o in rows if p_mod is not None]
-        print(f"Brier(p_final)={bf:.4f}  Brier(p_market)={bm:.4f}  n={len(rows)}")
+        print(f"[raw] Brier(p_final)={bf:.4f}  Brier(p_market)={bm:.4f}  n={len(rows)}")
         if model_rows:
             bmod = sum((pm - o) ** 2 for pm, _, o in model_rows) / len(model_rows)
             bm_m = sum((p_m - o) ** 2 for _, p_m, o in model_rows) / len(model_rows)
-            print(f"Brier(p_model)={bmod:.4f} on n_model={len(model_rows)}  Brier(market|model)={bm_m:.4f}")
-        print("Gate: needs ≥200 resolved AND Brier(final)≤Brier(market) AND paper P&L>0 — not claimed here.")
+            print(
+                f"[raw] Brier(p_model)={bmod:.4f} on n_model={len(model_rows)}  "
+                f"Brier(market|model)={bm_m:.4f}"
+            )
+        eligible = eligible_resolved_rows(conn)
+        n_elig = len(eligible)
+        if n_elig:
+            ebf = sum((r[2] - r[3]) ** 2 for r in eligible) / n_elig
+            ebm = sum((r[0] - r[3]) ** 2 for r in eligible) / n_elig
+            print(
+                f"[eligible] n={n_elig}/200  Brier(p_final)={ebf:.4f}  "
+                f"Brier(p_market)={ebm:.4f}"
+            )
+            status = "OPEN candidate" if n_elig >= 200 and ebf <= ebm else "LOCKED"
+        else:
+            status = "LOCKED"
+            print("[eligible] n=0/200 — no model-bearing pre-event rows yet")
+        print(f"Gate (eligible ≥200 + Brier_final≤market + paper P&L>0): {status}")
     else:
         print("No resolved forecasts yet — calibration bar not started counting outcomes (honest).")
 

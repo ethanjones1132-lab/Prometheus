@@ -1,6 +1,30 @@
 # Kalshi Monster — Priority Roadmap
 
-Last updated: 2026-07-19 (evening cron — calibration n=213/200 OPEN candidate; full gate still LOCKED on paper PnL)
+Last updated: 2026-07-20 (morning cron — eligible gate 19/200 LOCKED; +28 Jul19 city-high resolves; +12 p_model forecasts)
+
+## Maintenance notes (2026-07-20, morning cron) — health green; **honest eligible gate reporting**
+
+- Health: `cargo check`, `tsc` clean, **306** lib tests (0 failed, 9 ignored); working tree **clean** at start
+- Branch: `fix/edge-measurement-integrity` (ahead of master with honest-calibration work)
+- Auto-remediation: none needed (clean tree)
+- KB-1: still 🟡 — code path fixed; live credential/UI acceptance still required on user machine
+- KB-2: ✅ complete
+- **Resolve ops:** `resolve_settled_forecasts.py` wrote **+28** Jul-19 city-high outcomes (CHI/DEN/LAX/MIA/NY/PHIL)
+  - Progress raw: **255** resolved / **103** unresolved / **358** total (was 213/125/338)
+  - [raw] Brier p_final **0.1578** vs p_market **0.1583** vs p_model **0.2860**
+- **Honest gate (this pass):** branch `evaluate_gate` counts **eligible** rows only (p_model + pre-event + one/event)
+  - **eligible = 19/200 (9.5%) — LOCKED** (prior "OPEN candidate" on raw n≥200 was misleading)
+  - Eligible Brier p_final **0.3186** ≤ p_market **0.3257** (beats market on thin model sample)
+  - `paper_lots` = **0** — PnL leg still unmet. Do **not** flip live execution.
+- **Shipped:**
+  1. `resolve_settled_forecasts.py` v1.2 — summary reports **eligible** gate progress (matches Rust), not raw resolved
+  2. `live_forecast_pipeline.py` — fetches agent-analyzable series (KXBTC/KXETH/KXINX/…) instead of generic open book (was logging tennis with p_model=NULL)
+- **Model sample-build (this pass):** `live_forecast_pipeline.py` wrote **12** forecasts with `p_model` set (technical + contract_tape)
+  - Mix: KXBTC×5 (incl. 2× trade_yes) + KXINX×7; agents_opining=2 on all
+  - Unresolved book now has model-bearing short-horizon rows that will advance eligible n when they settle
+- **Next cron:** resolve Jul20 09:00Z BTC hourlies + city highs + INX 16:00Z as they print; re-run live pipeline for more p_model rows; open paper lots on high-conviction trade_yes (app UI or paper IPC) so PnL leg can trip; leave app running for auto-grade
+- **Blocked next (ops):** operator AGPL public push; KB-1 live Markets UI acceptance; eligible n→200 + paper PnL>0
+- **No Phase 1+ / Phase 5 code advancement** — full gate correctly LOCKED on eligible sample + paper PnL
 
 ## Maintenance notes (2026-07-19, evening cron) — health green; **n≥200 sample-size gate crossed**
 

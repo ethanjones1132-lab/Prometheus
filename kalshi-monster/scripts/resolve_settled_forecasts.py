@@ -24,8 +24,19 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
+# Shared ticker / eligibility helpers (same rules as Rust gate).
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+try:
+    from kalshi_ticker import (  # noqa: E402
+        eligible_resolved_rows,
+        ensure_provenance_columns,
+    )
+except ImportError:  # pragma: no cover
+    eligible_resolved_rows = None  # type: ignore[assignment]
+    ensure_provenance_columns = None  # type: ignore[assignment]
+
 API_BASE = "https://api.elections.kalshi.com/trade-api/v2"
-UA = "kalshi-monster-cron/resolve-settled-forecasts/1.1"
+UA = "kalshi-monster-cron/resolve-settled-forecasts/1.2"
 
 
 def default_db() -> Path:
@@ -297,6 +308,13 @@ def main() -> int:
 
 
 def print_summary(cur: sqlite3.Cursor) -> None:
+    """Report raw ledger counts and the *eligible* sample the gate tests.
+
+    Raw resolved count is dominated by market-only sample-build rows
+    (`p_final ≈ p_market`). The Phase 3 gate (Rust `evaluate_gate`) only
+    counts model-bearing, pre-event, one-per-event rows — report that here
+    so cron notes stop calling n≥200 raw an "OPEN candidate".
+    """
     stats = cur.execute(
         """
         SELECT
@@ -315,19 +333,44 @@ def print_summary(cur: sqlite3.Cursor) -> None:
     print(f"  total={total} resolved={resolved} unresolved={unresolved}")
     if bf is not None and bm is not None:
         print(
-            f"  mean Brier p_final={bf:.4f} p_market={bm:.4f} "
+            f"  [raw] mean Brier p_final={bf:.4f} p_market={bm:.4f} "
             f"p_model={bmod if bmod is None else f'{bmod:.4f}'}"
         )
         beat = bf < bm
         print(
-            f"  p_final beats market: {beat} "
-            f"(delta market-final={bm - bf:+.4f}; lower Brier is better)"
+            f"  [raw] p_final beats market: {beat} "
+            f"(delta market-final={bm - bf:+.4f}) "
+            f"— market-only rows make this nearly equal by construction"
         )
     gate_n = 200
+    n_elig = 0
+    brier_ok = False
+    if eligible_resolved_rows is not None:
+        conn = cur.connection
+        if ensure_provenance_columns is not None:
+            ensure_provenance_columns(conn)
+        eligible = eligible_resolved_rows(conn)
+        n_elig = len(eligible)
+        if n_elig:
+            ebf = sum((r[2] - r[3]) ** 2 for r in eligible) / n_elig
+            ebm = sum((r[0] - r[3]) ** 2 for r in eligible) / n_elig
+            brier_ok = ebf <= ebm
+            print(
+                f"  [eligible] n={n_elig}  Brier p_final={ebf:.4f} "
+                f"p_market={ebm:.4f}"
+            )
+        else:
+            print(
+                "  [eligible] n=0 (need p_model + pre-event + one row per event)"
+            )
+    else:
+        print("  [eligible] helper unavailable — install scripts/kalshi_ticker.py")
+    open_candidate = n_elig >= gate_n and brier_ok
     print(
-        f"  gate progress: {resolved}/{gate_n} "
-        f"({100.0 * resolved / gate_n:.1f}%) — "
-        f"{'OPEN candidate' if resolved >= gate_n and bf is not None and bm is not None and bf <= bm else 'LOCKED'}"
+        f"  gate progress: {n_elig}/{gate_n} eligible "
+        f"({100.0 * n_elig / gate_n:.1f}%) — "
+        f"{'OPEN candidate' if open_candidate else 'LOCKED'} "
+        f"(raw resolved={resolved}; paper P&L leg separate)"
     )
 
 
