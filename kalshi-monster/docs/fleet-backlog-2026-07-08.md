@@ -65,4 +65,4 @@ Canonical copy also lives in `C:\Users\ethan\OneDrive\Desktop\kalshi-monster-fin
 
 **Next:** Resume Phase 1 items in the integration plan when KB-1 live verification confirms acceptance.
 
-**Last updated by maintenance pass:** 2026-07-20 midday cron — KB-1 🟡; **eligible 20/200 LOCKED** (raw 260 resolved; +5 BTC 09:00Z); +12 p_model forecasts; ledger 370/260/110; paper_lots=0; health 306 lib green; live_forecast_pipeline PYTHONPATH scrub shipped.
+**Last updated by maintenance pass:** 2026-07-20 evening cron — KB-1 🟡; **eligible 21/200 LOCKED** (raw 265 resolved; +5 BTC 13:00Z); +12 p_model forecasts; ledger 382/265/117; paper_lots=0; health 306 lib green.

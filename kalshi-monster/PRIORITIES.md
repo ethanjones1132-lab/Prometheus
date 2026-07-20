@@ -1,6 +1,33 @@
 # Kalshi Monster — Priority Roadmap
 
-Last updated: 2026-07-20 (midday cron — eligible 20/200 LOCKED; +5 BTC 09:00Z resolves; +12 p_model; PYTHONPATH scrub)
+Last updated: 2026-07-20 (evening cron — eligible 21/200 LOCKED; +5 BTC 13:00Z resolves; +12 p_model)
+
+## Maintenance notes (2026-07-20, evening cron) — health green; **+5 resolves, +12 p_model, eligible 21/200**
+
+- Health: `cargo check`, `tsc` clean, **306** lib tests (0 failed, 9 ignored); working tree **clean** at start
+- Branch: `fix/edge-measurement-integrity` (ahead of master with honest-calibration work)
+- Auto-remediation: none needed (clean tree)
+- KB-1: still 🟡 — code path fixed; live credential/UI acceptance still required on user machine
+- KB-2: ✅ complete
+- **Resolve ops:** `resolve_settled_forecasts.py` wrote **+5** Jul-20 13:00Z BTC hourly outcomes
+  - KXBTC-26JUL2013 B65050/65250/65350/65450/65550 (1 Yes / 4 No)
+  - Progress raw: **265** resolved / **117** unresolved / **382** total (was 260/110/370 midday; +12 model rows this pass)
+  - [raw] Brier p_final **0.1574** vs p_market **0.1579** vs p_model **0.2873**
+- **Honest gate:** **eligible = 21/200 (10.5%) — LOCKED** (was 20 midday; +1 eligible from BTC 13:00Z with p_model)
+  - Eligible Brier p_final **0.3175** ≤ p_market **0.3239** (still beats market on thin model sample)
+  - `paper_lots` = **0** — PnL leg still unmet. Do **not** flip live execution.
+- **Still open / not yet printable:**
+  - Jul-20 city highs (CHI/DEN/LAX/MIA/NY/PHIL) — still `status=active` at pass time (~20:47Z)
+  - KXINX-26JUL20H1600-* — `status=closed` but `result=''` (cannot invent; re-poll next cron)
+  - KXBTC/ETH-26JUL2017 hourlies — still active (likely ~21:00Z settle window)
+- **Model sample-build:** `live_forecast_pipeline.py` wrote **12** forecasts with `p_model` set (technical + contract_tape)
+  - Mix: KXETH×5 (incl. 2× trade_yes) + KXBTC×2 + KXINX×4 + KXNASDAQ100×1 (1× trade_yes); agents_opining=2 on all
+  - Notable trade_yes for paper leg (app UI): KXETH-26JUL2117-B1830 (final 0.254 vs mkt 0.115), KXETH-26JUL2117-B1870, KXNASDAQ100-26JUL24H1600-T27600; prior INX B7462 still closed-no-result
+- **Ops note:** run live pipeline with fincept venv:
+  `fincept-sidecar/.venv/Scripts/python.exe scripts/live_forecast_pipeline.py`
+- **Next cron:** re-resolve after 17:00Z crypto hourlies + INX result print + overnight city highs; re-run live pipeline; **operator: open paper lots** on high-conviction trade_yes in app UI so PnL leg can trip; leave app running for auto-grade
+- **Blocked next (ops):** operator AGPL public push; KB-1 live Markets UI acceptance; eligible n→200 + paper PnL>0
+- **No Phase 1+ / Phase 5 code advancement** — full gate correctly LOCKED on eligible sample + paper PnL
 
 ## Maintenance notes (2026-07-20, midday cron) — health green; **+5 resolves, +12 p_model, cron PYTHONPATH fix**
 
