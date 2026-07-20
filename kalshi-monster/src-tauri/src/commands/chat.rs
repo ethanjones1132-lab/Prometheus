@@ -504,6 +504,11 @@ async fn persist_chat_forecast_unified(
         &reasons,
         stake,
         Some(&breakdown),
+        // LLM-only fallback: the sidecar was offline, so no agent opined.
+        crate::kalshi::forecast::ForecastProvenance {
+            source: "chat",
+            agents_opining: Some(0),
+        },
     )
     .await
     {

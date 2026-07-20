@@ -517,6 +517,10 @@ pub struct PaperDecisionContext {
     pub verdict_reasons: String,
     pub stake_suggested: Option<f64>,
     pub agent_breakdown: Option<String>,
+    /// Which code path produced this forecast ("app", "chat", a script name).
+    pub forecast_source: String,
+    /// How many agents actually returned a probability.
+    pub forecast_agents_opining: Option<i64>,
     pub trade_input: Option<PaperTradeInput>,
 }
 
@@ -554,6 +558,10 @@ pub async fn record_paper_decision(
         &ctx.verdict_reasons,
         ctx.stake_suggested,
         breakdown_slice,
+        crate::kalshi::forecast::ForecastProvenance {
+            source: &ctx.forecast_source,
+            agents_opining: ctx.forecast_agents_opining,
+        },
     )
     .await
     .map_err(|e| format!("forecast insert: {e}"))?;

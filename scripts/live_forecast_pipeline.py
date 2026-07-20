@@ -25,12 +25,18 @@ from pathlib import Path
 # Allow importing agents from fincept-sidecar
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "fincept-sidecar"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from kalshi_ticker import ensure_provenance_columns, provenance_for  # noqa: E402
 
 from agents.orchestrator import collect_market_opinion  # noqa: E402
 from fincept_sidecar.schemas import MarketCategory, MarketOpinionRequest  # noqa: E402
 
 KALSHI_MARKETS = "https://api.elections.kalshi.com/trade-api/v2/markets"
 LAMBDA = 0.25
+SOURCE = "live_forecast_pipeline.py"
+# Mirrors DUPLICATE_SUPPRESSION_SECS in kalshi/forecast.rs.
+DUPLICATE_SUPPRESSION_SECS = 60
 DB = Path(os.environ.get("USERPROFILE", os.environ.get("HOME", "."))) / ".openclaw/kalshi-monster/predictions.db"
 
 
@@ -100,11 +106,18 @@ def ensure_forecast_table(conn: sqlite3.Connection) -> None:
             outcome INTEGER,
             brier_model REAL,
             brier_market REAL,
-            brier_final REAL
+            brier_final REAL,
+            event_start_at TEXT,
+            is_in_play INTEGER DEFAULT 0,
+            source TEXT,
+            event_key TEXT,
+            agents_opining INTEGER
         )
         """
     )
     conn.commit()
+    # Databases created before migration 4 need the columns added in place.
+    ensure_provenance_columns(conn)
 
 
 def insert_forecast(
@@ -118,18 +131,42 @@ def insert_forecast(
     verdict: str,
     reasons: list[str],
     breakdown: dict | None,
+    agents_opining: int | None = None,
 ) -> int:
+    """Insert one forecast row, or return the id of the row this duplicates.
+
+    Provenance is recorded on the way in: which event the ticker belongs to,
+    when that event started, and whether this row was written after the tape
+    went live. Without it a row written mid-game is indistinguishable from a
+    genuine pre-event forecast, and the calibration gate counts both.
+    """
+    created_at = datetime.now(timezone.utc).isoformat()
+    dup = conn.execute(
+        """
+        SELECT id FROM forecasts
+        WHERE market_ticker = ?
+          AND ABS(p_market - ?) < 1e-9
+          AND ABS(julianday(created_at) - julianday(?)) * 86400.0 <= ?
+        ORDER BY id DESC LIMIT 1
+        """,
+        (ticker, p_market, created_at, DUPLICATE_SUPPRESSION_SECS),
+    ).fetchone()
+    if dup:
+        return int(dup[0])
+
+    event_key, event_start_at, in_play = provenance_for(ticker, created_at)
     cur = conn.execute(
         """
         INSERT INTO forecasts (
             market_ticker, created_at, close_time,
             p_market, p_model, p_final, verdict, verdict_reasons,
-            stake_suggested, agent_breakdown
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)
+            stake_suggested, agent_breakdown,
+            event_start_at, is_in_play, source, event_key, agents_opining
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?)
         """,
         (
             ticker,
-            datetime.now(timezone.utc).isoformat(),
+            created_at,
             close_time,
             p_market,
             p_model,
@@ -137,6 +174,11 @@ def insert_forecast(
             verdict,
             json.dumps(reasons),
             json.dumps(breakdown) if breakdown else None,
+            event_start_at,
+            in_play,
+            SOURCE,
+            event_key,
+            agents_opining,
         ),
     )
     conn.commit()
@@ -221,6 +263,7 @@ async def analyze_one(m: dict) -> dict | None:
         p_final = p_market
         reasons = ["no agent opinion; p_final=p_market (honest market-only row)"]
         verdict = "pass"
+        n_opining = 0
     else:
         # Simple equal-weight log-odds pool of opining agents (Rust applies routing weights).
         wsum = 0.0
@@ -232,6 +275,7 @@ async def analyze_one(m: dict) -> dict | None:
         p_model = 1.0 / (1.0 + math.exp(-(pooled / wsum)))
         p_final = shrink(p_model, p_market)
         reasons = [f"agents_opining={len(opining)}", f"lambda={LAMBDA}"]
+        n_opining = len(opining)
         # Fee-aware 5¢ threshold (same spirit as edge_engine; simplified mid entry)
         fee = 0.07 * p_market * (1.0 - p_market)
         edge_yes = p_final - (yes_ask + fee if yes_ask > 0 else p_market + fee)
@@ -248,6 +292,7 @@ async def analyze_one(m: dict) -> dict | None:
         "p_final": p_final,
         "verdict": verdict,
         "reasons": reasons,
+        "agents_opining": n_opining,
         "breakdown": {
             "signals": [
                 {
@@ -304,6 +349,7 @@ async def main() -> int:
             verdict=row["verdict"],
             reasons=row["reasons"],
             breakdown=row["breakdown"],
+            agents_opining=row.get("agents_opining"),
         )
         written += 1
         print(

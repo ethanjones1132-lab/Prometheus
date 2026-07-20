@@ -50,7 +50,14 @@ export interface EdgeAnalysisResult {
 
 /** Forecast-ledger calibration gate report (Phase 3). */
 export interface ForecastCalibrationReport {
+  /** Every resolved row, including market-only and in-play ones. */
   resolved_count: number;
+  /**
+   * Rows that can actually testify to model skill: p_model present, created
+   * before the event started, deduplicated to one per underlying event.
+   * This is the number the gate tests against 200.
+   */
+  eligible_count: number;
   unresolved_count: number;
   brier_market: number | null;
   brier_final: number | null;

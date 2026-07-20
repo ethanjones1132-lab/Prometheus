@@ -417,6 +417,10 @@ pub async fn analyze_and_log_forecast(
         &reasons_json,
         None,
         breakdown_str.as_deref(),
+        crate::kalshi::forecast::ForecastProvenance {
+            source: "app",
+            agents_opining: Some(signals_opining as i64),
+        },
     )
     .await?;
 

@@ -39,6 +39,7 @@ describe('CalibrationView', () => {
   beforeEach(() => {
     vi.mocked(kalshiApi.getForecastCalibrationReport).mockResolvedValue({
       resolved_count: 3,
+      eligible_count: 1,
       unresolved_count: 8,
       brier_market: 0.21,
       brier_final: 0.19,
@@ -47,7 +48,7 @@ describe('CalibrationView', () => {
       n_model: 2,
       gate_passed: false,
       gate_reasons: [
-        '3 resolved forecasts ≥ 200 required: NOT met',
+        '1 eligible forecasts ≥ 200 required: NOT met (of 3 resolved; excludes rows with no p_model, rows created after the event started, and duplicate legs of one event)',
         'Brier(p_final) 0.1900 ≤ Brier(p_market) 0.2100: met',
         'paper P&L after fees -1.00 > 0: NOT met',
       ],
@@ -101,7 +102,9 @@ describe('CalibrationView', () => {
     await waitFor(() => {
       expect(screen.getByText('LOCKED')).toBeInTheDocument();
     });
-    expect(screen.getByText('3 / 200')).toBeInTheDocument();
+    // The gate tracks the eligible sample, not the raw resolved count.
+    expect(screen.getByText('1 / 200')).toBeInTheDocument();
+    expect(screen.getByText('Resolved (raw)')).toBeInTheDocument();
     expect(screen.getByText('0.2100')).toBeInTheDocument();
     expect(screen.getAllByText((_, el) => el?.textContent?.includes('0.1900') === true).length).toBeGreaterThan(0);
     expect(screen.getByLabelText('Flywheel status')).toBeInTheDocument();

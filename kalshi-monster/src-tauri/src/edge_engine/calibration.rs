@@ -37,11 +37,23 @@ use super::{clamp_prob, shrink};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResolvedForecast {
     pub p_market: f64,
-    /// `None` for rows written before agents existed (Phase 0/1 ledger rows).
+    /// `None` for rows written before agents existed (Phase 0/1 ledger rows)
+    /// and for market-only sample-build rows where `p_final == p_market` by
+    /// construction. Such a row cannot demonstrate model skill.
     pub p_model: Option<f64>,
     pub p_final: f64,
     /// `true` = market resolved YES.
     pub outcome: bool,
+    /// The underlying event this row belongs to (`kalshi::ticker::event_key`).
+    /// Ten strike legs of one baseball game share one key. `None` on rows
+    /// written before the provenance columns existed and never backfilled —
+    /// treated as their own event, since correlation cannot be proven.
+    #[serde(default)]
+    pub event_key: Option<String>,
+    /// `true` when the row was written at or after the underlying event began,
+    /// so the quote it recorded already contained the outcome in progress.
+    #[serde(default)]
+    pub is_in_play: bool,
 }
 
 impl ResolvedForecast {
@@ -260,23 +272,84 @@ impl Default for GateConfig {
     }
 }
 
+/// Rows that can actually testify to *model* skill, in ledger order.
+///
+/// Three filters, each removing a class of row that inflates the sample count
+/// without adding evidence:
+///
+/// 1. **`p_model` must exist.** A row where `p_final == p_market` by
+///    construction (the market-only sample-build path) measures the market
+///    against itself. It is legitimate data about *market* calibration and
+///    stays in the ledger — it just cannot be counted as model evidence.
+/// 2. **Not in-play.** A forecast written after the event started copies a
+///    price that already contains the score. Scoring it is scoring hindsight.
+/// 3. **One row per `event_key`.** Ten strike legs of one baseball game move
+///    together; they are one observation of the world, not ten. The first row
+///    of each event survives (ledger order is ascending by resolution time, so
+///    this is the earliest-resolving leg — a deterministic choice, not the
+///    best-scoring one).
+pub fn eligible_rows(rows: &[ResolvedForecast]) -> Vec<&ResolvedForecast> {
+    let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    for r in rows {
+        if r.p_model.is_none() || r.is_in_play {
+            continue;
+        }
+        match r.event_key.as_deref() {
+            // An unknown event key cannot be proven correlated with anything,
+            // so the row stands alone rather than being silently merged.
+            None => out.push(r),
+            Some(key) => {
+                if seen.insert(key) {
+                    out.push(r);
+                }
+            }
+        }
+    }
+    out
+}
+
 /// The gate verdict with every condition reported individually, so the
 /// dashboard can show *which* requirement is unmet rather than a bare "no".
+///
+/// Two counts are reported deliberately. `resolved_count` is every resolved
+/// row in the ledger — the number that was previously (and misleadingly)
+/// checked against `min_resolved`. `eligible_count` is the honest one, and is
+/// what the gate actually tests. Showing both makes the gap visible instead of
+/// letting a large raw count imply evidence that isn't there.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GateReport {
     pub passed: bool,
+    /// Every resolved row, including market-only and in-play rows. Reported
+    /// for transparency; **not** what the gate tests.
     pub resolved_count: usize,
+    /// Model-bearing, pre-event, one-per-event rows. This is the sample the
+    /// gate tests against `min_resolved`.
+    pub eligible_count: usize,
     pub min_resolved: usize,
+    /// Mean Brier over **all** resolved rows — the ledger-wide headline the
+    /// dashboard shows.
     pub brier_final: Option<f64>,
     pub brier_market: Option<f64>,
+    /// Mean Brier over the eligible rows only. This is the comparison the gate
+    /// tests: on market-only rows `p_final == p_market`, so a full-sample
+    /// comparison is satisfied by identity rather than by skill.
+    pub brier_final_eligible: Option<f64>,
+    pub brier_market_eligible: Option<f64>,
     pub paper_pnl_after_fees: f64,
     /// Human-readable status of each condition, met or not.
     pub conditions: Vec<String>,
 }
 
 /// Evaluate the Phase 3 calibration gate: live execution requires
-/// ≥ `min_resolved` resolved forecasts AND Brier(p_final) ≤ Brier(p_market)
-/// AND paper P&L after fees > 0 over the window.
+/// ≥ `min_resolved` **eligible** resolved forecasts AND
+/// Brier(p_final) ≤ Brier(p_market) over those eligible rows AND paper P&L
+/// after fees > 0 over the window.
+///
+/// "Eligible" is [`eligible_rows`]: model-bearing, pre-event, deduplicated by
+/// event. The raw resolved count is still reported, but gating on it would
+/// mean a script that logs `p_final = p_market` on a thousand correlated legs
+/// could open live execution without the model ever being tested.
 ///
 /// This function only *evaluates*; persisting `calibration_gate_passed` (and
 /// the §6.5 invariant that Phase 5 code checks it) is the caller's job.
@@ -288,28 +361,45 @@ pub fn evaluate_gate(
     let summary = brier_summary(rows);
     let resolved_count = rows.len();
 
-    let count_ok = resolved_count >= cfg.min_resolved;
-    let (brier_final, brier_market, brier_ok) = match &summary {
-        Some(s) => (Some(s.brier_final), Some(s.brier_market), s.brier_final <= s.brier_market),
+    let eligible: Vec<ResolvedForecast> =
+        eligible_rows(rows).into_iter().cloned().collect();
+    let eligible_count = eligible.len();
+    let eligible_summary = brier_summary(&eligible);
+
+    let count_ok = eligible_count >= cfg.min_resolved;
+    let (brier_final, brier_market) = match &summary {
+        Some(s) => (Some(s.brier_final), Some(s.brier_market)),
+        None => (None, None),
+    };
+    let (brier_final_eligible, brier_market_eligible, brier_ok) = match &eligible_summary {
+        Some(s) => (
+            Some(s.brier_final),
+            Some(s.brier_market),
+            s.brier_final <= s.brier_market,
+        ),
         None => (None, None, false),
     };
     let pnl_ok = paper_pnl_after_fees > 0.0;
 
     let conditions = vec![
         format!(
-            "{} resolved forecasts ≥ {} required: {}",
-            resolved_count,
+            "{} eligible forecasts ≥ {} required: {} \
+             (of {} resolved; excludes rows with no p_model, rows created \
+             after the event started, and duplicate legs of one event)",
+            eligible_count,
             cfg.min_resolved,
-            if count_ok { "met" } else { "NOT met" }
+            if count_ok { "met" } else { "NOT met" },
+            resolved_count,
         ),
-        match (brier_final, brier_market) {
+        match (brier_final_eligible, brier_market_eligible) {
             (Some(bf), Some(bm)) => format!(
-                "Brier(p_final) {:.4} ≤ Brier(p_market) {:.4}: {}",
+                "Brier(p_final) {:.4} ≤ Brier(p_market) {:.4} over {} eligible rows: {}",
                 bf,
                 bm,
+                eligible_count,
                 if brier_ok { "met" } else { "NOT met" }
             ),
-            _ => "Brier comparison: no resolved forecasts yet (NOT met)".to_string(),
+            _ => "Brier comparison: no eligible forecasts yet (NOT met)".to_string(),
         },
         format!(
             "paper P&L after fees {:.2} > 0: {}",
@@ -321,9 +411,12 @@ pub fn evaluate_gate(
     GateReport {
         passed: count_ok && brier_ok && pnl_ok,
         resolved_count,
+        eligible_count,
         min_resolved: cfg.min_resolved,
         brier_final,
         brier_market,
+        brier_final_eligible,
+        brier_market_eligible,
         paper_pnl_after_fees,
         conditions,
     }
@@ -384,8 +477,27 @@ mod tests {
         (a - b).abs() < eps
     }
 
+    /// A row that is eligible by default: model-bearing rows get a unique
+    /// event key so the dedup filter is a no-op unless a test asks for it.
     fn row(p_market: f64, p_model: Option<f64>, p_final: f64, outcome: bool) -> ResolvedForecast {
-        ResolvedForecast { p_market, p_model, p_final, outcome }
+        ResolvedForecast {
+            p_market,
+            p_model,
+            p_final,
+            outcome,
+            event_key: None,
+            is_in_play: false,
+        }
+    }
+
+    fn with_event(mut r: ResolvedForecast, key: &str) -> ResolvedForecast {
+        r.event_key = Some(key.to_string());
+        r
+    }
+
+    fn in_play(mut r: ResolvedForecast) -> ResolvedForecast {
+        r.is_in_play = true;
+        r
     }
 
     // ---- brier ----
@@ -539,6 +651,7 @@ mod tests {
         let g = evaluate_gate(&rows, 125.0, &cfg);
         assert!(g.passed, "conditions: {:?}", g.conditions);
         assert_eq!(g.resolved_count, 200);
+        assert_eq!(g.eligible_count, 200, "all rows are model-bearing pre-event");
         assert!(g.brier_final.unwrap() <= g.brier_market.unwrap());
 
         // Sample size short by one → fail.
@@ -571,6 +684,124 @@ mod tests {
         let g = evaluate_gate(&[], 10.0, &GateConfig::default());
         assert!(!g.passed);
         assert!(g.brier_final.is_none());
+        assert_eq!(g.eligible_count, 0);
+    }
+
+    // ---- eligibility filtering (the honest sample) ----
+
+    /// The bug this filter exists to kill: 258 of 338 live ledger rows were
+    /// written with `p_final = p_market` by construction. They can never
+    /// distinguish model from market, so they must not move the counter.
+    #[test]
+    fn market_only_rows_never_count_toward_the_gate() {
+        let cfg = GateConfig::default();
+        // 300 market-only rows: p_model NULL, p_final == p_market.
+        let rows: Vec<ResolvedForecast> = (0..300)
+            .map(|i| with_event(row(0.60, None, 0.60, i % 10 < 6), &format!("EV{i}")))
+            .collect();
+
+        let g = evaluate_gate(&rows, 500.0, &cfg);
+        assert_eq!(g.resolved_count, 300, "raw count still reported honestly");
+        assert_eq!(g.eligible_count, 0, "none of them can test model skill");
+        assert!(!g.passed, "conditions: {:?}", g.conditions);
+        // The full-sample Brier comparison is satisfied *by identity* —
+        // exactly why the gate must not test it.
+        assert!(g.brier_final.unwrap() <= g.brier_market.unwrap());
+        assert!(g.brier_final_eligible.is_none());
+    }
+
+    #[test]
+    fn in_play_rows_never_count_toward_the_gate() {
+        let cfg = GateConfig { min_resolved: 3 };
+        let rows = vec![
+            with_event(row(0.60, Some(0.80), 0.70, true), "GAME-A"),
+            in_play(with_event(row(0.95, Some(0.99), 0.97, true), "GAME-B")),
+            in_play(with_event(row(0.95, Some(0.99), 0.97, true), "GAME-C")),
+        ];
+        let g = evaluate_gate(&rows, 10.0, &cfg);
+        assert_eq!(g.resolved_count, 3);
+        assert_eq!(g.eligible_count, 1, "only the pre-event row survives");
+        assert!(!g.passed);
+    }
+
+    /// Fourteen strike legs of one baseball game are one observation.
+    #[test]
+    fn correlated_legs_of_one_event_collapse_to_a_single_observation() {
+        let rows: Vec<ResolvedForecast> = (0..14)
+            .map(|_| {
+                with_event(
+                    row(0.60, Some(0.80), 0.70, true),
+                    "KXMLBTEAMTOTAL-26JUL191215CWSTOR",
+                )
+            })
+            .collect();
+        assert_eq!(eligible_rows(&rows).len(), 1);
+
+        // Two distinct games → two observations.
+        let mut mixed = rows.clone();
+        mixed.push(with_event(row(0.40, Some(0.30), 0.36, false), "KXMLBGAME-26JUL182008LADNYY"));
+        assert_eq!(eligible_rows(&mixed).len(), 2);
+    }
+
+    #[test]
+    fn dedup_keeps_the_first_row_of_each_event() {
+        let rows = vec![
+            with_event(row(0.60, Some(0.80), 0.70, true), "EV1"),
+            with_event(row(0.10, Some(0.20), 0.12, true), "EV1"),
+        ];
+        let kept = eligible_rows(&rows);
+        assert_eq!(kept.len(), 1);
+        assert!(approx(kept[0].p_final, 0.70, 1e-12), "earliest leg wins, not the best-scoring one");
+    }
+
+    #[test]
+    fn rows_without_an_event_key_are_not_silently_merged() {
+        // Unknown provenance: correlation cannot be proven, so each row
+        // stands alone rather than collapsing to one.
+        let rows: Vec<ResolvedForecast> =
+            (0..5).map(|_| row(0.60, Some(0.80), 0.70, true)).collect();
+        assert_eq!(eligible_rows(&rows).len(), 5);
+    }
+
+    /// End-to-end shape of the live ledger as audited: a large raw count made
+    /// almost entirely of market-only, in-play and duplicated rows, with a
+    /// handful of genuine observations underneath. The gate must stay LOCKED
+    /// and must say why.
+    #[test]
+    fn live_ledger_shape_reports_both_counts_and_stays_locked() {
+        let cfg = GateConfig::default();
+        let mut rows: Vec<ResolvedForecast> = Vec::new();
+        // 258 market-only sample-build rows.
+        for i in 0..258 {
+            rows.push(with_event(row(0.55, None, 0.55, i % 2 == 0), &format!("MKT{i}")));
+        }
+        // 14 in-play legs of one game, model-bearing but worthless.
+        for _ in 0..14 {
+            rows.push(in_play(with_event(
+                row(0.90, Some(0.95), 0.92, true),
+                "KXMLBTEAMTOTAL-26JUL191215CWSTOR",
+            )));
+        }
+        // 5 correlated pre-event legs of one basketball game → 1 observation.
+        for _ in 0..5 {
+            rows.push(with_event(
+                row(0.88, Some(0.90), 0.89, false),
+                "KXNBASUMMERSPREAD-26JUL11MIAORL",
+            ));
+        }
+        // 2 genuine, independent pre-event forecasts.
+        rows.push(with_event(row(0.30, Some(0.25), 0.29, false), "KXWNBASPREAD-26JUL09INDPHX"));
+        rows.push(with_event(row(0.80, Some(0.86), 0.81, true), "KXITFMATCH-26JUL10LOKALU"));
+
+        let g = evaluate_gate(&rows, 500.0, &cfg);
+        assert_eq!(g.resolved_count, 279);
+        assert_eq!(g.eligible_count, 3, "one per genuine pre-event event");
+        assert!(!g.passed, "279 raw rows must not open the gate");
+        assert!(
+            g.conditions[0].contains("3 eligible") && g.conditions[0].contains("279 resolved"),
+            "both counts must be visible: {}",
+            g.conditions[0]
+        );
     }
 
     // ---- rolling degradation ----

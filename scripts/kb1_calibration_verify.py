@@ -28,6 +28,13 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "fincept-sidecar"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from kalshi_ticker import (  # noqa: E402
+    ensure_provenance_columns,
+    eligible_resolved_rows,
+    provenance_for,
+)
 
 from agents.orchestrator import collect_market_opinion  # noqa: E402
 from fincept_sidecar.schemas import MarketCategory, MarketOpinionRequest  # noqa: E402
@@ -38,6 +45,8 @@ QUICK_LOAD_PAGES = 2
 FLAT_MARKET_PAGE_LIMIT = 100
 INITIAL_MARKET_LIMIT = QUICK_LOAD_PAGES * FLAT_MARKET_PAGE_LIMIT  # app quick-cache ceiling
 LAMBDA = 0.25
+# Mirrors GateConfig::default().min_resolved in edge_engine/calibration.rs.
+MIN_ELIGIBLE_FOR_GATE = 200
 DB = Path(os.environ.get("USERPROFILE", os.environ.get("HOME", "."))) / ".openclaw/kalshi-monster/predictions.db"
 UA = "kalshi-monster-kb1-calibration-verify/0.1"
 
@@ -132,11 +141,18 @@ def ensure_forecast_table(conn: sqlite3.Connection) -> None:
             outcome INTEGER,
             brier_model REAL,
             brier_market REAL,
-            brier_final REAL
+            brier_final REAL,
+            event_start_at TEXT,
+            is_in_play INTEGER DEFAULT 0,
+            source TEXT,
+            event_key TEXT,
+            agents_opining INTEGER
         )
         """
     )
     conn.commit()
+    # Databases created before migration 4 need the columns added in place.
+    ensure_provenance_columns(conn)
 
 
 def category_for(title: str, ticker: str) -> MarketCategory:
@@ -188,6 +204,7 @@ async def analyze_one(m: dict) -> dict | None:
         p_final = p_market
         reasons = ["no agent opinion; p_final=p_market"]
         verdict = "pass"
+        n_opining = 0
     else:
         wsum = 0.0
         pooled = 0.0
@@ -202,6 +219,7 @@ async def analyze_one(m: dict) -> dict | None:
         edge_yes = p_final - entry
         verdict = "trade_yes" if edge_yes >= 0.05 else "pass"
         reasons = [f"agents_opining={len(opining)}", f"lambda={LAMBDA}", f"edge_yes={edge_yes:.4f}"]
+        n_opining = len(opining)
 
     return {
         "ticker": ticker,
@@ -211,6 +229,7 @@ async def analyze_one(m: dict) -> dict | None:
         "p_final": p_final,
         "verdict": verdict,
         "reasons": reasons,
+        "agents_opining": n_opining,
         "breakdown": {
             "signals": [
                 {"agent": s.agent, "probability": s.probability, "confidence": s.confidence}
@@ -221,18 +240,50 @@ async def analyze_one(m: dict) -> dict | None:
     }
 
 
+SOURCE = "kb1_calibration_verify.py"
+
+# Two rows for the same ticker at the same price this close together are the
+# same forecast logged twice, not two opinions. Mirrors
+# `DUPLICATE_SUPPRESSION_SECS` in kalshi/forecast.rs.
+DUPLICATE_SUPPRESSION_SECS = 60
+
+
 def insert_forecast(conn: sqlite3.Connection, row: dict) -> int:
+    """Insert one forecast row, or return the id of the row this duplicates.
+
+    Duplicate suppression matches the Rust insert path: same ticker, same
+    p_market, within 60s. The ledger accumulated 21 duplicate tickers before
+    this guard existed, each one silently doubling its own weight in every
+    count taken over the table.
+    """
+    created_at = datetime.now(timezone.utc).isoformat()
+    dup = conn.execute(
+        """
+        SELECT id FROM forecasts
+        WHERE market_ticker = ?
+          AND ABS(p_market - ?) < 1e-9
+          AND ABS(julianday(created_at) - julianday(?)) * 86400.0 <= ?
+        ORDER BY id DESC LIMIT 1
+        """,
+        (row["ticker"], row["p_market"], created_at, DUPLICATE_SUPPRESSION_SECS),
+    ).fetchone()
+    if dup:
+        print(f"  duplicate suppressed {row['ticker']} (matches forecast#{dup[0]})")
+        return int(dup[0])
+
+    event_key, event_start_at, in_play = provenance_for(row["ticker"], created_at)
     cur = conn.execute(
         """
         INSERT INTO forecasts (
             market_ticker, created_at, close_time,
             p_market, p_model, p_final, verdict, verdict_reasons,
-            stake_suggested, agent_breakdown
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)
+            stake_suggested, agent_breakdown,
+            event_start_at, is_in_play, source, event_key, agents_opining
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?)
         """,
         (
             row["ticker"],
-            datetime.now(timezone.utc).isoformat(),
+            created_at,
             row["close_time"],
             row["p_market"],
             row["p_model"],
@@ -240,6 +291,11 @@ def insert_forecast(conn: sqlite3.Connection, row: dict) -> int:
             row["verdict"],
             json.dumps(row["reasons"]),
             json.dumps(row["breakdown"]),
+            event_start_at,
+            in_play,
+            SOURCE,
+            event_key,
+            row.get("agents_opining"),
         ),
     )
     conn.commit()
@@ -285,32 +341,65 @@ def resolve_if_settled(conn: sqlite3.Connection, ticker: str) -> int:
 
 
 def print_brier_report(conn: sqlite3.Connection) -> None:
+    """Report the raw ledger *and* the sample the gate actually tests.
+
+    Mirrors `edge_engine::calibration::evaluate_gate`. The raw resolved count
+    is not evidence of model skill: a row where `p_final = p_market` by
+    construction measures the market against itself, a row created after the
+    event started scores a price that already contains the outcome, and ten
+    strike legs of one game are one observation. Printing only the raw count
+    is how a ledger of 213 rows came to be reported as clearing an n>=200
+    calibration gate on roughly 7 real observations.
+    """
     n_res = conn.execute("SELECT COUNT(*) FROM forecasts WHERE outcome IS NOT NULL").fetchone()[0]
     n_un = conn.execute("SELECT COUNT(*) FROM forecasts WHERE outcome IS NULL").fetchone()[0]
     n_model = conn.execute(
         "SELECT COUNT(*) FROM forecasts WHERE outcome IS NOT NULL AND p_model IS NOT NULL"
     ).fetchone()[0]
+    n_in_play = conn.execute(
+        "SELECT COUNT(*) FROM forecasts WHERE outcome IS NOT NULL AND COALESCE(is_in_play, 0) = 1"
+    ).fetchone()[0]
     print(f"\n=== Ledger (source: {DB}) ===")
-    print(f"resolved={n_res} unresolved={n_un} resolved_with_p_model={n_model}")
+    print(f"resolved={n_res} unresolved={n_un} resolved_with_p_model={n_model} in_play={n_in_play}")
     if n_res == 0:
-        print("Brier(p_final)/Brier(p_market): N/A — no resolved outcomes yet (honest).")
-        print("Gate: LOCKED (needs ≥200 resolved).")
+        print("Brier(p_final)/Brier(p_market): N/A - no resolved outcomes yet (honest).")
+        print("Gate: LOCKED (needs >=200 eligible).")
         return
+
     rows = conn.execute(
         "SELECT p_market, p_model, p_final, outcome FROM forecasts WHERE outcome IS NOT NULL"
     ).fetchall()
     bf = sum((p_f - o) ** 2 for _, _, p_f, o in rows) / len(rows)
     bm = sum((p_m - o) ** 2 for p_m, _, _, o in rows) / len(rows)
-    print(f"Brier(p_market)={bm:.4f}  Brier(p_final)={bf:.4f}  n={len(rows)}")
-    model_rows = [(pm, p_m, o) for p_m, pm, _, o in rows if pm is not None]
-    if model_rows:
-        bmod = sum((pm - o) ** 2 for pm, _, o in model_rows) / len(model_rows)
-        bm_m = sum((p_m - o) ** 2 for _, p_m, o in model_rows) / len(model_rows)
-        print(f"Brier(p_model)={bmod:.4f}  Brier(market|model_rows)={bm_m:.4f}  n_model={len(model_rows)}")
+    print(f"[raw, all rows] Brier(p_market)={bm:.4f}  Brier(p_final)={bf:.4f}  n={len(rows)}")
+
+    eligible = eligible_resolved_rows(conn)
+    n_elig = len(eligible)
     print(
-        f"Gate conditions: resolved≥200? {n_res >= 200}; "
-        f"Brier(final)≤Brier(market)? {bf <= bm}; paper P&L not measured here."
+        f"[eligible] n={n_elig} - p_model present, created pre-event, "
+        f"deduplicated to one row per event_key"
     )
+    if n_elig:
+        ebf = sum((r[2] - r[3]) ** 2 for r in eligible) / n_elig
+        ebm = sum((r[0] - r[3]) ** 2 for r in eligible) / n_elig
+        emod = sum((r[1] - r[3]) ** 2 for r in eligible) / n_elig
+        print(
+            f"[eligible] Brier(p_market)={ebm:.4f}  Brier(p_final)={ebf:.4f}  "
+            f"Brier(p_model)={emod:.4f}"
+        )
+        brier_ok = ebf <= ebm
+    else:
+        ebf = ebm = None
+        brier_ok = False
+
+    count_ok = n_elig >= MIN_ELIGIBLE_FOR_GATE
+    print(
+        f"Gate conditions: eligible>={MIN_ELIGIBLE_FOR_GATE}? {count_ok} "
+        f"({n_elig} of {n_res} resolved); "
+        f"Brier(final)<=Brier(market) on eligible rows? {brier_ok}; "
+        f"paper P&L not measured here."
+    )
+    print(f"Gate: {'OPEN candidate' if (count_ok and brier_ok) else 'LOCKED'}")
 
 
 async def main() -> int:

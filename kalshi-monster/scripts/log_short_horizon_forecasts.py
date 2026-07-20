@@ -33,8 +33,25 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlencode
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+from kalshi_ticker import (  # noqa: E402
+    ensure_provenance_columns,
+    eligible_resolved_rows,
+    provenance_for,
+)
+
 API_BASE = "https://api.elections.kalshi.com/trade-api/v2"
 UA = "kalshi-monster-cron/log-short-horizon-forecasts/1.0"
+
+# Every row this script writes has p_final = p_market by construction, so it
+# can never distinguish model from market. Recording that in `source` is what
+# lets the gate exclude these rows structurally instead of counting them as
+# model evidence. They remain in the ledger as honest data about *market*
+# calibration.
+SOURCE = "log_short_horizon_forecasts.py"
+
+# Mirrors GateConfig::default().min_resolved in edge_engine/calibration.rs.
+MIN_ELIGIBLE_FOR_GATE = 200
 
 # Single-leg series that typically resolve in hours–days (not multi-year politics).
 DEFAULT_SERIES = [
@@ -236,6 +253,13 @@ def diversify(candidates: list[dict], limit: int, max_per_series: int) -> list[d
 
 
 def print_summary(cur: sqlite3.Cursor) -> None:
+    """Report the raw ledger and the sample the gate actually tests.
+
+    This script's own rows are market-only: `p_model` is NULL and
+    `p_final = p_market`. They move `total`/`resolved` but contribute nothing
+    to `eligible`, and reporting only the former is what made a ledger of 213
+    market-echo rows look like it had cleared an n>=200 model-skill gate.
+    """
     stats = cur.execute(
         """
         SELECT
@@ -247,19 +271,34 @@ def print_summary(cur: sqlite3.Cursor) -> None:
         """
     ).fetchone()
     total, resolved, unresolved, bf, bm = stats
+    eligible = eligible_resolved_rows(cur)
+    n_elig = len(eligible)
     print()
     print("Calibration summary:")
     print(f"  total={total} resolved={resolved} unresolved={unresolved}")
     if bf is not None and bm is not None:
-        print(f"  mean Brier p_final={bf:.4f} p_market={bm:.4f}")
+        print(f"  [raw] mean Brier p_final={bf:.4f} p_market={bm:.4f}")
         print(
-            f"  p_final beats market: {bf < bm} "
-            f"(delta market-final={bm - bf:+.4f})"
+            f"  [raw] p_final beats market: {bf < bm} "
+            f"(delta market-final={bm - bf:+.4f}) "
+            f"— market-only rows make this comparison trivially equal"
         )
     print(
-        f"  gate progress: {resolved}/200 "
-        f"({100.0 * resolved / 200:.1f}%) — "
-        f"{'OPEN candidate' if resolved >= 200 and bf is not None and bm is not None and bf <= bm else 'LOCKED'}"
+        f"  eligible={n_elig} (p_model present, pre-event, one row per event) "
+        f"— rows this script writes are market-only and never eligible"
+    )
+    if n_elig:
+        ebf = sum((r[2] - r[3]) ** 2 for r in eligible) / n_elig
+        ebm = sum((r[0] - r[3]) ** 2 for r in eligible) / n_elig
+        brier_ok = ebf <= ebm
+        print(f"  [eligible] Brier p_final={ebf:.4f} p_market={ebm:.4f}")
+    else:
+        brier_ok = False
+    open_candidate = n_elig >= MIN_ELIGIBLE_FOR_GATE and brier_ok
+    print(
+        f"  gate progress: {n_elig}/{MIN_ELIGIBLE_FOR_GATE} eligible "
+        f"({100.0 * n_elig / MIN_ELIGIBLE_FOR_GATE:.1f}%) — "
+        f"{'OPEN candidate' if open_candidate else 'LOCKED'}"
     )
 
 
@@ -304,6 +343,8 @@ def main() -> int:
     con = sqlite3.connect(str(args.db))
     con.row_factory = sqlite3.Row
     cur = con.cursor()
+    # Safe if the app has already migrated; needed if it has not.
+    ensure_provenance_columns(con)
 
     existing_unresolved = {
         r[0]
@@ -358,14 +399,18 @@ def main() -> int:
             f"{' [dry-run]' if args.dry_run else ''}"
         )
         if not args.dry_run:
+            event_key, event_start_at, in_play = provenance_for(
+                c["ticker"], created_at
+            )
             cur.execute(
                 """
                 INSERT INTO forecasts (
                     market_ticker, created_at, close_time,
                     p_market, p_model, p_final,
                     verdict, verdict_reasons,
-                    stake_suggested, agent_breakdown
-                ) VALUES (?, ?, ?, ?, NULL, ?, 'pass', ?, NULL, NULL)
+                    stake_suggested, agent_breakdown,
+                    event_start_at, is_in_play, source, event_key, agents_opining
+                ) VALUES (?, ?, ?, ?, NULL, ?, 'pass', ?, NULL, NULL, ?, ?, ?, ?, 0)
                 """,
                 (
                     c["ticker"],
@@ -374,6 +419,10 @@ def main() -> int:
                     p_market,
                     p_final,
                     reasons,
+                    event_start_at,
+                    in_play,
+                    SOURCE,
+                    event_key,
                 ),
             )
             fid = cur.lastrowid

@@ -5,6 +5,7 @@ pub mod portfolio_risk;
 pub mod price_tracker;
 pub mod market_cache_store;
 pub mod forecast;
+pub mod ticker;
 
 pub use models::*;
 pub use client::{KalshiClient, KalshiCategoryStat, kalshi_config_from_app};

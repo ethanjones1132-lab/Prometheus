@@ -308,7 +308,12 @@ pub async fn kalshi_resolve_pending_forecasts(
 /// Calibration gate report from the **forecast** ledger (real rows only).
 #[derive(Debug, serde::Serialize)]
 pub struct ForecastCalibrationReport {
+    /// Every resolved row, including market-only and in-play ones.
     pub resolved_count: i64,
+    /// Rows that can actually testify to model skill: `p_model` present,
+    /// created before the event started, one per underlying event. This is
+    /// what the gate tests — `resolved_count` is context, not evidence.
+    pub eligible_count: i64,
     pub unresolved_count: i64,
     pub brier_market: Option<f64>,
     pub brier_final: Option<f64>,
@@ -361,6 +366,7 @@ pub async fn kalshi_get_forecast_calibration_report(
 
     Ok(ForecastCalibrationReport {
         resolved_count,
+        eligible_count: gate.eligible_count as i64,
         unresolved_count,
         brier_market: summary.as_ref().map(|s| s.brier_market),
         brier_final: summary.as_ref().map(|s| s.brier_final),
@@ -862,6 +868,10 @@ pub async fn kalshi_record_paper_decision(
         verdict_reasons,
         stake_suggested,
         agent_breakdown: breakdown,
+        forecast_source: "chat".to_string(),
+        // The paper path's p_model is a single `llm_decision` opinion, not an
+        // agent ensemble — recorded as one opinion, not inflated.
+        forecast_agents_opining: Some(1),
         trade_input: trade_input.clone(),
     };
 

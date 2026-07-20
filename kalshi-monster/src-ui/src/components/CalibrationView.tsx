@@ -203,6 +203,7 @@ export function CalibrationView() {
     const rows = [
       ['metric', 'value'],
       ['resolved_count', String(report.resolved_count)],
+      ['eligible_count', String(report.eligible_count)],
       ['unresolved_count', String(report.unresolved_count)],
       ['brier_market', String(report.brier_market ?? '')],
       ['brier_final', String(report.brier_final ?? '')],
@@ -225,8 +226,11 @@ export function CalibrationView() {
   };
 
   const gateOk = report?.gate_passed === true;
+  // Progress tracks the *eligible* sample, not the raw row count: market-only
+  // and in-play rows cannot demonstrate model skill, so showing them as
+  // progress toward the gate would overstate how close it is.
   const progress =
-    report != null ? Math.min(100, (report.resolved_count / 200) * 100) : 0;
+    report != null ? Math.min(100, (report.eligible_count / 200) * 100) : 0;
   const nModel = report?.n_model ?? 0;
   const lambdaReady = nModel >= 50;
   const lambdaProgress = Math.min(100, (nModel / 50) * 100);
@@ -346,16 +350,24 @@ export function CalibrationView() {
           <strong className={gateOk ? 'pos' : 'neg'}>{gateOk ? 'OPEN' : 'LOCKED'}</strong>
         </div>
         <div style={stagger(1)}>
-          <span>Resolved</span>
+          <span title="Model-bearing, pre-event, one row per event — the sample the gate tests">
+            Eligible
+          </span>
           <strong className="goldText">
-            {report?.resolved_count ?? '—'} / 200
+            {report?.eligible_count ?? '—'} / 200
           </strong>
         </div>
         <div style={stagger(2)}>
+          <span title="Every resolved row, including market-only and in-play rows">
+            Resolved (raw)
+          </span>
+          <strong>{report?.resolved_count ?? '—'}</strong>
+        </div>
+        <div style={stagger(3)}>
           <span>Unresolved</span>
           <strong>{report?.unresolved_count ?? '—'}</strong>
         </div>
-        <div style={stagger(3)}>
+        <div style={stagger(4)}>
           <span>Paper P&amp;L</span>
           <strong className={(report?.paper_pnl ?? 0) > 0 ? 'pos' : 'neg'}>
             {money(report?.paper_pnl)}

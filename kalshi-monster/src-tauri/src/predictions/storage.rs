@@ -41,7 +41,7 @@ fn ensure_db_dir() -> Result<(), String> {
 
 /// Latest schema version tracked by the migration ledger. Bump this when adding
 /// a new migration and implement the corresponding `migration_XX_*` function.
-const BASELINE_VERSION: i64 = 3;
+const BASELINE_VERSION: i64 = 4;
 
 /// Open a connection pool and run migrations.
 pub async fn init_db() -> Result<Pool<Sqlite>, String> {
@@ -129,6 +129,7 @@ async fn baseline_existing_db(pool: &Pool<Sqlite>) -> Result<(), String> {
     migration_01_initial_schema_tx(&mut txn).await?;
     migration_02_prediction_delta_columns_tx(&mut txn).await?;
     migration_03_prediction_edge_columns_tx(&mut txn).await?;
+    migration_04_forecast_provenance_columns_tx(&mut txn).await?;
     for version in 1..=BASELINE_VERSION {
         record_migration_tx(&mut txn, version).await?;
     }
@@ -152,6 +153,7 @@ async fn run_migrations(pool: &Pool<Sqlite>) -> Result<(), String> {
             1 => migration_01_initial_schema_tx(&mut txn).await?,
             2 => migration_02_prediction_delta_columns_tx(&mut txn).await?,
             3 => migration_03_prediction_edge_columns_tx(&mut txn).await?,
+            4 => migration_04_forecast_provenance_columns_tx(&mut txn).await?,
             _ => return Err(format!("Unknown migration version: {}", version)),
         }
         record_migration_tx(&mut txn, version).await?;
@@ -182,6 +184,7 @@ fn migration_name(version: i64) -> &'static str {
         1 => "initial_schema",
         2 => "prediction_delta_columns",
         3 => "prediction_edge_columns",
+        4 => "forecast_provenance_columns",
         _ => "unknown",
     }
 }
@@ -317,6 +320,109 @@ async fn migration_03_prediction_edge_columns_tx(
             .map_err(|e| format!("Migration 3 add column {name}: {}", e))?;
     }
     Ok(())
+}
+
+/// Provenance columns on `forecasts`, plus a backfill of what the existing
+/// rows' tickers already encode.
+///
+/// Motivation: without these, every resolved row looks alike, so a ledger made
+/// mostly of market-only rows (`p_final = p_market` by construction), rows
+/// logged after the event had already started, and repeated strike legs of one
+/// game reported a "sample size" an order of magnitude larger than the
+/// evidence it contained.
+///
+/// The `forecasts` table is normally created later in startup by
+/// `kalshi::forecast::init_forecast_table`, so on a fresh database it does not
+/// exist yet when migrations run. The canonical DDL is executed here first
+/// (`CREATE TABLE IF NOT EXISTS`) so both paths land on the same schema.
+///
+/// Backfill rules, deliberately conservative:
+/// - `event_key` is derivable from any ticker, so every row gets one.
+/// - `event_start_at` / `is_in_play` are set **only** where the ticker
+///   actually encodes a time. A row whose ticker encodes no time keeps
+///   `event_start_at = NULL` and `is_in_play = 0` — unknown is recorded as
+///   unknown, never guessed as pre-event.
+/// - `source` and `agents_opining` are left NULL for pre-existing rows: their
+///   provenance was not recorded at the time and inventing it here would be
+///   the same class of error this migration exists to correct.
+async fn migration_04_forecast_provenance_columns_tx(
+    txn: &mut Transaction<'_, Sqlite>,
+) -> Result<(), String> {
+    sqlx::query(crate::kalshi::forecast::FORECASTS_DDL)
+        .execute(&mut **txn)
+        .await
+        .map_err(|e| format!("Migration 4 forecasts table: {}", e))?;
+
+    let existing = existing_columns_tx(txn, "forecasts").await?;
+    let additions: &[(&str, &str)] = &[
+        ("event_start_at", "TEXT"),
+        ("is_in_play", "INTEGER DEFAULT 0"),
+        ("source", "TEXT"),
+        ("event_key", "TEXT"),
+        ("agents_opining", "INTEGER"),
+    ];
+    for (name, ty) in additions {
+        if existing.contains(*name) {
+            continue;
+        }
+        let sql = format!("ALTER TABLE forecasts ADD COLUMN {name} {ty}");
+        sqlx::query(&sql)
+            .execute(&mut **txn)
+            .await
+            .map_err(|e| format!("Migration 4 add column {name}: {}", e))?;
+    }
+
+    sqlx::query("CREATE INDEX IF NOT EXISTS idx_fc_event_key ON forecasts(event_key)")
+        .execute(&mut **txn)
+        .await
+        .map_err(|e| format!("Migration 4 event_key index: {}", e))?;
+
+    backfill_forecast_provenance_tx(txn).await?;
+    Ok(())
+}
+
+/// Fill `event_key` / `event_start_at` / `is_in_play` on rows that lack them.
+///
+/// Idempotent by construction: it only touches rows where `event_key IS NULL`,
+/// so re-running is a no-op and a partially-completed run resumes cleanly.
+async fn backfill_forecast_provenance_tx(
+    txn: &mut Transaction<'_, Sqlite>,
+) -> Result<usize, String> {
+    let rows = sqlx::query(
+        "SELECT id, market_ticker, created_at FROM forecasts WHERE event_key IS NULL",
+    )
+    .fetch_all(&mut **txn)
+    .await
+    .map_err(|e| format!("Migration 4 backfill scan: {}", e))?;
+
+    let mut updated = 0usize;
+    for row in &rows {
+        let id: i64 = row.get("id");
+        let market_ticker: String = row.get("market_ticker");
+        let created_at: String = row.get("created_at");
+
+        let event_key = crate::kalshi::ticker::event_key(&market_ticker);
+        let start = crate::kalshi::ticker::event_start_from_ticker(&market_ticker);
+        let in_play = crate::kalshi::ticker::is_in_play(&created_at, start);
+
+        sqlx::query(
+            "UPDATE forecasts SET event_key = ?1, event_start_at = ?2, is_in_play = ?3 \
+             WHERE id = ?4",
+        )
+        .bind(&event_key)
+        .bind(start.map(|s| s.to_rfc3339()))
+        .bind(i64::from(in_play))
+        .bind(id)
+        .execute(&mut **txn)
+        .await
+        .map_err(|e| format!("Migration 4 backfill row {id}: {}", e))?;
+        updated += 1;
+    }
+
+    if updated > 0 {
+        tracing::info!("migration 4: backfilled provenance on {updated} forecast rows");
+    }
+    Ok(updated)
 }
 
 /// Attach edge-engine outputs to an existing prediction row (paper/LLM path).
@@ -992,5 +1098,174 @@ mod tests {
             .await
             .unwrap();
         assert!(clv.abs() < 1e-9, "expected clv=0.0, got {clv}");
+    }
+
+    // ---- migration 4: forecast provenance ----
+
+    /// The `forecasts` table as it existed before migration 4, with the rows
+    /// the live ledger actually contains.
+    const V3_FORECASTS_DDL: &str = r#"
+        CREATE TABLE forecasts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            market_ticker TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            close_time TEXT NOT NULL,
+            p_market REAL NOT NULL,
+            p_model REAL,
+            p_final REAL NOT NULL,
+            verdict TEXT NOT NULL,
+            verdict_reasons TEXT NOT NULL,
+            stake_suggested REAL,
+            agent_breakdown TEXT,
+            resolved_at TEXT,
+            outcome INTEGER,
+            brier_model REAL,
+            brier_market REAL,
+            brier_final REAL
+        )
+    "#;
+
+    /// A pool holding a pre-migration-4 database: migrations 1–3 applied and
+    /// recorded, `forecasts` in its old shape with real ledger rows in it.
+    async fn v3_pool_with_forecasts() -> Pool<Sqlite> {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        ensure_migrations_table(&pool).await.unwrap();
+        let mut txn = pool.begin().await.unwrap();
+        migration_01_initial_schema_tx(&mut txn).await.unwrap();
+        migration_02_prediction_delta_columns_tx(&mut txn).await.unwrap();
+        migration_03_prediction_edge_columns_tx(&mut txn).await.unwrap();
+        sqlx::query(V3_FORECASTS_DDL).execute(&mut *txn).await.unwrap();
+        for version in 1..=3 {
+            record_migration_tx(&mut txn, version).await.unwrap();
+        }
+        txn.commit().await.unwrap();
+
+        // (ticker, created_at) triples drawn from the live ledger.
+        let seed: &[(&str, &str)] = &[
+            // Logged ~6h after a 19:15 ET first pitch (23:15Z) → in play.
+            ("KXMLBTOTAL-26JUL171915CWSTOR-4", "2026-07-18T05:24:19.354206600+00:00"),
+            // Logged before a 12:15 ET first pitch (16:15Z) → pre-event.
+            ("KXMLBTEAMTOTAL-26JUL191215CWSTOR-TOR8", "2026-07-19T10:00:00Z"),
+            // No time encoded in the ticker at all.
+            ("KXWORLDCUPHALFTIME-26-POS", "2026-07-19T02:19:21.571103500+00:00"),
+        ];
+        for (ticker, created) in seed {
+            sqlx::query(
+                "INSERT INTO forecasts (market_ticker, created_at, close_time, p_market, \
+                 p_final, verdict, verdict_reasons) \
+                 VALUES (?1, ?2, '2026-08-01T00:00:00Z', 0.5, 0.5, 'pass', '[]')",
+            )
+            .bind(ticker)
+            .bind(created)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        pool
+    }
+
+    async fn provenance_row(pool: &Pool<Sqlite>, ticker: &str) -> (Option<String>, Option<String>, i64) {
+        let r = sqlx::query(
+            "SELECT event_key, event_start_at, is_in_play FROM forecasts WHERE market_ticker = ?1",
+        )
+        .bind(ticker)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        (r.get(0), r.get(1), r.get(2))
+    }
+
+    #[tokio::test]
+    async fn migration_04_backfills_existing_rows_from_their_tickers() {
+        let pool = v3_pool_with_forecasts().await;
+        run_migrations(&pool).await.unwrap();
+
+        assert_eq!(current_migration_version(&pool).await.unwrap(), 4);
+
+        let (key, start, in_play) =
+            provenance_row(&pool, "KXMLBTOTAL-26JUL171915CWSTOR-4").await;
+        assert_eq!(key.as_deref(), Some("KXMLBTOTAL-26JUL171915CWSTOR"));
+        assert_eq!(start.as_deref(), Some("2026-07-17T23:15:00+00:00"));
+        assert_eq!(in_play, 1, "logged hours after first pitch");
+
+        let (key, start, in_play) =
+            provenance_row(&pool, "KXMLBTEAMTOTAL-26JUL191215CWSTOR-TOR8").await;
+        assert_eq!(key.as_deref(), Some("KXMLBTEAMTOTAL-26JUL191215CWSTOR"));
+        assert_eq!(start.as_deref(), Some("2026-07-19T16:15:00+00:00"));
+        assert_eq!(in_play, 0);
+    }
+
+    /// A ticker with no encoded time must come out of the backfill as
+    /// "unknown", not as "pre-event". Guessing here would quietly promote
+    /// rows into the honest sample.
+    #[tokio::test]
+    async fn migration_04_leaves_untimed_rows_null_rather_than_guessing() {
+        let pool = v3_pool_with_forecasts().await;
+        run_migrations(&pool).await.unwrap();
+
+        let (key, start, in_play) = provenance_row(&pool, "KXWORLDCUPHALFTIME-26-POS").await;
+        assert_eq!(key.as_deref(), Some("KXWORLDCUPHALFTIME-26"));
+        assert!(start.is_none(), "no time in the ticker → NULL start");
+        assert_eq!(in_play, 0);
+
+        // Provenance that was never recorded is not invented either.
+        let (source, opining): (Option<String>, Option<i64>) = {
+            let r = sqlx::query(
+                "SELECT source, agents_opining FROM forecasts WHERE market_ticker = ?1",
+            )
+            .bind("KXWORLDCUPHALFTIME-26-POS")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            (r.get(0), r.get(1))
+        };
+        assert!(source.is_none());
+        assert!(opining.is_none());
+    }
+
+    /// The migration runs against the user's live database on next launch, so
+    /// re-entrancy is not optional.
+    #[tokio::test]
+    async fn migration_04_is_idempotent() {
+        let pool = v3_pool_with_forecasts().await;
+        let mut txn = pool.begin().await.unwrap();
+        migration_04_forecast_provenance_columns_tx(&mut txn).await.unwrap();
+        migration_04_forecast_provenance_columns_tx(&mut txn).await.unwrap();
+        let backfilled = backfill_forecast_provenance_tx(&mut txn).await.unwrap();
+        txn.commit().await.unwrap();
+        assert_eq!(backfilled, 0, "second backfill pass has nothing left to do");
+
+        let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM forecasts")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(n, 3, "migration must not duplicate or drop rows");
+    }
+
+    /// On a fresh database the migration runs before
+    /// `init_forecast_table`, so it must create the table itself — and the
+    /// two DDL paths must agree.
+    #[tokio::test]
+    async fn migration_04_creates_forecasts_on_a_fresh_database() {
+        let pool = test_pool().await; // runs 1..=4 with no forecasts table
+        // init_forecast_table runs later in real startup; it must be a no-op
+        // against the schema the migration just created.
+        crate::kalshi::forecast::init_forecast_table(&pool).await.unwrap();
+
+        let cols: std::collections::HashSet<String> =
+            sqlx::query("PRAGMA table_info(forecasts)")
+                .fetch_all(&pool)
+                .await
+                .unwrap()
+                .iter()
+                .map(|r| r.get::<String, _>("name"))
+                .collect();
+        for expected in ["event_start_at", "is_in_play", "source", "event_key", "agents_opining"] {
+            assert!(cols.contains(expected), "missing column {expected} in {cols:?}");
+        }
     }
 }
