@@ -1,0 +1,242 @@
+{
+  "_comment": [
+    "Shared test vectors for Kalshi ticker parsing. Consumed by BOTH",
+    "kalshi-monster/src-tauri/src/kalshi/ticker.rs (via include_str!) and",
+    "scripts/test_kalshi_ticker.py. The two implementations must agree exactly:",
+    "if they drift, the app and the cron scripts report different sample sizes",
+    "for the same database, which is the class of bug this module exists to",
+    "prevent. Add a vector here, not to one suite.",
+    "",
+    "event_start_utc is null wherever the ticker does not actually encode a",
+    "usable time. Never fill one in by inference."
+  ],
+  "tickers": [
+    {
+      "ticker": "KXNBASUMMERSPREAD-26JUL11MIAORL-MIA10",
+      "event_key": "KXNBASUMMERSPREAD-26JUL11MIAORL",
+      "event_start_utc": null,
+      "note": "real ledger row; date but no HHMM"
+    },
+    {
+      "ticker": "KXMLBTEAMTOTAL-26JUL191215CWSTOR-TOR8",
+      "event_key": "KXMLBTEAMTOTAL-26JUL191215CWSTOR",
+      "event_start_utc": "2026-07-19T16:15:00Z",
+      "note": "12:15 ET; pins YY MMM DD HHMM decomposition"
+    },
+    {
+      "ticker": "KXMLBTEAMTOTAL-26JUL191215CWSTOR-CWS3",
+      "event_key": "KXMLBTEAMTOTAL-26JUL191215CWSTOR",
+      "event_start_utc": "2026-07-19T16:15:00Z",
+      "note": "correlated leg of the row above; same event_key"
+    },
+    {
+      "ticker": "KXMLBTEAMTOTAL-26JUL181510CINCOL-CIN4",
+      "event_key": "KXMLBTEAMTOTAL-26JUL181510CINCOL",
+      "event_start_utc": "2026-07-18T19:10:00Z",
+      "note": "15:10 ET"
+    },
+    {
+      "ticker": "KXMLBTOTAL-26JUL171915CWSTOR-4",
+      "event_key": "KXMLBTOTAL-26JUL171915CWSTOR",
+      "event_start_utc": "2026-07-17T23:15:00Z",
+      "note": "19:15 ET"
+    },
+    {
+      "ticker": "KXMLBGAME-26JUL182008LADNYY-LAD",
+      "event_key": "KXMLBGAME-26JUL182008LADNYY",
+      "event_start_utc": "2026-07-19T00:08:00Z",
+      "note": "20:08 ET rolls into the next UTC day"
+    },
+    {
+      "ticker": "KXVALORANTMAP-26JUL101900SRNRGA-1-NRGA",
+      "event_key": "KXVALORANTMAP-26JUL101900SRNRGA-1",
+      "event_start_utc": "2026-07-10T23:00:00Z",
+      "note": "four segments: only the team leg is stripped, map number is kept"
+    },
+    {
+      "ticker": "KXVALORANTMAP-26JUL101900SRNRGA-2-SR",
+      "event_key": "KXVALORANTMAP-26JUL101900SRNRGA-2",
+      "event_start_utc": "2026-07-10T23:00:00Z",
+      "note": "map 2 must NOT share a key with map 1"
+    },
+    {
+      "ticker": "KXMLBKS-26JUL191335TBBOS-BOSSGRAY54-3",
+      "event_key": "KXMLBKS-26JUL191335TBBOS-BOSSGRAY54",
+      "event_start_utc": "2026-07-19T17:35:00Z",
+      "note": "four segments, real ledger row"
+    },
+    {
+      "ticker": "KXWORLDCUPHALFTIME-26-POS",
+      "event_key": "KXWORLDCUPHALFTIME-26",
+      "event_start_utc": null,
+      "note": "no date at all"
+    },
+    {
+      "ticker": "SENATETX-26-R",
+      "event_key": "SENATETX-26",
+      "event_start_utc": null,
+      "note": "no date at all"
+    },
+    {
+      "ticker": "KXNBASUMMERTOTAL-26JUL11DENMIN-184",
+      "event_key": "KXNBASUMMERTOTAL-26JUL11DENMIN",
+      "event_start_utc": null,
+      "note": "date only; midnight would be a guess"
+    },
+    {
+      "ticker": "KXHIGHCHI-26JUL18-B89.5",
+      "event_key": "KXHIGHCHI-26JUL18",
+      "event_start_utc": null,
+      "note": "date only"
+    },
+    {
+      "ticker": "KXBTC-26JUL1813-B64050",
+      "event_key": "KXBTC-26JUL1813",
+      "event_start_utc": null,
+      "note": "two-digit hour, not four; reading 13 as 13:00 would be inference"
+    },
+    {
+      "ticker": "KXGOLDH-26JUL1612-T3979.99",
+      "event_key": "KXGOLDH-26JUL1612",
+      "event_start_utc": null,
+      "note": "two-digit hour"
+    },
+    {
+      "ticker": "KXTEST",
+      "event_key": "KXTEST",
+      "event_start_utc": null,
+      "note": "no hyphen: event_key is the ticker itself"
+    },
+    {
+      "ticker": "",
+      "event_key": "",
+      "event_start_utc": null,
+      "note": "empty input must not panic"
+    },
+    {
+      "ticker": "KXFOO-26JUL1912150-X",
+      "event_key": "KXFOO-26JUL1912150",
+      "event_start_utc": null,
+      "note": "twelve-digit run: the eleven-char prefix is a coincidence, not a parse"
+    },
+    {
+      "ticker": "KXFOO-26JUL192599ABC",
+      "event_key": "KXFOO",
+      "event_start_utc": null,
+      "note": "25:99 is not a clock time"
+    },
+    {
+      "ticker": "KXFOO-26FEB301200ABC",
+      "event_key": "KXFOO",
+      "event_start_utc": null,
+      "note": "February 30 does not exist"
+    },
+    {
+      "ticker": "KXFOO-26XXX191215ABC",
+      "event_key": "KXFOO",
+      "event_start_utc": null,
+      "note": "no such month"
+    },
+    {
+      "ticker": "KXFOO-26jul191215ABC",
+      "event_key": "KXFOO",
+      "event_start_utc": null,
+      "note": "Kalshi tickers are uppercase; a lowercase match means this is not a ticker"
+    },
+    {
+      "ticker": "KXMLBGAME-26MAR071905NYYBOS-NYY",
+      "event_key": "KXMLBGAME-26MAR071905NYYBOS",
+      "event_start_utc": null,
+      "note": "2026-03-07 is before the second Sunday of March (the 8th, 02:00) -> EST, offset unknown, refuse"
+    },
+    {
+      "ticker": "KXMLBGAME-26MAR091905NYYBOS-NYY",
+      "event_key": "KXMLBGAME-26MAR091905NYYBOS",
+      "event_start_utc": "2026-03-09T23:05:00Z",
+      "note": "2026-03-09 is after the DST start, so EDT applies normally"
+    },
+    {
+      "ticker": "KXFOO-26MAR080100AAABBB-X",
+      "event_key": "KXFOO-26MAR080100AAABBB",
+      "event_start_utc": null,
+      "note": "01:00 on the DST-start day is still EST; the window opens at 02:00"
+    },
+    {
+      "ticker": "KXNFLGAME-26JAN181830KCBUF-KC",
+      "event_key": "KXNFLGAME-26JAN181830KCBUF",
+      "event_start_utc": null,
+      "note": "January is EST; +4h would place the event an hour early"
+    },
+    {
+      "ticker": "KXNFLGAME-26DEC201300GBCHI-GB",
+      "event_key": "KXNFLGAME-26DEC201300GBCHI",
+      "event_start_utc": null,
+      "note": "December is EST"
+    },
+    {
+      "ticker": "KXFOO-26NOV011300AAABBB-X",
+      "event_key": "KXFOO-26NOV011300AAABBB",
+      "event_start_utc": null,
+      "note": "2026-11-01 02:00 is the DST end; 13:00 that day is already EST"
+    },
+    {
+      "ticker": "KXFOO-26OCT311300AAABBB-X",
+      "event_key": "KXFOO-26OCT311300AAABBB",
+      "event_start_utc": "2026-10-31T17:00:00Z",
+      "note": "last full EDT day of 2026"
+    },
+    {
+      "ticker": "KXFOO-26MAR081300AAABBB-X",
+      "event_key": "KXFOO-26MAR081300AAABBB",
+      "event_start_utc": "2026-03-08T17:00:00Z",
+      "note": "2026-03-08 02:00 is the DST start; 13:00 that day is EDT"
+    }
+  ],
+  "timestamps": [
+    {
+      "input": "2026-07-19T02:19:21.571103500+00:00",
+      "parsed_utc": "2026-07-19T02:19:21Z",
+      "note": "Rust to_rfc3339, nanosecond precision"
+    },
+    {
+      "input": "2026-07-16T14:08:27.389637+00:00",
+      "parsed_utc": "2026-07-16T14:08:27Z",
+      "note": "Python isoformat, microsecond precision"
+    },
+    {
+      "input": "2026-07-19T02:19:21.571Z",
+      "parsed_utc": "2026-07-19T02:19:21Z",
+      "note": "millisecond Z form written by the cron scripts"
+    },
+    {
+      "input": "2026-07-19T02:19:21Z",
+      "parsed_utc": "2026-07-19T02:19:21Z",
+      "note": "plain Z"
+    },
+    {
+      "input": "2026-07-19T02:19:21",
+      "parsed_utc": "2026-07-19T02:19:21Z",
+      "note": "zone-less naive is treated as UTC"
+    },
+    {
+      "input": "2026-07-19 02:19:21",
+      "parsed_utc": "2026-07-19T02:19:21Z",
+      "note": "space separator (SQLite datetime() output)"
+    },
+    {
+      "input": "2026-07-19",
+      "parsed_utc": null,
+      "note": "date only: no time of day, so no ordering against an event start"
+    },
+    {
+      "input": "",
+      "parsed_utc": null,
+      "note": "empty"
+    },
+    {
+      "input": "not a timestamp",
+      "parsed_utc": null,
+      "note": "garbage"
+    }
+  ]
+}

@@ -1,12 +1,14 @@
 """Tests for scripts/kalshi_ticker.py.
 
-These pin the same vectors as the Rust module's tests
-(`kalshi-monster/src-tauri/src/kalshi/ticker.rs`). If the two ever disagree,
-the cron scripts and the app will report different sample sizes for the same
-database — which is the exact class of bug this module was written to close.
+Parser behaviour is pinned by `scripts/ticker_vectors.json`, the same file the
+Rust suite loads via `include_str!`. Both implementations iterate it, so a
+change to one that the other does not match fails a test rather than quietly
+making the app and the cron scripts report different sample sizes for the same
+database. Add vectors to the JSON, not to one suite.
 """
 from __future__ import annotations
 
+import json
 import sqlite3
 import sys
 from datetime import datetime, timezone
@@ -14,7 +16,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import pytest  # noqa: E402
+
 from kalshi_ticker import (  # noqa: E402
+    _nth_sunday,
+    eastern_is_edt,
     eligible_resolved_rows,
     ensure_provenance_columns,
     event_key,
@@ -24,30 +30,55 @@ from kalshi_ticker import (  # noqa: E402
     provenance_for,
 )
 
+VECTORS = json.loads(
+    (Path(__file__).resolve().parent / "ticker_vectors.json").read_text(encoding="utf-8")
+)
+
 
 def utc(y, m, d, h, mi):
     return datetime(y, m, d, h, mi, tzinfo=timezone.utc)
 
 
-# --- event_key ---------------------------------------------------------------
+def _iso(s):
+    return None if s is None else datetime.fromisoformat(s.replace("Z", "+00:00"))
 
 
-def test_event_key_strips_the_final_strike_segment():
-    assert (
-        event_key("KXNBASUMMERSPREAD-26JUL11MIAORL-MIA10")
-        == "KXNBASUMMERSPREAD-26JUL11MIAORL"
-    )
-    assert (
-        event_key("KXMLBTEAMTOTAL-26JUL191215CWSTOR-TOR8")
-        == "KXMLBTEAMTOTAL-26JUL191215CWSTOR"
-    )
-    assert event_key("KXWORLDCUPHALFTIME-26-POS") == "KXWORLDCUPHALFTIME-26"
-    assert event_key("SENATETX-26-R") == "SENATETX-26"
+def _id(case):
+    return case.get("ticker") or case.get("input") or "<empty>"
 
 
-def test_event_key_of_hyphenless_ticker_is_itself():
-    assert event_key("KXTEST") == "KXTEST"
-    assert event_key("") == ""
+# --- shared vectors ----------------------------------------------------------
+
+
+def test_shared_vector_file_is_populated():
+    """A silently truncated vector file would make every case below pass."""
+    assert len(VECTORS["tickers"]) >= 25
+    assert len(VECTORS["timestamps"]) >= 8
+
+
+@pytest.mark.parametrize("case", VECTORS["tickers"], ids=_id)
+def test_event_key_matches_shared_vector(case):
+    assert event_key(case["ticker"]) == case["event_key"], case["note"]
+
+
+@pytest.mark.parametrize("case", VECTORS["tickers"], ids=_id)
+def test_event_start_matches_shared_vector(case):
+    assert event_start_from_ticker(case["ticker"]) == _iso(
+        case["event_start_utc"]
+    ), case["note"]
+
+
+@pytest.mark.parametrize("case", VECTORS["timestamps"], ids=_id)
+def test_timestamp_parsing_matches_shared_vector(case):
+    parsed = parse_timestamp(case["input"])
+    expected = _iso(case["parsed_utc"])
+    if expected is None:
+        assert parsed is None, case["note"]
+    else:
+        assert parsed is not None and parsed.replace(microsecond=0) == expected, case["note"]
+
+
+# --- behaviour the vector file cannot express --------------------------------
 
 
 def test_correlated_legs_share_one_key():
@@ -59,46 +90,30 @@ def test_correlated_legs_share_one_key():
     assert len({event_key(t) for t in legs}) == 1
 
 
-# --- event_start_from_ticker -------------------------------------------------
-
-
-def test_start_decomposes_as_year_month_day_time():
-    assert event_start_from_ticker("KXMLBTEAMTOTAL-26JUL191215CWSTOR-TOR8") == utc(
-        2026, 7, 19, 16, 15
-    )
-    assert event_start_from_ticker("KXMLBTEAMTOTAL-26JUL181510CINCOL-CIN4") == utc(
-        2026, 7, 18, 19, 10
-    )
-    assert event_start_from_ticker("KXMLBTOTAL-26JUL171915CWSTOR-4") == utc(
-        2026, 7, 17, 23, 15
+def test_event_key_separates_the_two_maps_of_one_esports_series():
+    assert event_key("KXVALORANTMAP-26JUL101900SRNRGA-1-NRGA") != event_key(
+        "KXVALORANTMAP-26JUL101900SRNRGA-2-SR"
     )
 
 
-def test_eastern_evening_start_rolls_into_the_next_utc_day():
-    assert event_start_from_ticker("KXMLBGAME-26JUL182008LADNYY-LAD") == utc(
-        2026, 7, 19, 0, 8
-    )
+# --- daylight saving window --------------------------------------------------
 
 
-def test_tickers_without_an_encoded_time_return_none():
-    # date only
-    assert event_start_from_ticker("KXNBASUMMERTOTAL-26JUL11DENMIN-184") is None
-    assert event_start_from_ticker("KXHIGHCHI-26JUL18-B89.5") is None
-    # two-digit hour, not four
-    assert event_start_from_ticker("KXBTC-26JUL1813-B64050") is None
-    assert event_start_from_ticker("KXGOLDH-26JUL1612-T3979.99") is None
-    # no date at all
-    assert event_start_from_ticker("KXWORLDCUPHALFTIME-26-POS") is None
-    assert event_start_from_ticker("KXTEST") is None
-    assert event_start_from_ticker("") is None
+def test_dst_boundaries_are_exact_for_2026():
+    # 2026: DST runs 8 March 02:00 -> 1 November 02:00 (Eastern).
+    assert eastern_is_edt(datetime(2026, 3, 8, 1, 59)) is False
+    assert eastern_is_edt(datetime(2026, 3, 8, 2, 0)) is True
+    assert eastern_is_edt(datetime(2026, 11, 1, 1, 59)) is True
+    assert eastern_is_edt(datetime(2026, 11, 1, 2, 0)) is False
 
 
-def test_invalid_and_over_long_digit_runs_are_rejected():
-    assert event_start_from_ticker("KXFOO-26JUL1912150-X") is None  # 12 digits
-    assert event_start_from_ticker("KXFOO-26JUL192599ABC") is None  # 25:99
-    assert event_start_from_ticker("KXFOO-26FEB301200ABC") is None  # Feb 30
-    assert event_start_from_ticker("KXFOO-26XXX191215ABC") is None  # no such month
-    assert event_start_from_ticker("KXFOO-26jul191215ABC") is None  # lowercase
+def test_dst_window_tracks_the_calendar_not_a_fixed_date():
+    from datetime import date
+
+    assert _nth_sunday(2027, 3, 2) == date(2027, 3, 14)
+    assert _nth_sunday(2027, 11, 1) == date(2027, 11, 7)
+    assert _nth_sunday(2026, 3, 2) == date(2026, 3, 8)
+    assert _nth_sunday(2026, 11, 1) == date(2026, 11, 1)
 
 
 # --- is_in_play --------------------------------------------------------------
@@ -113,21 +128,6 @@ def test_in_play_compares_creation_against_first_pitch():
 
 def test_unknown_start_is_never_in_play():
     assert not is_in_play("2026-07-18T02:30:00Z", None)
-
-
-def test_parse_timestamp_accepts_every_ledger_spelling():
-    # Rust to_rfc3339 (nanoseconds)
-    assert parse_timestamp("2026-07-19T02:19:21.571103500+00:00") is not None
-    # Python isoformat
-    assert parse_timestamp("2026-07-16T14:08:27.389637+00:00") is not None
-    # millisecond Z
-    assert parse_timestamp("2026-07-19T02:19:21.571Z") is not None
-    # zone-less is treated as UTC
-    assert parse_timestamp("2026-07-19T02:19:21") == utc(2026, 7, 19, 2, 19).replace(
-        second=21
-    )
-    assert parse_timestamp("") is None
-    assert parse_timestamp("not a timestamp") is None
 
 
 def test_provenance_for_returns_key_start_and_flag():
@@ -239,6 +239,60 @@ def test_the_audited_ledger_shape_yields_a_handful_not_hundreds():
     total = conn.execute("SELECT COUNT(*) FROM forecasts").fetchone()[0]
     assert total == 279
     assert len(eligible_resolved_rows(conn)) == 3
+
+
+def test_duplicate_guard_catches_an_immediate_re_run():
+    from kalshi_ticker import find_duplicate_forecast
+
+    conn = _ledger([("KXTEST-26JUL191215AAA-B1", "2026-07-19T10:00:00Z", 0.5)])
+    conn.execute("UPDATE forecasts SET p_market = 0.42")
+    conn.commit()
+    assert (
+        find_duplicate_forecast(conn, "KXTEST-26JUL191215AAA-B1", 0.42, "2026-07-19T10:00:30Z")
+        is not None
+    )
+    # Outside the window, a moved price, or another ticker are all genuine rows.
+    assert (
+        find_duplicate_forecast(conn, "KXTEST-26JUL191215AAA-B1", 0.42, "2026-07-19T10:01:01Z")
+        is None
+    )
+    assert (
+        find_duplicate_forecast(conn, "KXTEST-26JUL191215AAA-B1", 0.55, "2026-07-19T10:00:30Z")
+        is None
+    )
+    assert (
+        find_duplicate_forecast(conn, "KXOTHER-26JUL191215AAA-B1", 0.42, "2026-07-19T10:00:30Z")
+        is None
+    )
+
+
+def test_duplicate_guard_fails_open_on_an_unparseable_timestamp():
+    """`julianday()` returns NULL on garbage, so the comparison matches nothing
+    and the insert proceeds. A missed suppression costs one extra row; a false
+    one would silently discard a real forecast."""
+    from kalshi_ticker import find_duplicate_forecast
+
+    conn = _ledger([("KXTEST-26JUL191215AAA-B1", "2026-07-19T10:00:00Z", 0.5)])
+    conn.execute("UPDATE forecasts SET p_market = 0.42, created_at = 'not a timestamp'")
+    conn.commit()
+    assert (
+        find_duplicate_forecast(conn, "KXTEST-26JUL191215AAA-B1", 0.42, "2026-07-19T10:00:30Z")
+        is None
+    )
+
+
+def test_ensure_forecasts_table_creates_the_full_schema():
+    from kalshi_ticker import ensure_forecasts_table
+
+    conn = sqlite3.connect(":memory:")
+    ensure_forecasts_table(conn)
+    ensure_forecasts_table(conn)  # idempotent
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(forecasts)")}
+    for name in (
+        "market_ticker", "p_market", "p_model", "p_final", "outcome",
+        "event_start_at", "is_in_play", "source", "event_key", "agents_opining",
+    ):
+        assert name in cols
 
 
 def test_ensure_provenance_columns_is_idempotent():

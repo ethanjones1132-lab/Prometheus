@@ -14,9 +14,13 @@
 //! - **Ties break toward smaller λ.** When the ledger can't distinguish two
 //!   λ values, humility wins: lean on the market.
 //! - **Rows without `p_model` are excluded from the re-fit** (there is nothing
-//!   to blend) but still count for the gate's Brier(p_final) vs
-//!   Brier(p_market) comparison — a Phase-0 row where p_final == p_market is
-//!   honest evidence of "no model, no harm".
+//!   to blend) **and from the gate**. On such a row `p_final == p_market` by
+//!   construction, so including it in the gate's Brier(p_final) vs
+//!   Brier(p_market) comparison satisfies that condition by identity rather
+//!   than by skill — 258 of the live ledger's 338 rows are of this kind. They
+//!   remain honest evidence about *market* calibration, which is what
+//!   [`BrierSummary`] over the raw slice reports; they are simply not evidence
+//!   about the model. See [`eligible_rows`].
 //! - **The rolling degradation check returns `None` below its window** rather
 //!   than a partial-window verdict. A circuit breaker must not trip — or be
 //!   declared healthy — on insufficient data (§6.4).
@@ -274,6 +278,12 @@ impl Default for GateConfig {
 
 /// Rows that can actually testify to *model* skill, in ledger order.
 ///
+/// **Ordering contract:** `rows` must be sorted **ascending by resolution
+/// time** — the order [`crate::kalshi::forecast::resolved_forecasts_for_calibration`]
+/// returns. The dedup below keeps the first row it sees per event, so which
+/// leg survives is determined by the caller's `ORDER BY`; an unordered slice
+/// makes the choice non-deterministic rather than merely arbitrary.
+///
 /// Three filters, each removing a class of row that inflates the sample count
 /// without adding evidence:
 ///
@@ -317,6 +327,22 @@ pub fn eligible_rows(rows: &[ResolvedForecast]) -> Vec<&ResolvedForecast> {
 /// checked against `min_resolved`. `eligible_count` is the honest one, and is
 /// what the gate actually tests. Showing both makes the gap visible instead of
 /// letting a large raw count imply evidence that isn't there.
+/// Both Brier views of the ledger, nested so neither is reachable by accident.
+///
+/// The previous shape had `brier_final` (raw) sitting beside
+/// `brier_final_eligible`, and the unqualified name — the misleading one — was
+/// what every consumer reached for. Nesting removes the default.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GateBriers {
+    /// Every resolved row. Context only: on market-only rows `p_final ==
+    /// p_market`, so any comparison drawn from this is satisfied by identity
+    /// rather than by skill. Never render a "beats market" verdict from it.
+    pub raw: Option<BrierSummary>,
+    /// The eligible rows — model-bearing, pre-event, one per event. This is
+    /// the honest model-vs-market comparison and what the gate tests.
+    pub eligible: Option<BrierSummary>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GateReport {
     pub passed: bool,
@@ -327,15 +353,7 @@ pub struct GateReport {
     /// gate tests against `min_resolved`.
     pub eligible_count: usize,
     pub min_resolved: usize,
-    /// Mean Brier over **all** resolved rows — the ledger-wide headline the
-    /// dashboard shows.
-    pub brier_final: Option<f64>,
-    pub brier_market: Option<f64>,
-    /// Mean Brier over the eligible rows only. This is the comparison the gate
-    /// tests: on market-only rows `p_final == p_market`, so a full-sample
-    /// comparison is satisfied by identity rather than by skill.
-    pub brier_final_eligible: Option<f64>,
-    pub brier_market_eligible: Option<f64>,
+    pub briers: GateBriers,
     pub paper_pnl_after_fees: f64,
     /// Human-readable status of each condition, met or not.
     pub conditions: Vec<String>,
@@ -367,18 +385,9 @@ pub fn evaluate_gate(
     let eligible_summary = brier_summary(&eligible);
 
     let count_ok = eligible_count >= cfg.min_resolved;
-    let (brier_final, brier_market) = match &summary {
-        Some(s) => (Some(s.brier_final), Some(s.brier_market)),
-        None => (None, None),
-    };
-    let (brier_final_eligible, brier_market_eligible, brier_ok) = match &eligible_summary {
-        Some(s) => (
-            Some(s.brier_final),
-            Some(s.brier_market),
-            s.brier_final <= s.brier_market,
-        ),
-        None => (None, None, false),
-    };
+    let brier_ok = eligible_summary
+        .as_ref()
+        .is_some_and(|s| s.brier_final <= s.brier_market);
     let pnl_ok = paper_pnl_after_fees > 0.0;
 
     let conditions = vec![
@@ -391,15 +400,15 @@ pub fn evaluate_gate(
             if count_ok { "met" } else { "NOT met" },
             resolved_count,
         ),
-        match (brier_final_eligible, brier_market_eligible) {
-            (Some(bf), Some(bm)) => format!(
+        match &eligible_summary {
+            Some(s) => format!(
                 "Brier(p_final) {:.4} ≤ Brier(p_market) {:.4} over {} eligible rows: {}",
-                bf,
-                bm,
+                s.brier_final,
+                s.brier_market,
                 eligible_count,
                 if brier_ok { "met" } else { "NOT met" }
             ),
-            _ => "Brier comparison: no eligible forecasts yet (NOT met)".to_string(),
+            None => "Brier comparison: no eligible forecasts yet (NOT met)".to_string(),
         },
         format!(
             "paper P&L after fees {:.2} > 0: {}",
@@ -413,10 +422,7 @@ pub fn evaluate_gate(
         resolved_count,
         eligible_count,
         min_resolved: cfg.min_resolved,
-        brier_final,
-        brier_market,
-        brier_final_eligible,
-        brier_market_eligible,
+        briers: GateBriers { raw: summary, eligible: eligible_summary },
         paper_pnl_after_fees,
         conditions,
     }
@@ -652,7 +658,8 @@ mod tests {
         assert!(g.passed, "conditions: {:?}", g.conditions);
         assert_eq!(g.resolved_count, 200);
         assert_eq!(g.eligible_count, 200, "all rows are model-bearing pre-event");
-        assert!(g.brier_final.unwrap() <= g.brier_market.unwrap());
+        let e = g.briers.eligible.as_ref().unwrap();
+        assert!(e.brier_final <= e.brier_market);
 
         // Sample size short by one → fail.
         let g = evaluate_gate(&rows[..199], 125.0, &cfg);
@@ -676,14 +683,16 @@ mod tests {
             (0..250).map(|i| row(0.70, Some(0.99), 0.95, i % 10 < 7)).collect();
         let g = evaluate_gate(&rows, 500.0, &cfg);
         assert!(!g.passed);
-        assert!(g.brier_final.unwrap() > g.brier_market.unwrap());
+        let e = g.briers.eligible.as_ref().unwrap();
+        assert!(e.brier_final > e.brier_market);
     }
 
     #[test]
     fn gate_on_empty_ledger_fails_all_brier_conditions() {
         let g = evaluate_gate(&[], 10.0, &GateConfig::default());
         assert!(!g.passed);
-        assert!(g.brier_final.is_none());
+        assert!(g.briers.raw.is_none());
+        assert!(g.briers.eligible.is_none());
         assert_eq!(g.eligible_count, 0);
     }
 
@@ -706,8 +715,9 @@ mod tests {
         assert!(!g.passed, "conditions: {:?}", g.conditions);
         // The full-sample Brier comparison is satisfied *by identity* —
         // exactly why the gate must not test it.
-        assert!(g.brier_final.unwrap() <= g.brier_market.unwrap());
-        assert!(g.brier_final_eligible.is_none());
+        let raw = g.briers.raw.as_ref().unwrap();
+        assert!(raw.brier_final <= raw.brier_market);
+        assert!(g.briers.eligible.is_none(), "no eligible rows means no honest comparison");
     }
 
     #[test]

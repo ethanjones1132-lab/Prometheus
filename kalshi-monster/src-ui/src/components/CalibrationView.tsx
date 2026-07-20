@@ -205,11 +205,19 @@ export function CalibrationView() {
       ['resolved_count', String(report.resolved_count)],
       ['eligible_count', String(report.eligible_count)],
       ['unresolved_count', String(report.unresolved_count)],
-      ['brier_market', String(report.brier_market ?? '')],
-      ['brier_final', String(report.brier_final ?? '')],
-      ['brier_model', String(report.brier_model ?? '')],
-      ['brier_market_on_model_rows', String(report.brier_market_on_model_rows ?? '')],
-      ['n_model', String(report.n_model)],
+      // Exported with explicit raw_/eligible_ prefixes: a bare `brier_final`
+      // column in a spreadsheet is exactly how the raw number gets quoted as
+      // if it were evidence of skill.
+      ['raw_brier_market', String(report.raw?.brier_market ?? '')],
+      ['raw_brier_final', String(report.raw?.brier_final ?? '')],
+      ['eligible_brier_market', String(report.eligible?.brier_market ?? '')],
+      ['eligible_brier_final', String(report.eligible?.brier_final ?? '')],
+      ['eligible_brier_model', String(report.eligible?.brier_model ?? '')],
+      [
+        'eligible_brier_market_on_model_rows',
+        String(report.eligible?.brier_market_on_model_rows ?? ''),
+      ],
+      ['eligible_n_model', String(report.eligible?.n_model ?? 0)],
       ['paper_pnl', String(report.paper_pnl ?? '')],
       ['gate_passed', String(report.gate_passed)],
       ...(report.gate_reasons || []).map((r, i) => [`gate_reason_${i + 1}`, r]),
@@ -231,17 +239,21 @@ export function CalibrationView() {
   // progress toward the gate would overstate how close it is.
   const progress =
     report != null ? Math.min(100, (report.eligible_count / 200) * 100) : 0;
-  const nModel = report?.n_model ?? 0;
+  // Every "beats market" verdict below is drawn from the ELIGIBLE sample. On
+  // the market-only rows that dominate the raw ledger p_final === p_market, so
+  // a raw comparison is satisfied by identity — a green badge that can never
+  // be red. The raw numbers are still shown, labelled as raw.
+  const raw = report?.raw ?? null;
+  const eligible = report?.eligible ?? null;
+  const nModel = eligible?.n_model ?? 0;
   const lambdaReady = nModel >= 50;
   const lambdaProgress = Math.min(100, (nModel / 50) * 100);
   const modelBeatsMarket =
-    report?.brier_model != null &&
-    report?.brier_market_on_model_rows != null &&
-    report.brier_model <= report.brier_market_on_model_rows;
+    eligible?.brier_model != null &&
+    eligible?.brier_market_on_model_rows != null &&
+    eligible.brier_model <= eligible.brier_market_on_model_rows;
   const finalBeatsMarket =
-    report?.brier_final != null &&
-    report?.brier_market != null &&
-    report.brier_final <= report.brier_market;
+    eligible != null && eligible.brier_final <= eligible.brier_market;
 
   return (
     <section className="page kalshiPage" aria-label="Calibration surface">
@@ -403,32 +415,38 @@ export function CalibrationView() {
 
       <section className="modalSection" aria-label="Gate dashboard">
         <p className="eyebrow" style={{ marginBottom: 4 }}>Scoring</p>
-        <h4>Gate dashboard — model vs market</h4>
+        <h4>Gate dashboard — model vs market (eligible sample)</h4>
         <div className="mechanicsGrid">
           <div style={stagger(0)}>
             <span>Brier(p_market)</span>
-            <strong className="goldText">{brier(report?.brier_market)}</strong>
+            <strong className="goldText">{brier(eligible?.brier_market)}</strong>
           </div>
           <div style={stagger(1)}>
             <span>Brier(p_final)</span>
             <strong className={finalBeatsMarket ? 'pos' : 'goldText'}>
-              {brier(report?.brier_final)}
+              {brier(eligible?.brier_final)}
               {finalBeatsMarket ? ' ≤ mkt' : ''}
             </strong>
           </div>
           <div style={stagger(2)}>
             <span>Brier(p_model)</span>
             <strong className={modelBeatsMarket ? 'pos' : 'goldText'}>
-              {brier(report?.brier_model)}
-              {report && report.n_model > 0 ? ` (n=${report.n_model})` : ''}
+              {brier(eligible?.brier_model)}
+              {nModel > 0 ? ` (n=${nModel})` : ''}
               {modelBeatsMarket ? ' ≤ mkt' : ''}
             </strong>
           </div>
           <div style={stagger(3)}>
             <span>Market on model rows</span>
-            <strong className="goldText">{brier(report?.brier_market_on_model_rows)}</strong>
+            <strong className="goldText">{brier(eligible?.brier_market_on_model_rows)}</strong>
           </div>
         </div>
+        <p className="muted" style={{ marginTop: '0.5rem' }}>
+          Raw ledger, all {report?.resolved_count ?? '—'} resolved rows (context only — market-only
+          rows have p_final = p_market by construction, so this comparison is satisfied by
+          identity, not skill): Brier(p_market) <strong>{brier(raw?.brier_market)}</strong>
+          {' · '}Brier(p_final) <strong>{brier(raw?.brier_final)}</strong>
+        </p>
         <p className="muted" style={{ marginTop: '0.5rem' }}>
           Paper equity P&amp;L (realized):{' '}
           <strong className={(report?.paper_pnl ?? 0) > 0 ? 'pos' : 'neg'}>{money(report?.paper_pnl)}</strong>

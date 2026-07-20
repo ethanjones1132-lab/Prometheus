@@ -10,9 +10,18 @@ use serde::{Deserialize, Serialize};
 
 use super::ticker;
 
-/// Two rows for the same ticker at the same price within this window are the
-/// same forecast logged twice (a re-run cron, a double-clicked button), not
-/// two opinions. See [`insert_forecast`].
+/// Two rows for the same ticker at the same price within this window are one
+/// forecast logged twice — a double-submit or an immediate re-run — not two
+/// opinions.
+///
+/// Deliberately narrow. The ledger's 21 existing duplicate tickers sit 0–950s
+/// apart at the same price, so only 7 of them fall inside 60s; widening to
+/// cover the rest would also collapse genuine re-quotes of a market whose
+/// price simply has not moved in sixteen minutes, which is a real second
+/// observation. Repeated and correlated rows are neutralised for *measurement*
+/// by the dedup in [`crate::edge_engine::calibration::eligible_rows`], which
+/// groups by event instead of guessing from a clock. This constant only stops
+/// the ledger accumulating more accidental copies.
 const DUPLICATE_SUPPRESSION_SECS: i64 = 60;
 
 // ── Forecast row ────────────────────────────────────────────────────────────
@@ -101,12 +110,15 @@ pub async fn init_forecast_table(pool: &Pool<Sqlite>) -> Result<(), String> {
     .await
     .map_err(|e| format!("Failed to create forecasts table: {e}"))?;
 
+    // Unlike its siblings below, this one propagates: migration 4 guarantees
+    // `event_key` exists before this runs, so a failure here is a real fault,
+    // not the legacy-schema case the `.ok()` calls tolerate.
     sqlx::query(
         "CREATE INDEX IF NOT EXISTS idx_fc_event_key ON forecasts(event_key);",
     )
     .execute(pool)
     .await
-    .ok();
+    .map_err(|e| format!("Failed to create idx_fc_event_key: {e}"))?;
 
     sqlx::query(
         "CREATE INDEX IF NOT EXISTS idx_fc_ticker ON forecasts(market_ticker);",
@@ -176,11 +188,23 @@ const DUPLICATE_LOOKUP_SQL: &str = r#"
 ///
 /// **Duplicate suppression:** if the same ticker already has a row at the same
 /// `p_market` within [`DUPLICATE_SUPPRESSION_SECS`], the existing row's id is
-/// returned and nothing is written. The live ledger accumulated 21 duplicate
-/// tickers this way; a caller re-running a cron should get back the forecast
-/// it already logged, not a second copy that doubles its weight in every
-/// count. Returning the existing id rather than an error keeps the guard
-/// invisible to well-behaved callers.
+/// returned and nothing is written. A caller that double-submits, or re-runs
+/// immediately after a crash, gets back the forecast it already logged rather
+/// than a second copy that doubles its weight in every count. Returning the
+/// existing id rather than an error keeps the guard invisible to well-behaved
+/// callers.
+///
+/// The guard is **advisory, not a constraint**, and is honest about both of
+/// its holes:
+/// - It is a *read-then-insert*, not atomic. Two concurrent writers can both
+///   see no duplicate and both insert. A UNIQUE index would close this, but it
+///   would also reject at startup against the 21 duplicate rows already in the
+///   live ledger, so it is not on the table.
+/// - It **fails open** when SQLite's `julianday()` cannot parse a stored
+///   `created_at`: the comparison yields NULL, no row matches, and the insert
+///   proceeds. Failing open is the right direction — a missed suppression
+///   costs one extra row, a false suppression silently discards a real
+///   forecast.
 ///
 /// Existing duplicates are left alone — the gate's dedup-by-event already
 /// neutralises them, and deleting logged history is not this function's call.

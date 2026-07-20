@@ -31,8 +31,10 @@ sys.path.insert(0, str(ROOT / "fincept-sidecar"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from kalshi_ticker import (  # noqa: E402
-    ensure_provenance_columns,
+    MIN_ELIGIBLE_FOR_GATE,
     eligible_resolved_rows,
+    ensure_forecasts_table,
+    find_duplicate_forecast,
     provenance_for,
 )
 
@@ -45,8 +47,6 @@ QUICK_LOAD_PAGES = 2
 FLAT_MARKET_PAGE_LIMIT = 100
 INITIAL_MARKET_LIMIT = QUICK_LOAD_PAGES * FLAT_MARKET_PAGE_LIMIT  # app quick-cache ceiling
 LAMBDA = 0.25
-# Mirrors GateConfig::default().min_resolved in edge_engine/calibration.rs.
-MIN_ELIGIBLE_FOR_GATE = 200
 DB = Path(os.environ.get("USERPROFILE", os.environ.get("HOME", "."))) / ".openclaw/kalshi-monster/predictions.db"
 UA = "kalshi-monster-kb1-calibration-verify/0.1"
 
@@ -123,36 +123,9 @@ def mid_of(m: dict) -> float | None:
 
 
 def ensure_forecast_table(conn: sqlite3.Connection) -> None:
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS forecasts (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            market_ticker TEXT NOT NULL,
-            created_at TEXT NOT NULL,
-            close_time TEXT NOT NULL,
-            p_market REAL NOT NULL,
-            p_model REAL,
-            p_final REAL NOT NULL,
-            verdict TEXT NOT NULL,
-            verdict_reasons TEXT NOT NULL,
-            stake_suggested REAL,
-            agent_breakdown TEXT,
-            resolved_at TEXT,
-            outcome INTEGER,
-            brier_model REAL,
-            brier_market REAL,
-            brier_final REAL,
-            event_start_at TEXT,
-            is_in_play INTEGER DEFAULT 0,
-            source TEXT,
-            event_key TEXT,
-            agents_opining INTEGER
-        )
-        """
-    )
-    conn.commit()
-    # Databases created before migration 4 need the columns added in place.
-    ensure_provenance_columns(conn)
+    """Schema lives in `kalshi_ticker.FORECASTS_DDL`, not inlined here — three
+    scripts write to this table and hand-copied DDL is how they drift."""
+    ensure_forecasts_table(conn)
 
 
 def category_for(title: str, ticker: str) -> MarketCategory:
@@ -242,34 +215,23 @@ async def analyze_one(m: dict) -> dict | None:
 
 SOURCE = "kb1_calibration_verify.py"
 
-# Two rows for the same ticker at the same price this close together are the
-# same forecast logged twice, not two opinions. Mirrors
-# `DUPLICATE_SUPPRESSION_SECS` in kalshi/forecast.rs.
-DUPLICATE_SUPPRESSION_SECS = 60
 
+def insert_forecast(conn: sqlite3.Connection, row: dict) -> tuple[int, bool]:
+    """Insert one forecast row.
 
-def insert_forecast(conn: sqlite3.Connection, row: dict) -> int:
-    """Insert one forecast row, or return the id of the row this duplicates.
+    Returns ``(forecast_id, inserted)``. ``inserted`` is False when the row was
+    suppressed as a duplicate — callers must not count those as writes.
 
-    Duplicate suppression matches the Rust insert path: same ticker, same
-    p_market, within 60s. The ledger accumulated 21 duplicate tickers before
-    this guard existed, each one silently doubling its own weight in every
-    count taken over the table.
+    Duplicate suppression matches the Rust insert path and shares its window,
+    limits and caveats — see `kalshi_ticker.find_duplicate_forecast`. It is
+    advisory: it catches double-submits and immediate re-runs, not every
+    repeated row.
     """
     created_at = datetime.now(timezone.utc).isoformat()
-    dup = conn.execute(
-        """
-        SELECT id FROM forecasts
-        WHERE market_ticker = ?
-          AND ABS(p_market - ?) < 1e-9
-          AND ABS(julianday(created_at) - julianday(?)) * 86400.0 <= ?
-        ORDER BY id DESC LIMIT 1
-        """,
-        (row["ticker"], row["p_market"], created_at, DUPLICATE_SUPPRESSION_SECS),
-    ).fetchone()
-    if dup:
-        print(f"  duplicate suppressed {row['ticker']} (matches forecast#{dup[0]})")
-        return int(dup[0])
+    dup = find_duplicate_forecast(conn, row["ticker"], row["p_market"], created_at)
+    if dup is not None:
+        print(f"  duplicate suppressed {row['ticker']} (matches forecast#{dup})")
+        return dup, False
 
     event_key, event_start_at, in_play = provenance_for(row["ticker"], created_at)
     cur = conn.execute(
@@ -299,7 +261,7 @@ def insert_forecast(conn: sqlite3.Connection, row: dict) -> int:
         ),
     )
     conn.commit()
-    return int(cur.lastrowid)
+    return int(cur.lastrowid), True
 
 
 def resolve_if_settled(conn: sqlite3.Connection, ticker: str) -> int:
@@ -467,7 +429,9 @@ async def main() -> int:
         if not row:
             print(f"  analyze skip {m.get('ticker')}: no mid/parse")
             continue
-        fid = insert_forecast(conn, row)
+        fid, inserted = insert_forecast(conn, row)
+        if not inserted:
+            continue
         written += 1
         print(
             f"  forecast#{fid} {row['ticker']}: p_mkt={row['p_market']:.3f} "

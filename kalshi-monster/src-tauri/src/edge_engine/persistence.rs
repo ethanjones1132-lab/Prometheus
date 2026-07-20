@@ -98,15 +98,23 @@ pub async fn evaluate_and_persist_breakers(
     pool: &SqlitePool,
 ) -> Result<super::breakers::BreakerDecision, String> {
     use super::breakers::{evaluate_breakers, BreakerConfig, BreakerInputs};
-    use super::calibration::rolling_degradation;
+    use super::calibration::{eligible_rows, rolling_degradation};
 
     let prev = load_breaker_state(pool).await?;
     let daily = crate::paper::daily_realized_loss_fraction(pool).await?;
     let drawdown = crate::paper::current_drawdown_fraction(pool).await?;
     let resolved = crate::kalshi::forecast::resolved_forecasts_for_calibration(pool).await?;
     let cfg = BreakerConfig::default();
+    // §6.4 compares the shrunk probability against the market. Run on the raw
+    // ledger that comparison is between `p_final` and `p_market` on rows where
+    // they are *equal by construction* (the market-only sample-build path), so
+    // `excess` is ~0 and the breaker can never trip — a safety mechanism
+    // silently disabled by its own input. Feed it the same eligible sample the
+    // gate uses: below the window it returns `None`, which the breaker treats
+    // as "not proven healthy" rather than as healthy.
+    let eligible: Vec<_> = eligible_rows(&resolved).into_iter().cloned().collect();
     let degradation =
-        rolling_degradation(&resolved, cfg.degradation_window, cfg.degradation_margin);
+        rolling_degradation(&eligible, cfg.degradation_window, cfg.degradation_margin);
     let inputs = BreakerInputs {
         daily_realized_loss: daily,
         drawdown_from_hwm: drawdown,
@@ -241,6 +249,104 @@ mod tests {
         let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
         init_breaker_table(&pool).await.unwrap();
         pool
+    }
+
+    // ---- §6.4 degradation breaker input ----
+
+    /// Seed `n` resolved rows. `p_model = None` reproduces the market-only
+    /// sample-build path, where `p_final == p_market` by construction.
+    async fn seed_forecasts(
+        pool: &SqlitePool,
+        n: usize,
+        p_model: Option<f64>,
+        p_final: f64,
+        event_key_of: impl Fn(usize) -> String,
+    ) {
+        for i in 0..n {
+            sqlx::query(
+                "INSERT INTO forecasts (market_ticker, created_at, close_time, p_market, \
+                 p_model, p_final, verdict, verdict_reasons, resolved_at, outcome, \
+                 event_key, is_in_play) \
+                 VALUES (?1, '2026-07-01T00:00:00Z', '2026-07-02T00:00:00Z', 0.90, ?2, ?3, \
+                 'pass', '[]', ?4, 1, ?5, 0)",
+            )
+            .bind(format!("KXSEED{i}-X"))
+            .bind(p_model)
+            .bind(p_final)
+            .bind(format!("2026-07-02T{:02}:00:00Z", i % 24))
+            .bind(event_key_of(i))
+            .execute(pool)
+            .await
+            .unwrap();
+        }
+    }
+
+    async fn degradation_from_ledger(
+        pool: &SqlitePool,
+    ) -> Option<crate::edge_engine::calibration::DegradationCheck> {
+        use crate::edge_engine::breakers::BreakerConfig;
+        use crate::edge_engine::calibration::{eligible_rows, rolling_degradation};
+        let resolved = crate::kalshi::forecast::resolved_forecasts_for_calibration(pool)
+            .await
+            .unwrap();
+        let cfg = BreakerConfig::default();
+        let eligible: Vec<_> = eligible_rows(&resolved).into_iter().cloned().collect();
+        rolling_degradation(&eligible, cfg.degradation_window, cfg.degradation_margin)
+    }
+
+    /// The bug: with the raw ledger, 258 of 279 rows have `p_final == p_market`
+    /// by construction, so `excess` is 0 and the breaker is handed a
+    /// permanently healthy verdict — a safety mechanism silently disabled by
+    /// its own input.
+    #[tokio::test]
+    async fn market_only_rows_cannot_certify_the_degradation_breaker_healthy() {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        crate::kalshi::forecast::init_forecast_table(&pool).await.unwrap();
+        // 100 market-only rows: p_final == p_market, so raw excess is exactly 0.
+        seed_forecasts(&pool, 100, None, 0.90, |i| format!("EV{i}")).await;
+
+        // What the old wiring saw: a full window and excess 0 -> "healthy".
+        let raw = crate::kalshi::forecast::resolved_forecasts_for_calibration(&pool)
+            .await
+            .unwrap();
+        let raw_check = crate::edge_engine::calibration::rolling_degradation(&raw, 50, 0.02)
+            .expect("raw slice fills the window");
+        assert!(!raw_check.degraded);
+        assert!(
+            raw_check.excess.abs() < 1e-12,
+            "market-only rows compare the market against itself: excess={}",
+            raw_check.excess
+        );
+
+        // What the fixed wiring sees: no eligible rows, so no verdict at all.
+        assert!(
+            degradation_from_ledger(&pool).await.is_none(),
+            "an unprovable window must be None, not a clean bill of health"
+        );
+    }
+
+    #[tokio::test]
+    async fn degradation_trips_on_a_full_window_of_eligible_rows() {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        crate::kalshi::forecast::init_forecast_table(&pool).await.unwrap();
+        // 60 independent, model-bearing, pre-event rows whose p_final (0.30) is
+        // far worse than the market (0.90) against a YES outcome.
+        seed_forecasts(&pool, 60, Some(0.20), 0.30, |i| format!("EV{i}")).await;
+
+        let check = degradation_from_ledger(&pool)
+            .await
+            .expect("60 eligible rows fill the 50-row window");
+        assert!(check.degraded, "excess = {}", check.excess);
+    }
+
+    /// Correlated legs must not be able to fill the window on their own: 60
+    /// rows of one game are one observation, not sixty.
+    #[tokio::test]
+    async fn correlated_legs_cannot_fill_the_degradation_window() {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        crate::kalshi::forecast::init_forecast_table(&pool).await.unwrap();
+        seed_forecasts(&pool, 60, Some(0.20), 0.30, |_| "ONE-GAME".to_string()).await;
+        assert!(degradation_from_ledger(&pool).await.is_none());
     }
 
     #[tokio::test]

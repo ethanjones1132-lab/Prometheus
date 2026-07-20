@@ -48,7 +48,25 @@ export interface EdgeAnalysisResult {
   sidecar_elapsed_ms?: number | null;
 }
 
-/** Forecast-ledger calibration gate report (Phase 3). */
+/** Mean Brier scores over one set of resolved forecasts. */
+export interface BrierSummary {
+  n: number;
+  n_model: number;
+  brier_market: number;
+  brier_final: number;
+  brier_model: number | null;
+  brier_market_on_model_rows: number | null;
+}
+
+/**
+ * Forecast-ledger calibration gate report (Phase 3).
+ *
+ * The two Brier views are nested, not flattened, so the misleading one is not
+ * the one with the shorter name. `raw` covers every resolved row — on the
+ * market-only rows that dominate the ledger `p_final === p_market` by
+ * construction, so any "beats market" verdict drawn from it is satisfied by
+ * identity. Render skill claims from `eligible` only.
+ */
 export interface ForecastCalibrationReport {
   /** Every resolved row, including market-only and in-play ones. */
   resolved_count: number;
@@ -59,14 +77,14 @@ export interface ForecastCalibrationReport {
    */
   eligible_count: number;
   unresolved_count: number;
-  brier_market: number | null;
-  brier_final: number | null;
-  brier_model: number | null;
-  brier_market_on_model_rows: number | null;
-  n_model: number;
+  /** Brier means over all resolved rows. Context only. */
+  raw: BrierSummary | null;
+  /** Brier means over the eligible sample. The honest comparison. */
+  eligible: BrierSummary | null;
   gate_passed: boolean;
   gate_reasons: string[];
   paper_pnl: number | null;
+  /** Built from ALL resolved rows — label as raw wherever rendered. */
   reliability_final: ReliabilityBucket[];
   reliability_market: ReliabilityBucket[];
 }

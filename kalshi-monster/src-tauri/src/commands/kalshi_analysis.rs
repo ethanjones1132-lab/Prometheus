@@ -306,6 +306,13 @@ pub async fn kalshi_resolve_pending_forecasts(
 }
 
 /// Calibration gate report from the **forecast** ledger (real rows only).
+///
+/// Every number here comes in two flavours and they are nested, not flattened:
+/// a caller cannot reach the misleading one by typing the shorter name. `raw`
+/// covers every resolved row and is context only — on market-only rows
+/// `p_final == p_market` by construction, so a "beats market" verdict drawn
+/// from it is satisfied by identity. `eligible` is the honest sample the gate
+/// tests, and the only one a skill claim may be rendered from.
 #[derive(Debug, serde::Serialize)]
 pub struct ForecastCalibrationReport {
     /// Every resolved row, including market-only and in-play ones.
@@ -315,17 +322,18 @@ pub struct ForecastCalibrationReport {
     /// what the gate tests — `resolved_count` is context, not evidence.
     pub eligible_count: i64,
     pub unresolved_count: i64,
-    pub brier_market: Option<f64>,
-    pub brier_final: Option<f64>,
-    pub brier_model: Option<f64>,
-    pub brier_market_on_model_rows: Option<f64>,
-    pub n_model: usize,
+    /// Brier means over all resolved rows. Context only.
+    pub raw: Option<crate::edge_engine::calibration::BrierSummary>,
+    /// Brier means over the eligible sample. The honest comparison.
+    pub eligible: Option<crate::edge_engine::calibration::BrierSummary>,
     pub gate_passed: bool,
     pub gate_reasons: Vec<String>,
     pub paper_pnl: Option<f64>,
-    /// 10-bucket reliability diagram for p_final (empty when no resolved rows).
+    /// 10-bucket reliability diagram for p_final over **all** resolved rows.
+    /// Shaped by the market-only rows that dominate the ledger — label it as
+    /// raw wherever it is rendered.
     pub reliability_final: Vec<crate::edge_engine::calibration::ReliabilityBucket>,
-    /// Same buckets using p_market for comparison.
+    /// Same buckets using p_market, over all resolved rows.
     pub reliability_market: Vec<crate::edge_engine::calibration::ReliabilityBucket>,
 }
 
@@ -339,7 +347,6 @@ pub async fn kalshi_get_forecast_calibration_report(
         .await?
         .len() as i64;
 
-    let summary = crate::edge_engine::calibration::brier_summary(&resolved);
     let paper_pnl = crate::paper::get_analytics(&db_pool, None)
         .await
         .ok()
@@ -368,13 +375,8 @@ pub async fn kalshi_get_forecast_calibration_report(
         resolved_count,
         eligible_count: gate.eligible_count as i64,
         unresolved_count,
-        brier_market: summary.as_ref().map(|s| s.brier_market),
-        brier_final: summary.as_ref().map(|s| s.brier_final),
-        brier_model: summary.as_ref().and_then(|s| s.brier_model),
-        brier_market_on_model_rows: summary
-            .as_ref()
-            .and_then(|s| s.brier_market_on_model_rows),
-        n_model: summary.as_ref().map(|s| s.n_model).unwrap_or(0),
+        raw: gate.briers.raw,
+        eligible: gate.briers.eligible,
         gate_passed: gate.passed,
         gate_reasons: gate.conditions,
         paper_pnl,

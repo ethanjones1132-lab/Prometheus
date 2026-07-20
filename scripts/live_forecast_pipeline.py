@@ -27,7 +27,11 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "fincept-sidecar"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from kalshi_ticker import ensure_provenance_columns, provenance_for  # noqa: E402
+from kalshi_ticker import (  # noqa: E402
+    ensure_forecasts_table,
+    find_duplicate_forecast,
+    provenance_for,
+)
 
 from agents.orchestrator import collect_market_opinion  # noqa: E402
 from fincept_sidecar.schemas import MarketCategory, MarketOpinionRequest  # noqa: E402
@@ -35,8 +39,6 @@ from fincept_sidecar.schemas import MarketCategory, MarketOpinionRequest  # noqa
 KALSHI_MARKETS = "https://api.elections.kalshi.com/trade-api/v2/markets"
 LAMBDA = 0.25
 SOURCE = "live_forecast_pipeline.py"
-# Mirrors DUPLICATE_SUPPRESSION_SECS in kalshi/forecast.rs.
-DUPLICATE_SUPPRESSION_SECS = 60
 DB = Path(os.environ.get("USERPROFILE", os.environ.get("HOME", "."))) / ".openclaw/kalshi-monster/predictions.db"
 
 
@@ -88,36 +90,9 @@ def mid_of(m: dict) -> float | None:
 
 
 def ensure_forecast_table(conn: sqlite3.Connection) -> None:
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS forecasts (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            market_ticker TEXT NOT NULL,
-            created_at TEXT NOT NULL,
-            close_time TEXT NOT NULL,
-            p_market REAL NOT NULL,
-            p_model REAL,
-            p_final REAL NOT NULL,
-            verdict TEXT NOT NULL,
-            verdict_reasons TEXT NOT NULL,
-            stake_suggested REAL,
-            agent_breakdown TEXT,
-            resolved_at TEXT,
-            outcome INTEGER,
-            brier_model REAL,
-            brier_market REAL,
-            brier_final REAL,
-            event_start_at TEXT,
-            is_in_play INTEGER DEFAULT 0,
-            source TEXT,
-            event_key TEXT,
-            agents_opining INTEGER
-        )
-        """
-    )
-    conn.commit()
-    # Databases created before migration 4 need the columns added in place.
-    ensure_provenance_columns(conn)
+    """Schema lives in `kalshi_ticker.FORECASTS_DDL`, not inlined here — three
+    scripts write to this table and hand-copied DDL is how they drift."""
+    ensure_forecasts_table(conn)
 
 
 def insert_forecast(
@@ -132,8 +107,12 @@ def insert_forecast(
     reasons: list[str],
     breakdown: dict | None,
     agents_opining: int | None = None,
-) -> int:
-    """Insert one forecast row, or return the id of the row this duplicates.
+) -> tuple[int, bool]:
+    """Insert one forecast row.
+
+    Returns ``(forecast_id, inserted)``. ``inserted`` is False when the row was
+    suppressed as a duplicate — callers must not count those as writes, or the
+    run summary over-reports how much evidence it added.
 
     Provenance is recorded on the way in: which event the ticker belongs to,
     when that event started, and whether this row was written after the tape
@@ -141,18 +120,9 @@ def insert_forecast(
     genuine pre-event forecast, and the calibration gate counts both.
     """
     created_at = datetime.now(timezone.utc).isoformat()
-    dup = conn.execute(
-        """
-        SELECT id FROM forecasts
-        WHERE market_ticker = ?
-          AND ABS(p_market - ?) < 1e-9
-          AND ABS(julianday(created_at) - julianday(?)) * 86400.0 <= ?
-        ORDER BY id DESC LIMIT 1
-        """,
-        (ticker, p_market, created_at, DUPLICATE_SUPPRESSION_SECS),
-    ).fetchone()
-    if dup:
-        return int(dup[0])
+    dup = find_duplicate_forecast(conn, ticker, p_market, created_at)
+    if dup is not None:
+        return dup, False
 
     event_key, event_start_at, in_play = provenance_for(ticker, created_at)
     cur = conn.execute(
@@ -182,7 +152,7 @@ def insert_forecast(
         ),
     )
     conn.commit()
-    return int(cur.lastrowid)
+    return int(cur.lastrowid), True
 
 
 def resolve_if_settled(conn: sqlite3.Connection, ticker: str) -> int:
@@ -339,7 +309,7 @@ async def main() -> int:
             continue
         if not row:
             continue
-        fid = insert_forecast(
+        fid, inserted = insert_forecast(
             conn,
             ticker=row["ticker"],
             close_time=row["close_time"],
@@ -351,6 +321,9 @@ async def main() -> int:
             breakdown=row["breakdown"],
             agents_opining=row.get("agents_opining"),
         )
+        if not inserted:
+            print(f"  duplicate suppressed {row['ticker']} (matches forecast#{fid})")
+            continue
         written += 1
         print(
             f"  forecast#{fid} {row['ticker']}: p_mkt={row['p_market']:.3f} "

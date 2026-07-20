@@ -23,20 +23,42 @@
 //! reclassifies in-play rows as pre-event, which is exactly the failure this
 //! module exists to prevent.
 
-use chrono::{DateTime, NaiveDate, TimeZone, Utc};
+use chrono::{DateTime, Datelike, NaiveDate, NaiveDateTime, TimeZone, Utc};
 
-/// Kalshi embeds event times in **US Eastern**, not UTC. The ledger this
-/// module serves is entirely July 2026 data, where Eastern is EDT = UTC−4, so
-/// UTC = embedded + 4h.
+/// Kalshi embeds event times in **US Eastern**, not UTC. During EDT (roughly
+/// mid-March to early November) Eastern is UTC−4, so UTC = embedded + 4h.
 ///
-/// This is a fixed offset, not a timezone database lookup: during EST
-/// (November–March) the true offset is 5h and this parser will be one hour
-/// early. One hour early makes `is_in_play` *more* conservative for the
-/// pre-event side (an event looks like it started later than it did, so
-/// borderline rows are more likely to be called pre-event) — so if this is
-/// ever run on winter data, prefer wiring a real `chrono-tz`
-/// `America/New_York` lookup over widening the fudge.
+/// This is a fixed offset, not a timezone database lookup, so it is only
+/// applied inside the EDT window — see [`eastern_is_edt`]. Outside it, the
+/// true offset is 5h and this constant would place the event **one hour
+/// earlier than it really was**, making a forecast written in that hour look
+/// like it came *after* the start when it came before: a row wrongly excluded,
+/// or worse, a genuinely in-play row on the other side of the boundary
+/// wrongly admitted as evidence. `event_start_from_ticker` returns `None`
+/// there instead, which surfaces as an untimed row rather than a silently
+/// wrong instant.
+///
+/// To support winter data, wire `chrono-tz`'s `America/New_York` and delete
+/// both this constant and the window check — do not widen the window.
 const ET_TO_UTC_OFFSET_HOURS: i64 = 4;
+
+/// `true` when a US Eastern wall-clock instant falls inside daylight saving
+/// time: second Sunday of March 02:00 through first Sunday of November 02:00.
+///
+/// `None` only if the year is outside chrono's representable range.
+fn eastern_is_edt(naive: NaiveDateTime) -> Option<bool> {
+    let year = naive.year();
+    let start = nth_sunday(year, 3, 2)?.and_hms_opt(2, 0, 0)?;
+    let end = nth_sunday(year, 11, 1)?.and_hms_opt(2, 0, 0)?;
+    Some(naive >= start && naive < end)
+}
+
+/// The `n`th Sunday (1-based) of the given month.
+fn nth_sunday(year: i32, month: u32, n: u32) -> Option<NaiveDate> {
+    let first = NaiveDate::from_ymd_opt(year, month, 1)?;
+    let first_sunday = 1 + (7 - first.weekday().num_days_from_sunday()) % 7;
+    NaiveDate::from_ymd_opt(year, month, first_sunday + 7 * (n - 1))
+}
 
 const MONTHS: [&str; 12] = [
     "JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC",
@@ -77,6 +99,11 @@ pub fn event_key(ticker: &str) -> String {
 /// four), or no date at all (`KXWORLDCUPHALFTIME-26`). Guessing midnight, or
 /// reading `13` as `13:00`, would fabricate an ordering between the forecast
 /// and the event that the ticker does not actually assert.
+///
+/// Also returns `None` for dates outside the EDT window (see
+/// [`ET_TO_UTC_OFFSET_HOURS`]): an instant this module knows is an hour wrong
+/// is worse than an admitted unknown, because `is_in_play` is computed once at
+/// insert and stored.
 pub fn event_start_from_ticker(ticker: &str) -> Option<DateTime<Utc>> {
     ticker.split('-').find_map(parse_datetime_prefix)
 }
@@ -107,6 +134,9 @@ fn parse_datetime_prefix(segment: &str) -> Option<DateTime<Utc>> {
 
     let naive = NaiveDate::from_ymd_opt(year, month, day as u32)?
         .and_hms_opt(hour as u32, minute as u32, 0)?;
+    if !eastern_is_edt(naive)? {
+        return None;
+    }
     let eastern_as_utc = Utc.from_utc_datetime(&naive);
     eastern_as_utc.checked_add_signed(chrono::Duration::hours(ET_TO_UTC_OFFSET_HOURS))
 }
@@ -166,22 +196,84 @@ mod tests {
         Utc.from_utc_datetime(&NaiveDate::from_ymd_opt(y, m, d).unwrap().and_hms_opt(h, min, 0).unwrap())
     }
 
-    // ---- event_key ----
+    // ---- shared vectors ----
+    //
+    // `scripts/ticker_vectors.json` is the single source of truth for parser
+    // behaviour, consumed by this suite and by `scripts/test_kalshi_ticker.py`.
+    // Prose cross-references between the two suites went stale immediately last
+    // time; a shared file makes drift fail a test instead.
+
+    const VECTORS_JSON: &str = include_str!("../../../../scripts/ticker_vectors.json");
+
+    fn vectors() -> serde_json::Value {
+        serde_json::from_str(VECTORS_JSON).expect("scripts/ticker_vectors.json must be valid JSON")
+    }
+
+    /// Vector files are only useful if they are actually populated; a silent
+    /// empty array would make every vector-driven test vacuously pass.
+    #[test]
+    fn shared_vector_file_is_populated() {
+        let v = vectors();
+        assert!(
+            v["tickers"].as_array().unwrap().len() >= 25,
+            "ticker vectors look truncated"
+        );
+        assert!(
+            v["timestamps"].as_array().unwrap().len() >= 8,
+            "timestamp vectors look truncated"
+        );
+    }
 
     #[test]
-    fn event_key_strips_the_final_strike_segment() {
-        // Every vector below is a real ticker from the live ledger.
-        assert_eq!(
-            event_key("KXNBASUMMERSPREAD-26JUL11MIAORL-MIA10"),
-            "KXNBASUMMERSPREAD-26JUL11MIAORL"
-        );
-        assert_eq!(
-            event_key("KXMLBTEAMTOTAL-26JUL191215CWSTOR-TOR8"),
-            "KXMLBTEAMTOTAL-26JUL191215CWSTOR"
-        );
-        assert_eq!(event_key("KXWORLDCUPHALFTIME-26-POS"), "KXWORLDCUPHALFTIME-26");
-        assert_eq!(event_key("SENATETX-26-R"), "SENATETX-26");
+    fn event_key_matches_every_shared_vector() {
+        for case in vectors()["tickers"].as_array().unwrap() {
+            let ticker = case["ticker"].as_str().unwrap();
+            let expected = case["event_key"].as_str().unwrap();
+            assert_eq!(
+                event_key(ticker),
+                expected,
+                "event_key({ticker:?}) — {}",
+                case["note"].as_str().unwrap_or("")
+            );
+        }
     }
+
+    #[test]
+    fn event_start_matches_every_shared_vector() {
+        for case in vectors()["tickers"].as_array().unwrap() {
+            let ticker = case["ticker"].as_str().unwrap();
+            let expected: Option<DateTime<Utc>> = case["event_start_utc"]
+                .as_str()
+                .map(|s| DateTime::parse_from_rfc3339(s).unwrap().with_timezone(&Utc));
+            assert_eq!(
+                event_start_from_ticker(ticker),
+                expected,
+                "event_start_from_ticker({ticker:?}) — {}",
+                case["note"].as_str().unwrap_or("")
+            );
+        }
+    }
+
+    #[test]
+    fn timestamp_parsing_matches_every_shared_vector() {
+        for case in vectors()["timestamps"].as_array().unwrap() {
+            let input = case["input"].as_str().unwrap();
+            let expected: Option<DateTime<Utc>> = case["parsed_utc"]
+                .as_str()
+                .map(|s| DateTime::parse_from_rfc3339(s).unwrap().with_timezone(&Utc));
+            assert_eq!(
+                parse_timestamp(input).map(|d| {
+                    use chrono::Timelike;
+                    d.with_nanosecond(0).unwrap()
+                }),
+                expected,
+                "parse_timestamp({input:?}) — {}",
+                case["note"].as_str().unwrap_or("")
+            );
+        }
+    }
+
+    // ---- behaviour the vector file cannot express ----
 
     #[test]
     fn event_key_groups_correlated_legs_of_one_game() {
@@ -195,98 +287,54 @@ mod tests {
     }
 
     #[test]
-    fn event_key_of_hyphenless_ticker_is_itself() {
-        assert_eq!(event_key("KXTEST"), "KXTEST");
-        assert_eq!(event_key(""), "");
-    }
-
-    #[test]
-    fn event_key_keeps_the_map_number_on_multi_leg_esports() {
-        // Map 1 and map 2 of the same series are genuinely different events;
-        // only the team leg is stripped.
-        assert_eq!(
-            event_key("KXVALORANTMAP-26JUL101900SRNRGA-1-NRGA"),
-            "KXVALORANTMAP-26JUL101900SRNRGA-1"
-        );
+    fn event_key_separates_the_two_maps_of_one_esports_series() {
+        // Map 1 and map 2 resolve independently — collapsing them would throw
+        // away a real observation.
         assert_ne!(
             event_key("KXVALORANTMAP-26JUL101900SRNRGA-1-NRGA"),
             event_key("KXVALORANTMAP-26JUL101900SRNRGA-2-SR")
         );
     }
 
-    // ---- event_start_from_ticker ----
+    // ---- daylight saving window ----
 
-    /// The segment decomposes `YY MMM DD HHMM`, **not** `DD MMM YY HHMM`.
-    /// These three vectors pin it: all are real tickers whose games are known
-    /// to have started on the 19th, 18th and 17th of July 2026 respectively.
+    /// The +4h constant is EDT-only. Outside the window the true offset is 5h,
+    /// so applying +4h would place the event an hour **earlier** than it was —
+    /// and because `is_in_play` is computed at insert and stored, a later
+    /// timezone fix would not revisit those rows. Refuse instead.
     #[test]
-    fn start_time_decomposes_as_year_month_day_time() {
+    fn est_dates_are_refused_rather_than_shifted_by_the_wrong_offset() {
+        assert_eq!(event_start_from_ticker("KXNFLGAME-26JAN181830KCBUF-KC"), None);
+        assert_eq!(event_start_from_ticker("KXNFLGAME-26DEC201300GBCHI-GB"), None);
+        // Same wall clock inside the window parses fine, so the refusal above
+        // is the window and not a broken parse.
         assert_eq!(
-            event_start_from_ticker("KXMLBTEAMTOTAL-26JUL191215CWSTOR-TOR8"),
-            Some(utc(2026, 7, 19, 16, 15)), // 12:15 ET
-        );
-        assert_eq!(
-            event_start_from_ticker("KXMLBTEAMTOTAL-26JUL181510CINCOL-CIN4"),
-            Some(utc(2026, 7, 18, 19, 10)), // 15:10 ET
-        );
-        assert_eq!(
-            event_start_from_ticker("KXMLBTOTAL-26JUL171915CWSTOR-4"),
-            Some(utc(2026, 7, 17, 23, 15)), // 19:15 ET
+            event_start_from_ticker("KXFOO-26OCT311300AAABBB-X"),
+            Some(utc(2026, 10, 31, 17, 0)),
         );
     }
 
     #[test]
-    fn start_time_is_eastern_converted_to_utc() {
-        // 20:08 ET on 2026-07-18 is 00:08 UTC the *next* day.
-        assert_eq!(
-            event_start_from_ticker("KXMLBGAME-26JUL182008LADNYY-LAD"),
-            Some(utc(2026, 7, 19, 0, 8)),
-        );
+    fn dst_boundaries_are_exact_for_2026() {
+        // 2026: DST runs 8 March 02:00 -> 1 November 02:00 (Eastern).
+        assert_eq!(eastern_is_edt(naive(2026, 3, 8, 1, 59)), Some(false));
+        assert_eq!(eastern_is_edt(naive(2026, 3, 8, 2, 0)), Some(true));
+        assert_eq!(eastern_is_edt(naive(2026, 11, 1, 1, 59)), Some(true));
+        assert_eq!(eastern_is_edt(naive(2026, 11, 1, 2, 0)), Some(false));
     }
 
     #[test]
-    fn date_only_ticker_yields_no_start_time() {
-        // `26JUL11` encodes a day but no time — midnight would be a guess.
-        assert_eq!(event_start_from_ticker("KXNBASUMMERTOTAL-26JUL11DENMIN-184"), None);
-        assert_eq!(event_start_from_ticker("KXHIGHCHI-26JUL18-B89.5"), None);
+    fn dst_window_tracks_the_calendar_not_a_fixed_date() {
+        // 2027: second Sunday of March is the 14th, first Sunday of November
+        // the 7th — different dates from 2026, so the rule cannot be hardcoded.
+        assert_eq!(nth_sunday(2027, 3, 2), NaiveDate::from_ymd_opt(2027, 3, 14));
+        assert_eq!(nth_sunday(2027, 11, 1), NaiveDate::from_ymd_opt(2027, 11, 7));
+        assert_eq!(nth_sunday(2026, 3, 2), NaiveDate::from_ymd_opt(2026, 3, 8));
+        assert_eq!(nth_sunday(2026, 11, 1), NaiveDate::from_ymd_opt(2026, 11, 1));
     }
 
-    #[test]
-    fn truncated_two_digit_hour_yields_no_start_time() {
-        // `26JUL1813` has two trailing digits, not four. Reading them as
-        // "13:00" would be inference, not parsing.
-        assert_eq!(event_start_from_ticker("KXBTC-26JUL1813-B64050"), None);
-        assert_eq!(event_start_from_ticker("KXGOLDH-26JUL1612-T3979.99"), None);
-    }
-
-    #[test]
-    fn ticker_without_a_date_yields_no_start_time() {
-        assert_eq!(event_start_from_ticker("KXWORLDCUPHALFTIME-26-POS"), None);
-        assert_eq!(event_start_from_ticker("SENATETX-26-R"), None);
-        assert_eq!(event_start_from_ticker("KXTEST"), None);
-        assert_eq!(event_start_from_ticker(""), None);
-    }
-
-    #[test]
-    fn a_longer_digit_run_is_not_mistaken_for_a_timestamp() {
-        // Twelve consecutive digits after the month: the eleven-char prefix
-        // must not be harvested as a time.
-        assert_eq!(event_start_from_ticker("KXFOO-26JUL1912150-X"), None);
-    }
-
-    #[test]
-    fn impossible_clock_and_calendar_values_are_rejected() {
-        assert_eq!(event_start_from_ticker("KXFOO-26JUL1999159-X"), None); // trailing digit
-        assert_eq!(event_start_from_ticker("KXFOO-26JUL192599ABC"), None); // 25:99
-        assert_eq!(event_start_from_ticker("KXFOO-26FEB301200ABC"), None); // Feb 30
-        assert_eq!(event_start_from_ticker("KXFOO-26XXX191215ABC"), None); // no such month
-    }
-
-    #[test]
-    fn lowercase_month_is_not_accepted() {
-        // Kalshi tickers are uppercase; a lowercase match would mean the
-        // caller handed us something other than a ticker.
-        assert_eq!(event_start_from_ticker("KXFOO-26jul191215ABC"), None);
+    fn naive(y: i32, m: u32, d: u32, h: u32, min: u32) -> NaiveDateTime {
+        NaiveDate::from_ymd_opt(y, m, d).unwrap().and_hms_opt(h, min, 0).unwrap()
     }
 
     // ---- is_in_play ----
@@ -316,17 +364,4 @@ mod tests {
         assert!(!is_in_play("not a timestamp", start));
     }
 
-    #[test]
-    fn timestamp_parser_accepts_every_format_the_ledger_contains() {
-        // chrono rfc3339 (Rust `to_rfc3339`)
-        assert!(parse_timestamp("2026-07-19T02:19:21.571103500+00:00").is_some());
-        // Python isoformat with Z, millisecond precision
-        assert!(parse_timestamp("2026-07-19T02:19:21.571Z").is_some());
-        // zone-less naive (treated as UTC)
-        assert_eq!(
-            parse_timestamp("2026-07-19T02:19:21"),
-            Some(utc(2026, 7, 19, 2, 19).checked_add_signed(chrono::Duration::seconds(21)).unwrap())
-        );
-        assert!(parse_timestamp("").is_none());
-    }
 }

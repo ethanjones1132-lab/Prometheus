@@ -41,11 +41,25 @@ describe('CalibrationView', () => {
       resolved_count: 3,
       eligible_count: 1,
       unresolved_count: 8,
-      brier_market: 0.21,
-      brier_final: 0.19,
-      brier_model: 0.18,
-      brier_market_on_model_rows: 0.22,
-      n_model: 2,
+      // The raw ledger flatters the model — p_final "beats" p_market — because
+      // market-only rows have p_final = p_market by construction. The eligible
+      // sample says the opposite. The dashboard must follow `eligible`.
+      raw: {
+        n: 3,
+        n_model: 2,
+        brier_market: 0.21,
+        brier_final: 0.19,
+        brier_model: 0.18,
+        brier_market_on_model_rows: 0.22,
+      },
+      eligible: {
+        n: 1,
+        n_model: 1,
+        brier_market: 0.1,
+        brier_final: 0.3,
+        brier_model: 0.35,
+        brier_market_on_model_rows: 0.1,
+      },
       gate_passed: false,
       gate_reasons: [
         '1 eligible forecasts ≥ 200 required: NOT met (of 3 resolved; excludes rows with no p_model, rows created after the event started, and duplicate legs of one event)',
@@ -105,12 +119,48 @@ describe('CalibrationView', () => {
     // The gate tracks the eligible sample, not the raw resolved count.
     expect(screen.getByText('1 / 200')).toBeInTheDocument();
     expect(screen.getByText('Resolved (raw)')).toBeInTheDocument();
-    expect(screen.getByText('0.2100')).toBeInTheDocument();
-    expect(screen.getAllByText((_, el) => el?.textContent?.includes('0.1900') === true).length).toBeGreaterThan(0);
+    // Headline Brier tiles are the ELIGIBLE numbers (0.1000 / 0.3000), not the
+    // raw ones (0.2100 / 0.1900).
+    expect(screen.getAllByText('0.1000').length).toBeGreaterThan(0);
+    expect(
+      screen.getAllByText((_, el) => el?.textContent?.includes('0.3000') === true).length,
+    ).toBeGreaterThan(0);
+    // The raw pair is still shown, but explicitly labelled as raw.
+    expect(
+      screen.getAllByText((_, el) => el?.textContent?.includes('Raw ledger') === true).length,
+    ).toBeGreaterThan(0);
     expect(screen.getByLabelText('Flywheel status')).toBeInTheDocument();
     expect(screen.getByLabelText('Gate dashboard')).toBeInTheDocument();
     expect(screen.getByText(/Online/)).toBeInTheDocument();
     expect(screen.getByLabelText('p_final vs outcomes reliability chart')).toBeInTheDocument();
+  });
+
+  /// The footgun this guards: raw p_final (0.19) beats raw p_market (0.21)
+  /// purely because market-only rows set them equal, while the eligible sample
+  /// (0.30 vs 0.10) says the model is worse. A "≤ mkt" badge here would be a
+  /// green light computed from an identity.
+  test('does not show a beats-market badge when only the raw ledger flatters the model', async () => {
+    render(<CalibrationView />);
+
+    await waitFor(() => {
+      expect(screen.getByText('LOCKED')).toBeInTheDocument();
+    });
+    expect(
+      screen.queryAllByText((_, el) => el?.textContent?.includes('≤ mkt') === true),
+    ).toHaveLength(0);
+  });
+
+  /// λ re-fit readiness must count eligible model rows (1), not every row that
+  /// happens to carry a p_model (2).
+  test('lambda re-fit progress counts the eligible sample', async () => {
+    render(<CalibrationView />);
+
+    await waitFor(() => {
+      expect(screen.getByText('LOCKED')).toBeInTheDocument();
+    });
+    expect(
+      screen.getAllByText((_, el) => el?.textContent?.includes('1 / 50') === true).length,
+    ).toBeGreaterThan(0);
   });
 
   test('edge board scan logs batch into ranked table', async () => {
