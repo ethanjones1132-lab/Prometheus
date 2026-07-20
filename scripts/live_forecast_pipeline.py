@@ -12,6 +12,20 @@ Resolves only when Kalshi already reports result Yes/No for that ticker.
 
 from __future__ import annotations
 
+# Cron hosts (Hermes) inject a broken hermes-agent venv onto PYTHONPATH.
+# That shadows fincept-sidecar's pydantic_core native ext. Drop hermes paths
+# before any third-party import so the fincept/.venv (or system) wins.
+import os as _os
+import sys as _sys
+_pp = _os.environ.get("PYTHONPATH", "")
+if _pp:
+    _parts = [p for p in _pp.split(_os.pathsep) if p and "hermes-agent" not in p.replace("\\", "/").lower()]
+    if _parts:
+        _os.environ["PYTHONPATH"] = _os.pathsep.join(_parts)
+    else:
+        _os.environ.pop("PYTHONPATH", None)
+    # Also scrub already-populated sys.path entries from the parent process
+    _sys.path[:] = [p for p in _sys.path if p and "hermes-agent" not in p.replace("\\", "/").lower()]
 import asyncio
 import json
 import math

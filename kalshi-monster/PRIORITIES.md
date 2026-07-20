@@ -1,6 +1,33 @@
 # Kalshi Monster — Priority Roadmap
 
-Last updated: 2026-07-20 (morning cron — eligible gate 19/200 LOCKED; +28 Jul19 city-high resolves; +12 p_model forecasts)
+Last updated: 2026-07-20 (midday cron — eligible 20/200 LOCKED; +5 BTC 09:00Z resolves; +12 p_model; PYTHONPATH scrub)
+
+## Maintenance notes (2026-07-20, midday cron) — health green; **+5 resolves, +12 p_model, cron PYTHONPATH fix**
+
+- Health: `cargo check`, `tsc` clean, **306** lib tests (0 failed, 9 ignored); working tree **clean** at start
+- Branch: `fix/edge-measurement-integrity` (ahead of master with honest-calibration work)
+- Auto-remediation: none needed (clean tree)
+- KB-1: still 🟡 — code path fixed; live credential/UI acceptance still required on user machine
+- KB-2: ✅ complete
+- **Resolve ops:** `resolve_settled_forecasts.py` wrote **+5** Jul-20 09:00Z BTC hourly outcomes
+  - KXBTC-26JUL2009 B64450/64550/64650/64750/64850 (1 Yes / 4 No)
+  - Progress raw: **260** resolved / **110** unresolved / **370** total (was 255/103/358 morning)
+  - [raw] Brier p_final **0.1575** vs p_market **0.1583** vs p_model **0.2633**
+- **Honest gate:** **eligible = 20/200 (10.0%) — LOCKED** (was 19 morning; +1 eligible from BTC hourlies with p_model)
+  - Eligible Brier p_final **0.3045** ≤ p_market **0.3112** (still beats market on thin model sample)
+  - `paper_lots` = **0** — PnL leg still unmet. Do **not** flip live execution.
+- **Model sample-build:** `live_forecast_pipeline.py` wrote **12** forecasts with `p_model` set (technical + contract_tape)
+  - Mix: KXBTC×5 (incl. 2× trade_yes) + KXINX×7 (incl. 1× trade_yes); agents_opining=2 on all
+  - Notable trade_yes: KXBTC-26JUL2013-B65250, KXBTC-26JUL2013-B65050, KXINX-26JUL20H1600-B7462
+  - Unresolved book now has more model-bearing short-horizon rows (Jul20 13:00Z BTC + 16:00Z INX)
+- **Shipped:** `scripts/live_forecast_pipeline.py` — scrub Hermes `PYTHONPATH`/`sys.path` hermes-agent entries before third-party imports
+  - Cron host injects broken hermes-agent venv (missing `pydantic_core` native ext) which shadowed fincept-sidecar's pydantic
+  - Fix verified: import succeeds with polluted PYTHONPATH when run under `fincept-sidecar/.venv`
+- **Ops note:** run live pipeline with fincept venv:
+  `fincept-sidecar/.venv/Scripts/python.exe scripts/live_forecast_pipeline.py`
+- **Next cron:** resolve Jul20 13:00Z BTC hourlies + city highs + INX 16:00Z as they print; re-run live pipeline; open paper lots on high-conviction trade_yes (app UI) so PnL leg can trip; leave app running for auto-grade
+- **Blocked next (ops):** operator AGPL public push; KB-1 live Markets UI acceptance; eligible n→200 + paper PnL>0
+- **No Phase 1+ / Phase 5 code advancement** — full gate correctly LOCKED on eligible sample + paper PnL
 
 ## Maintenance notes (2026-07-20, morning cron) — health green; **honest eligible gate reporting**
 
