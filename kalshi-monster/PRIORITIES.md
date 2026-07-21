@@ -1,6 +1,33 @@
 # Kalshi Monster — Priority Roadmap
 
-Last updated: 2026-07-21 (Phase 0–2 edge capture path shipped)
+Last updated: 2026-07-21 (late afternoon cron — preferred-series tape + legacy B-leg gate filter)
+
+## Maintenance notes (2026-07-21, late afternoon cron) — preferred-series snapshots + honest gate filter
+
+- Health: `cargo check`, `tsc` clean, **308** lib tests (0 failed, 9 ignored); working tree dirty with coherent edge-integrity WIP → committed this pass
+- Branch: `fix/edge-measurement-integrity`
+- Auto-remediation: none (artifacts); committed coherent WIP (legacy B-leg filter + preferred tape + paper-lot opener)
+- KB-1: still 🟡 — code path fixed; live credential/UI acceptance still required on user machine
+- KB-2: ✅ complete
+- **Resolve ops:** `resolve_settled_forecasts.py` wrote **+6** Jul-21 13:00Z BTC hourly outcomes (B65950/66350/66450/66550/66650/67150; 1 Yes B66550 / 5 No)
+  - Ledger: **430** total / **352** resolved / **78** unresolved (after +24 pipeline writes this pass)
+  - [raw] Brier p_final **0.1463** vs p_market **0.1461** vs p_model **0.2720**
+- **Honest gate (post legacy B-leg filter):** **eligible = 19/200 (9.5%) — LOCKED**
+  - Filter: pre-`2026-07-21T20:00Z` B-leg model rows priced as P(S>K) are excluded (28 legacy rows filtered; mirrors Rust `is_legacy_b_leg_model_row`)
+  - Eligible Brier p_final **0.3186** ≤ p_market **0.3257** (still beats market on thin clean sample)
+  - `paper_lots` = **0** — PnL leg unmet. `open_paper_lots_from_forecasts.py --dry-run` → **0 candidates** (post-geometry pipeline correctly emits `pass` only — no fee-aware edge above theta)
+  - Do **not** flip live execution.
+- **Model sample-build:** two `live_forecast_pipeline.py` runs wrote **+24** forecasts with `p_model` (KXBTC/KXETH/KXINX/KXWTI mix; all verdict=`pass`)
+- **Shipped this pass:**
+  1. **Preferred-series price snapshots (Rust):** `price_tracker::spawn_preferred_series_snapshot_task` + `KalshiClient::fetch_preferred_series_markets` (KXBTC/ETH/INX/NASDAQ/GOLD/WTI/AAPL/TSLA/NVDA) every 120s via Tauri runtime; wired in `lib.rs`
+  2. **Pipeline tape warm:** `live_forecast_pipeline.py` writes `kalshi_price_snapshots` for every preferred market it fetches (**239** snaps this run — KXETH/INX/WTI/TSLA now have history; KXBTC timed out once on API)
+  3. **Standalone** `scripts/snap_preferred_series.py` for app-closed cron path
+  4. **Legacy B-leg gate filter** in Rust `calibration.rs` + Python `kalshi_ticker.py` + load path in `forecast.rs` (regression test + 93 Python ticker/paper tests green)
+  5. **Paper lot opener** `scripts/open_paper_lots_from_forecasts.py` (dry-run default; execute when post-fix trade_* appear)
+- **Autopsy note:** papered historical `trade_yes` still −0.30 on poisoned pre-fix book; fade-model counterfactual still looks good on that sample — do not promote until post-fix n grows
+- **Next cron:** resolve ETH 17:00Z + INX H1600 when results print; re-run pipeline + snap; open paper lots only when verdict≠pass post-fix; leave app running for preferred-series snapshot loop
+- **Blocked next (ops):** operator AGPL public push; KB-1 live Markets UI acceptance; eligible n→200 on **clean** sample + paper PnL>0
+- **No Phase 1+ / Phase 5 code advancement** — gate correctly LOCKED
 
 ## Maintenance notes (2026-07-21, Phase 0–2 implement) — **legacy filter + tape + paper path**
 
