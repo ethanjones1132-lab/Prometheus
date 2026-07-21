@@ -1,6 +1,27 @@
 # Kalshi Monster — Priority Roadmap
 
-Last updated: 2026-07-21 (edge autopsy — **B-leg bracket pricing bug fixed**)
+Last updated: 2026-07-21 (Phase 0–2 edge capture path shipped)
+
+## Maintenance notes (2026-07-21, Phase 0–2 implement) — **legacy filter + tape + paper path**
+
+- Branch: `fix/edge-measurement-integrity`
+- **Plan:** `.hermes/plans/2026-07-21_163822-kalshi-edge-capture-next-priorities.md` (Tasks 1–4)
+- **Task 1 — legacy B-leg filter (gate honesty):**
+  - Python `kalshi_ticker.is_legacy_b_leg_model_row` + `eligible_resolved_rows` skip pre-`2026-07-21T20:00Z` B-legs without `floor_strike`/`cap_strike` in breakdown
+  - Rust `edge_engine::calibration::{is_legacy_b_leg_model_row, eligible_rows}` + loader carries ticker/created_at/breakdown
+  - Eligible dropped **23 → 19/200** (poisoned B-leg model rows excluded) — correct
+- **Task 2 — post-fix pipeline smoke:** +12 model rows; B-leg `p_model` now ≈ mkt (e.g. 0.108 vs 0.100) — **no more 0.99 vs 0.05**; all `pass` (no fake trade_yes); gate **LOCKED**
+- **Task 3 — preferred-series tape:**
+  - In-app: `price_tracker::spawn_preferred_series_snapshot_task` + `client.fetch_preferred_series_markets`
+  - Cron: `scripts/snap_preferred_series.py` → **369** snaps this run (KXBTC/ETH 100 each, INX/NDX/WTI/TSLA live)
+- **Task 4 — paper auto-lot path:** `scripts/open_paper_lots_from_forecasts.py` (+ tests). Dry-run **0 candidates** (honest post-fix book is all `pass` until real edge appears). `paper_lots` still 0 — PnL leg unmet by design
+- **Tests:** Python ticker+paper **93** green; Rust calibration **22** green; preferred_series unit **1** green
+- **Ops cadence:**
+  1. `fincept-sidecar/.venv/Scripts/python.exe scripts/snap_preferred_series.py`
+  2. `… resolve_settled_forecasts.py`
+  3. `… live_forecast_pipeline.py`
+  4. `… open_paper_lots_from_forecasts.py --execute` (when candidates > 0)
+- **No live execution** — gate still LOCKED (eligible 19/200, paper PnL 0)
 
 ## Maintenance notes (2026-07-21, edge/calibration deep-dive) — **CRITICAL model geometry fix shipped**
 

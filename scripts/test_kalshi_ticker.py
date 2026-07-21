@@ -26,6 +26,7 @@ from kalshi_ticker import (  # noqa: E402
     event_key,
     event_start_from_ticker,
     is_in_play,
+    is_legacy_b_leg_model_row,
     parse_timestamp,
     provenance_for,
 )
@@ -239,6 +240,43 @@ def test_the_audited_ledger_shape_yields_a_handful_not_hundreds():
     total = conn.execute("SELECT COUNT(*) FROM forecasts").fetchone()[0]
     assert total == 279
     assert len(eligible_resolved_rows(conn)) == 3
+
+
+def test_legacy_b_leg_model_rows_are_never_eligible():
+    """Pre-bracket-fix B-legs used P(S>K) and must not enter the gate."""
+    assert is_legacy_b_leg_model_row(
+        "KXBTC-26JUL2009-B64450", "2026-07-20T12:00:00Z", 0.69, None
+    )
+    assert not is_legacy_b_leg_model_row(
+        "KXBTC-26JUL2009-B64450",
+        "2026-07-20T12:00:00Z",
+        0.69,
+        '{"contract":{"floor_strike":64400}}',
+    )
+    assert not is_legacy_b_leg_model_row(
+        "KXBTC-26JUL2114-T73299", "2026-07-20T12:00:00Z", 0.40, None
+    )
+    assert not is_legacy_b_leg_model_row(
+        "KXBTC-26JUL2114-B73250", "2026-07-22T12:00:00Z", 0.12, None
+    )
+
+    conn = _ledger(
+        [
+            # legacy poisoned B-leg
+            ("KXBTC-26JUL2009-B64450", "2026-07-20T12:00:00Z", 0.69),
+            # post-fix B-leg (after cutoff)
+            ("KXBTC-26JUL2214-B73250", "2026-07-22T12:00:00Z", 0.12),
+            # T-leg always OK
+            ("KXBTC-26JUL2009-T65000", "2026-07-20T12:00:00Z", 0.40),
+        ]
+    )
+    keys = {r[4] for r in eligible_resolved_rows(conn)}
+    assert "KXBTC-26JUL2009-B64450" not in (keys or set())
+    # event keys drop final segment
+    assert any(k and "B73250" not in k and "JUL22" in (k or "") for k in keys) or any(
+        "JUL22" in (k or "") for k in keys
+    )
+    assert len(eligible_resolved_rows(conn)) == 2
 
 
 def test_duplicate_guard_catches_an_immediate_re_run():

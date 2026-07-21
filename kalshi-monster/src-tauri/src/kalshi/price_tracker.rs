@@ -183,3 +183,117 @@ pub async fn prune_old_snapshots(pool: &Pool<Sqlite>, keep_days: i64) -> Result<
         .rows_affected();
     Ok(rows)
 }
+
+
+/// Series the Fincept technical agent can price (yfinance underlyings).
+/// Snapshotting the full catalog floods the DB with sports/politics while
+/// leaving crypto hourlies (KXBTC/KXETH/…) blind — contract_tape then has
+/// zero history on the book that matters for edge measurement.
+pub const PREFERRED_SNAPSHOT_SERIES: &[&str] = &[
+    "KXBTC",
+    "KXETH",
+    "KXINX",
+    "KXNASDAQ100",
+    "KXNDX",
+    "KXGOLD",
+    "KXWTI",
+    "KXAAPL",
+    "KXTSLA",
+    "KXNVDA",
+];
+
+/// Default poll interval for preferred-series tape snapshots (seconds).
+pub const PREFERRED_SNAPSHOT_INTERVAL_SECS: u64 = 120;
+
+/// True when a market ticker belongs to a preferred series prefix.
+pub fn is_preferred_series_ticker(ticker: &str) -> bool {
+    let t = ticker.trim().to_ascii_uppercase();
+    PREFERRED_SNAPSHOT_SERIES.iter().any(|s| {
+        t == *s
+            || t.starts_with(&format!("{s}-"))
+            // Long-dated series without hyphen after prefix (e.g. KXBTCMAXY-…)
+            || (t.starts_with(s)
+                && t.len() > s.len()
+                && !t.as_bytes()
+                    .get(s.len())
+                    .map(|c| c.is_ascii_digit())
+                    .unwrap_or(false))
+    })
+}
+
+/// Fetch open markets for preferred series and write price snapshots.
+/// Public so the startup warm path and tests can call it directly.
+pub async fn snapshot_preferred_series(
+    client: &crate::kalshi::KalshiClient,
+    pool: &Pool<Sqlite>,
+) -> Result<KalshiSnapshotBatch, String> {
+    let markets = client.fetch_preferred_series_markets(100).await?;
+    let summaries: Vec<KalshiMarketSummary> =
+        markets.iter().map(KalshiMarketSummary::from).collect();
+    let batch = snapshot_markets(pool, &summaries).await?;
+    tracing::info!(
+        "kalshi preferred-series snapshot: {} markets → {} rows at {}",
+        summaries.len(),
+        batch.snapshots_taken,
+        batch.snapshot_at
+    );
+    Ok(batch)
+}
+
+/// Background task: keep contract-tape history warm on agent-priced series.
+///
+/// Uses `tauri::async_runtime::spawn` (not bare `tokio::spawn`) so the task
+/// shares Tauri's reactor — dual-runtime bare spawns were a KB-1 failure mode.
+pub fn spawn_preferred_series_snapshot_task(
+    client: std::sync::Arc<crate::kalshi::KalshiClient>,
+    pool: Pool<Sqlite>,
+    poll_interval_secs: u64,
+) {
+    let interval_secs = poll_interval_secs.max(60);
+    tauri::async_runtime::spawn(async move {
+        // Initial delay so startup quick-cache / full warm can claim bandwidth first.
+        tokio::time::sleep(std::time::Duration::from_secs(15)).await;
+        let mut ticker = tokio::time::interval(std::time::Duration::from_secs(interval_secs));
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            match snapshot_preferred_series(&client, &pool).await {
+                Ok(batch) => {
+                    tracing::debug!(
+                        "preferred snapshot ok: taken={} at={}",
+                        batch.snapshots_taken,
+                        batch.snapshot_at
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!("preferred-series price snapshot failed: {e}");
+                }
+            }
+            // Prune occasionally so the preferred flood doesn't bloat forever.
+            if let Err(e) = prune_old_snapshots(&pool, 14).await {
+                tracing::debug!("preferred snapshot prune: {e}");
+            }
+            ticker.tick().await;
+        }
+    });
+}
+
+#[cfg(test)]
+mod preferred_series_tests {
+    use super::*;
+
+    #[test]
+    fn preferred_series_covers_crypto_and_index_prefixes() {
+        assert!(PREFERRED_SNAPSHOT_SERIES.contains(&"KXBTC"));
+        assert!(PREFERRED_SNAPSHOT_SERIES.contains(&"KXETH"));
+        assert!(PREFERRED_SNAPSHOT_SERIES.contains(&"KXINX"));
+        assert!(PREFERRED_SNAPSHOT_SERIES.contains(&"KXNASDAQ100"));
+        assert!(is_preferred_series_ticker("KXBTC-26JUL2117-B65375"));
+        assert!(is_preferred_series_ticker("KXETH-26JUL2117-B1830"));
+        assert!(is_preferred_series_ticker("KXINX-26JUL21H1600-B7487"));
+        assert!(is_preferred_series_ticker(
+            "KXNASDAQ100-26JUL24H1600-T27600"
+        ));
+        assert!(!is_preferred_series_ticker("KXMIDTERMMOVE-26-D"));
+        assert!(!is_preferred_series_ticker("KXNFLWINS-27-NE"));
+    }
+}

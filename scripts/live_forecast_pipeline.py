@@ -185,6 +185,83 @@ def load_contract_mids(ticker: str, limit: int = 24) -> list[float] | None:
     return mids[-limit:]
 
 
+
+
+def write_price_snapshots(conn: sqlite3.Connection, markets: list[dict]) -> int:
+    """Persist mids for preferred-series markets so contract_tape has real history.
+
+    Cron runs this pipeline without the desktop app; without this write the
+    kalshi_price_snapshots table stays sports-dominated and hourlies stay blind.
+    """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS kalshi_price_snapshots (
+            id TEXT PRIMARY KEY,
+            ticker TEXT NOT NULL,
+            title TEXT NOT NULL DEFAULT '',
+            category TEXT NOT NULL DEFAULT '',
+            yes_prob_pct REAL NOT NULL,
+            yes_bid REAL NOT NULL,
+            yes_ask REAL NOT NULL,
+            spread REAL NOT NULL,
+            volume_24h REAL NOT NULL DEFAULT 0,
+            liquidity REAL NOT NULL DEFAULT 0,
+            snapshot_at TEXT NOT NULL
+        )
+        """
+    )
+    snap_at = datetime.now(timezone.utc).isoformat()
+    n = 0
+    for m in markets:
+        ticker = (m.get("ticker") or "").strip()
+        if not ticker:
+            continue
+        mid = mid_of(m)
+        if mid is None:
+            continue
+        try:
+            bid = float(m.get("yes_bid_dollars") or m.get("yes_bid") or 0)
+            ask = float(m.get("yes_ask_dollars") or m.get("yes_ask") or 0)
+        except (TypeError, ValueError):
+            bid, ask = mid, mid
+        spread = max(0.0, ask - bid) if ask > 0 and bid > 0 else 0.0
+        try:
+            vol = float(m.get("volume_24h_fp") or m.get("volume_24h") or 0)
+        except (TypeError, ValueError):
+            vol = 0.0
+        try:
+            liq = float(m.get("liquidity_dollars") or m.get("liquidity") or 0)
+        except (TypeError, ValueError):
+            liq = 0.0
+        title = (m.get("title") or ticker)[:200]
+        category = (m.get("category") or "")[:80]
+        sid = f"{ticker}-{snap_at}"
+        cur = conn.execute(
+            """
+            INSERT OR IGNORE INTO kalshi_price_snapshots
+                (id, ticker, title, category, yes_prob_pct, yes_bid, yes_ask, spread,
+                 volume_24h, liquidity, snapshot_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                sid,
+                ticker,
+                title,
+                category,
+                mid * 100.0,  # store as pct to match Rust path
+                bid,
+                ask,
+                spread,
+                vol,
+                liq,
+                snap_at,
+            ),
+        )
+        n += cur.rowcount or 0
+    conn.commit()
+    return n
+
+
 def ensure_forecast_table(conn: sqlite3.Connection) -> None:
     """Schema lives in `kalshi_ticker.FORECASTS_DDL`, not inlined here — three
     scripts write to this table and hand-copied DDL is how they drift."""
@@ -468,6 +545,8 @@ async def main() -> int:
 
     conn = sqlite3.connect(str(DB))
     ensure_forecast_table(conn)
+    n_snap = write_price_snapshots(conn, markets)
+    print(f"Price snapshots written: {n_snap} (preferred-series tape warm)")
 
     written = 0
     model_written = 0

@@ -15,7 +15,7 @@ pub use portfolio_risk::{
     compute_stake_adjustment, exposures_from_positions, exposures_from_predictions,
     StakeAdjustment, PortfolioExposure,
 };
-pub use price_tracker::{get_price_history, snapshot_markets, KalshiPriceHistory, KalshiSnapshotBatch};
+pub use price_tracker::{get_price_history, snapshot_markets, snapshot_preferred_series, spawn_preferred_series_snapshot_task, KalshiPriceHistory, KalshiSnapshotBatch, PREFERRED_SNAPSHOT_SERIES};
 pub use market_cache_store::{
     init_market_cache_table, load_persisted_cache, save_persisted_cache,
     PERSISTED_REHYDRATE_MAX_AGE_SECS,

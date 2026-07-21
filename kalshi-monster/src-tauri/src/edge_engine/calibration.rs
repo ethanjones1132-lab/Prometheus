@@ -58,11 +58,67 @@ pub struct ResolvedForecast {
     /// so the quote it recorded already contained the outcome in progress.
     #[serde(default)]
     pub is_in_play: bool,
+    /// Market ticker (for legacy B-leg geometry filter). Optional for older
+    /// in-memory test fixtures.
+    #[serde(default)]
+    pub market_ticker: Option<String>,
+    /// Forecast creation timestamp (RFC3339). Optional for older fixtures.
+    #[serde(default)]
+    pub created_at: Option<String>,
+    /// Agent breakdown JSON; post-fix rows carry `contract.floor_strike`.
+    #[serde(default)]
+    pub agent_breakdown: Option<String>,
 }
 
 impl ResolvedForecast {
     fn y(&self) -> f64 {
         if self.outcome { 1.0 } else { 0.0 }
+    }
+}
+
+/// UTC instant after which B-leg forecasts use bracket geometry (commit e8450b4).
+const BRACKET_GEOMETRY_FIX_CUTOFF: &str = "2026-07-21T20:00:00+00:00";
+
+/// True when this row is a pre-fix B-leg model forecast that priced the
+/// contract as P(S>K) instead of a range. Mirrors
+/// `scripts/kalshi_ticker.py::is_legacy_b_leg_model_row`.
+pub fn is_legacy_b_leg_model_row(r: &ResolvedForecast) -> bool {
+    if r.p_model.is_none() {
+        return false;
+    }
+    let ticker = match r.market_ticker.as_deref() {
+        Some(t) => t,
+        None => return false,
+    };
+    // B-leg: ...-B73250 (digit after B). T-legs are one-sided thresholds.
+    let is_b = ticker
+        .split('-')
+        .last()
+        .map(|seg| {
+            let b = seg.as_bytes();
+            b.len() >= 2 && (b[0] == b'B' || b[0] == b'b') && b[1].is_ascii_digit()
+        })
+        .unwrap_or(false);
+    if !is_b {
+        return false;
+    }
+    if let Some(bd) = r.agent_breakdown.as_deref() {
+        if bd.contains("\"floor_strike\"") || bd.contains("\"cap_strike\"") {
+            return false;
+        }
+    }
+    match r.created_at.as_deref() {
+        None => true,
+        Some(ts) => {
+            // Lexicographic compare works for RFC3339 with fixed +00:00 / Z
+            // when both sides are zero-padded ISO. Normalize Z → +00:00.
+            let norm = ts.replace('Z', "+00:00");
+            let cut = BRACKET_GEOMETRY_FIX_CUTOFF;
+            // Compare on the date-time prefix (19 chars: YYYY-MM-DDTHH:MM:SS)
+            let a = norm.get(..19).unwrap_or(norm.as_str());
+            let b = cut.get(..19).unwrap_or(cut);
+            a < b
+        }
     }
 }
 
@@ -298,11 +354,13 @@ impl Default for GateConfig {
 ///    of each event survives (ledger order is ascending by resolution time, so
 ///    this is the earliest-resolving leg — a deterministic choice, not the
 ///    best-scoring one).
+/// 4. **Not a legacy B-leg call-geometry row.** Pre-2026-07-21T20Z B-legs were
+///    priced as P(S>K); see [`is_legacy_b_leg_model_row`].
 pub fn eligible_rows(rows: &[ResolvedForecast]) -> Vec<&ResolvedForecast> {
     let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
     let mut out = Vec::new();
     for r in rows {
-        if r.p_model.is_none() || r.is_in_play {
+        if r.p_model.is_none() || r.is_in_play || is_legacy_b_leg_model_row(r) {
             continue;
         }
         match r.event_key.as_deref() {
@@ -493,7 +551,29 @@ mod tests {
             outcome,
             event_key: None,
             is_in_play: false,
+            market_ticker: None,
+            created_at: None,
+            agent_breakdown: None,
         }
+    }
+
+    #[test]
+    fn legacy_b_leg_pre_cutoff_is_not_eligible() {
+        let mut legacy = row(0.05, Some(0.95), 0.28, false);
+        legacy.market_ticker = Some("KXBTC-26JUL2009-B64450".into());
+        legacy.created_at = Some("2026-07-20T12:00:00Z".into());
+        legacy.event_key = Some("KXBTC-26JUL2009".into());
+        assert!(is_legacy_b_leg_model_row(&legacy));
+        assert!(eligible_rows(&[legacy.clone()]).is_empty());
+
+        let mut rescued = legacy.clone();
+        rescued.agent_breakdown = Some(r#"{"contract":{"floor_strike":64400.0}}"#.into());
+        assert!(!is_legacy_b_leg_model_row(&rescued));
+
+        let mut post = legacy;
+        post.created_at = Some("2026-07-22T12:00:00Z".into());
+        assert!(!is_legacy_b_leg_model_row(&post));
+        assert_eq!(eligible_rows(&[post]).len(), 1);
     }
 
     fn with_event(mut r: ResolvedForecast, key: &str) -> ResolvedForecast {

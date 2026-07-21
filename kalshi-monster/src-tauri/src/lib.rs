@@ -181,6 +181,15 @@ pub fn run() {
                 kalshi_auto_grade_secs,
             );
 
+            // Keep contract-tape mids warm on crypto/index preferred series
+            // (full-catalog refresh is sports-heavy and left hourlies blind).
+            let kalshi_for_snap = kalshi_for_warm.clone();
+            kalshi::price_tracker::spawn_preferred_series_snapshot_task(
+                kalshi_for_snap,
+                db_pool.clone(),
+                120,
+            );
+
             // Phase 4: prefetch quick cache at startup so the dashboard is warm before first open
             let kalshi_quick = kalshi_for_warm.clone();
             tauri::async_runtime::spawn(async move {

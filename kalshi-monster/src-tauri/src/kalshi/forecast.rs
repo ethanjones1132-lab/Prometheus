@@ -445,7 +445,8 @@ pub async fn resolved_forecasts_for_calibration(
     pool: &Pool<Sqlite>,
 ) -> Result<Vec<crate::edge_engine::calibration::ResolvedForecast>, String> {
     let rows = sqlx::query(
-        "SELECT p_market, p_model, p_final, outcome, event_key, is_in_play FROM forecasts \
+        "SELECT p_market, p_model, p_final, outcome, event_key, is_in_play, \
+         market_ticker, created_at, agent_breakdown FROM forecasts \
          WHERE outcome IS NOT NULL ORDER BY resolved_at ASC, id ASC",
     )
     .fetch_all(pool)
@@ -461,6 +462,9 @@ pub async fn resolved_forecasts_for_calibration(
             outcome: r.get::<i64, _>(3) == 1,
             event_key: r.get(4),
             is_in_play: r.get::<Option<i64>, _>(5).unwrap_or(0) == 1,
+            market_ticker: r.get(6),
+            created_at: r.get(7),
+            agent_breakdown: r.get(8),
         })
         .collect())
 }

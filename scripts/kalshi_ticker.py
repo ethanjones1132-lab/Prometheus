@@ -158,6 +158,45 @@ def provenance_for(ticker: str, created_at: str) -> tuple[str, str | None, int]:
 # Mirrors GateConfig::default().min_resolved in edge_engine/calibration.rs.
 MIN_ELIGIBLE_FOR_GATE = 200
 
+# First forecasts written after e8450b4 (B-leg bracket geometry fix).
+# Pre-cutoff B-leg rows with p_model used P(S>K) and must not enter the gate.
+BRACKET_GEOMETRY_FIX_CUTOFF = datetime(2026, 7, 21, 20, 0, 0, tzinfo=timezone.utc)
+
+# Kalshi range legs: ...-B73250 (not T-thresholds).
+_B_LEG_RE = re.compile(r"(?i)[-_]B\d")
+
+
+def is_b_leg_ticker(ticker: str | None) -> bool:
+    return bool(ticker and _B_LEG_RE.search(ticker))
+
+
+def is_legacy_b_leg_model_row(
+    ticker: str | None,
+    created_at: str | None,
+    p_model: float | None,
+    agent_breakdown: str | None = None,
+) -> bool:
+    """True when a row used pre-fix call-geometry pricing on a B-leg.
+
+    Those rows systematically overstated YES (tech≈0.99 vs mkt≈0.05 on lower
+    bins) and must never enter the eligible calibration sample.
+    """
+    if p_model is None:
+        return False
+    if not is_b_leg_ticker(ticker):
+        return False
+    # Post-fix pipeline writes breakdown.contract.floor_strike / cap_strike.
+    if agent_breakdown and (
+        '"floor_strike"' in agent_breakdown or '"cap_strike"' in agent_breakdown
+    ):
+        return False
+    created = parse_timestamp(created_at or "")
+    if created is None:
+        # Cannot prove post-fix; exclude rather than silently inflate n.
+        return True
+    return created < BRACKET_GEOMETRY_FIX_CUTOFF
+
+
 # Mirrors DUPLICATE_SUPPRESSION_SECS in kalshi/forecast.rs. See
 # `find_duplicate_forecast` for what this window does and does not catch.
 DUPLICATE_SUPPRESSION_SECS = 60
@@ -262,13 +301,16 @@ def eligible_resolved_rows(conn) -> list[tuple]:
     """Resolved rows that can testify to *model* skill, one per event.
 
     Mirrors ``edge_engine::calibration::eligible_rows``:
-    ``p_model`` present, not in play, deduplicated by ``event_key``.
+    ``p_model`` present, not in play, deduplicated by ``event_key``,
+    **and** not a pre-bracket-fix B-leg model row (legacy call geometry).
+
     Returns ``(p_market, p_model, p_final, outcome, event_key)`` tuples in
     resolution order.
     """
     rows = conn.execute(
         """
-        SELECT p_market, p_model, p_final, outcome, event_key, COALESCE(is_in_play, 0)
+        SELECT p_market, p_model, p_final, outcome, event_key,
+               COALESCE(is_in_play, 0), market_ticker, created_at, agent_breakdown
         FROM forecasts
         WHERE outcome IS NOT NULL AND p_model IS NOT NULL
         ORDER BY resolved_at ASC, id ASC
@@ -276,8 +318,20 @@ def eligible_resolved_rows(conn) -> list[tuple]:
     ).fetchall()
     seen: set[str] = set()
     out: list[tuple] = []
-    for p_market, p_model, p_final, outcome, key, in_play in rows:
+    for (
+        p_market,
+        p_model,
+        p_final,
+        outcome,
+        key,
+        in_play,
+        ticker,
+        created_at,
+        breakdown,
+    ) in rows:
         if in_play:
+            continue
+        if is_legacy_b_leg_model_row(ticker, created_at, p_model, breakdown):
             continue
         if key is not None:
             if key in seen:

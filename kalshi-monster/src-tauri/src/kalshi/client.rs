@@ -229,6 +229,43 @@ impl KalshiClient {
 
     // ─── Public read endpoints (no auth required) ──────────────────────────────
 
+    /// Pull open markets for agent-priced series (crypto/index/commodities).
+    /// Used by the preferred-series price snapshot loop so contract_tape history
+    /// is not starved by sports-dominated full-catalog refreshes.
+    pub async fn fetch_preferred_series_markets(
+        &self,
+        per_series_limit: u32,
+    ) -> Result<Vec<KalshiMarket>, String> {
+        use crate::kalshi::price_tracker::PREFERRED_SNAPSHOT_SERIES;
+
+        let limit = per_series_limit.clamp(10, 200);
+        let mut all: Vec<KalshiMarket> = Vec::new();
+        let mut seen = std::collections::HashSet::<String>::new();
+
+        for series in PREFERRED_SNAPSHOT_SERIES {
+            let query = KalshiMarketsQuery {
+                limit: Some(limit),
+                status: Some("open".to_string()),
+                series_ticker: Some((*series).to_string()),
+                mve_filter: Some("exclude".to_string()),
+                ..Default::default()
+            };
+            match self.fetch_markets_page(&query).await {
+                Ok(resp) => {
+                    for m in resp.markets {
+                        if seen.insert(m.ticker.clone()) {
+                            all.push(m);
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::debug!("preferred series {series} fetch failed: {e}");
+                }
+            }
+        }
+        Ok(all)
+    }
+
     /// Fetch a single page of markets with optional query filters.
     pub async fn fetch_markets_page(
         &self,
