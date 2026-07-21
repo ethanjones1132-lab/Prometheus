@@ -104,12 +104,20 @@ def test_technical_null_when_missing_underlying_and_strike():
 def test_technical_infers_btc_series_and_barrier_strike():
     req = _req(
         market_ticker="KXBTCD-26JUL15-B100000",
-        title="Bitcoin above",
+        title="Bitcoin price range",
         category=MarketCategory.INDEX_PRICE_LEVEL,
         context={},
     )
     assert infer_underlying_ticker(req) == "BTC-USD"
-    assert infer_strike(req) == 100_000.0
+    # B-legs are brackets; representative strike is the bin mid (~center).
+    assert abs(infer_strike(req) - 100_000.0) < 0.1
+    from agents.technical import infer_contract_spec
+
+    spec = infer_contract_spec(req)
+    assert spec is not None
+    assert spec["style"] == "bracket"
+    assert abs(spec["floor"] - 99_950.0) < 1.0
+    assert abs(spec["cap"] - 100_049.99) < 1.0
 
 
 def test_horizon_days_from_context_preferred():

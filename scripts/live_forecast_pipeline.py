@@ -153,6 +153,38 @@ def mid_of(m: dict) -> float | None:
     return clamp(0.5 * (bid + ask))
 
 
+def load_contract_mids(ticker: str, limit: int = 24) -> list[float] | None:
+    """Pull real mid history from predictions.db price snapshots when available.
+
+    Returns None when history is too thin — callers must NOT fabricate a flat
+    series (that lied to contract_tape about momentum + confidence).
+    """
+    try:
+        conn = sqlite3.connect(str(DB))
+        rows = conn.execute(
+            """
+            SELECT yes_prob_pct FROM kalshi_price_snapshots
+            WHERE ticker = ?
+            ORDER BY snapshot_at ASC
+            """,
+            (ticker,),
+        ).fetchall()
+        conn.close()
+    except Exception:
+        return None
+    mids = []
+    for (pct,) in rows:
+        try:
+            p = float(pct) / 100.0 if float(pct) > 1.0 else float(pct)
+        except (TypeError, ValueError):
+            continue
+        if 0.0 < p < 1.0:
+            mids.append(p)
+    if len(mids) < 3:
+        return None
+    return mids[-limit:]
+
+
 def ensure_forecast_table(conn: sqlite3.Connection) -> None:
     """Schema lives in `kalshi_ticker.FORECASTS_DDL`, not inlined here — three
     scripts write to this table and hand-copied DDL is how they drift."""
@@ -273,6 +305,32 @@ async def analyze_one(m: dict) -> dict | None:
     except (TypeError, ValueError):
         yes_bid, yes_ask = p_market, p_market
 
+    # Kalshi API contract geometry — critical for B-leg brackets vs T-leg thresholds.
+    floor_strike = m.get("floor_strike")
+    cap_strike = m.get("cap_strike")
+    try:
+        floor_strike = float(floor_strike) if floor_strike is not None else None
+    except (TypeError, ValueError):
+        floor_strike = None
+    try:
+        cap_strike = float(cap_strike) if cap_strike is not None else None
+    except (TypeError, ValueError):
+        cap_strike = None
+
+    # Honest tape: only pass real mid history. Fabricating [mid]*5 made
+    # contract_tape claim momentum=0 with fake n=5 confidence.
+    contract_mids = load_contract_mids(ticker)
+
+    ctx: dict = {
+        "depth": "standard",
+    }
+    if floor_strike is not None:
+        ctx["floor_strike"] = floor_strike
+    if cap_strike is not None:
+        ctx["cap_strike"] = cap_strike
+    if contract_mids is not None:
+        ctx["contract_mids"] = contract_mids
+
     req = MarketOpinionRequest(
         market_ticker=ticker,
         title=title,
@@ -281,8 +339,7 @@ async def analyze_one(m: dict) -> dict | None:
         category=category_for(title, ticker),
         yes_bid=max(0.0, min(1.0, yes_bid or p_market)),
         yes_ask=max(0.0, min(1.0, yes_ask or p_market)),
-        # Repeat mid ×5 so contract_tape can run; momentum is zero by construction.
-        context={"contract_mids": [p_market] * 5, "depth": "standard"},
+        context=ctx,
     )
     # parse close_time properly
     try:
@@ -299,24 +356,46 @@ async def analyze_one(m: dict) -> dict | None:
         reasons = ["no agent opinion; p_final=p_market (honest market-only row)"]
         verdict = "pass"
         n_opining = 0
+        edge_yes = edge_no = None
     else:
-        # Simple equal-weight log-odds pool of opining agents (Rust applies routing weights).
+        # Confidence-weighted log-odds pool (matches prior pipeline; Rust uses routing weights).
         wsum = 0.0
         pooled = 0.0
+        conf_max = 0.0
         for s in opining:
             w = max(0.01, s.confidence)
             pooled += w * logit(s.probability)
             wsum += w
+            conf_max = max(conf_max, float(s.confidence or 0.0))
         p_model = 1.0 / (1.0 + math.exp(-(pooled / wsum)))
         p_final = shrink(p_model, p_market)
-        reasons = [f"agents_opining={len(opining)}", f"lambda={LAMBDA}"]
+        reasons = [f"agents_opining={len(opining)}", f"lambda={LAMBDA}", f"conf_max={conf_max:.2f}"]
         n_opining = len(opining)
-        # Fee-aware 5¢ threshold (same spirit as edge_engine; simplified mid entry)
-        fee = 0.07 * p_market * (1.0 - p_market)
-        edge_yes = p_final - (yes_ask + fee if yes_ask > 0 else p_market + fee)
-        verdict = "trade_yes" if edge_yes >= 0.05 else "pass"
-        if verdict == "pass":
-            reasons.append(f"edge_yes={edge_yes:.4f}<0.05")
+
+        # Rust edge_engine::evaluate parity: fee-aware both sides + min_confidence.
+        min_conf = 0.30
+        theta = 0.05
+        fee_mult = 0.07
+        ask_yes = yes_ask if yes_ask > 0 else p_market
+        ask_no = (1.0 - yes_bid) if yes_bid > 0 else (1.0 - p_market)
+        entry_yes = ask_yes + fee_mult * ask_yes * (1.0 - ask_yes)
+        entry_no = ask_no + fee_mult * ask_no * (1.0 - ask_no)
+        edge_yes = p_final - entry_yes
+        edge_no = (1.0 - p_final) - entry_no
+        if conf_max < min_conf:
+            verdict = "pass"
+            reasons.append(f"ensemble conf_max {conf_max:.2f} < min_confidence {min_conf:.2f}")
+        elif edge_yes >= theta and edge_yes >= edge_no:
+            verdict = "trade_yes"
+            reasons.append(f"net YES edge {edge_yes*100:.1f}c >= {theta*100:.1f}c")
+        elif edge_no >= theta:
+            verdict = "trade_no"
+            reasons.append(f"net NO edge {edge_no*100:.1f}c >= {theta*100:.1f}c")
+        else:
+            verdict = "pass"
+            reasons.append(
+                f"best net edge {max(edge_yes, edge_no)*100:.1f}c below {theta*100:.1f}c"
+            )
 
     return {
         "ticker": ticker,
@@ -328,6 +407,10 @@ async def analyze_one(m: dict) -> dict | None:
         "verdict": verdict,
         "reasons": reasons,
         "agents_opining": n_opining,
+        "edge_yes": edge_yes,
+        "edge_no": edge_no,
+        "floor_strike": floor_strike,
+        "cap_strike": cap_strike,
         "breakdown": {
             "signals": [
                 {
@@ -335,10 +418,15 @@ async def analyze_one(m: dict) -> dict | None:
                     "probability": s.probability,
                     "confidence": s.confidence,
                     "inputs": [i.source for i in s.inputs_used],
+                    "caveats": list(s.caveats or []),
                 }
                 for s in resp.signals
             ],
             "source": "live_forecast_pipeline.py + Kalshi public API + yfinance agents",
+            "contract": {
+                "floor_strike": floor_strike,
+                "cap_strike": cap_strike,
+            },
         },
     }
 
@@ -353,6 +441,8 @@ async def main() -> int:
         return 1
 
     # Prefer liquid short-horizon legs agents can price (not empty-book extremes).
+    # Near-spot brackets (market mid not extreme) are where density models can
+    # actually beat the tape; deep OTM bins are fee-dominated lottery tickets.
     def _rank_key(m: dict):
         mid = mid_of(m)
         close = m.get("close_time") or ""
@@ -361,10 +451,18 @@ async def main() -> int:
             days = (ct - datetime.now(timezone.utc)).total_seconds() / 86400.0
         except Exception:
             days = 99.0
-        # Prefer mid in (0.08, 0.92), then sooner close, then volume.
-        mid_penalty = 0 if (mid is not None and 0.08 < mid < 0.92) else 1
+        # Prefer mid in (0.08, 0.40) for brackets (actionable density), then
+        # broader (0.08, 0.92), then sooner close, then volume.
+        if mid is not None and 0.08 < mid < 0.40:
+            mid_penalty = 0
+        elif mid is not None and 0.08 < mid < 0.92:
+            mid_penalty = 1
+        else:
+            mid_penalty = 2
+        # Prefer contracts with API geometry (floor/cap) so technical can opine correctly.
+        has_geom = 0 if (m.get("floor_strike") is not None or m.get("cap_strike") is not None) else 1
         vol = -float(m.get("volume_24h_fp") or m.get("volume_24h") or 0)
-        return (mid_penalty, days if days >= 0 else 99.0, vol)
+        return (has_geom, mid_penalty, days if days >= 0 else 99.0, vol)
 
     ranked = sorted(markets, key=_rank_key)
 

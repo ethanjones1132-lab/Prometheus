@@ -1,6 +1,25 @@
 # Kalshi Monster — Priority Roadmap
 
-Last updated: 2026-07-21 (evening cron — eligible 23/200 LOCKED; +12 resolves; +12 p_model)
+Last updated: 2026-07-21 (edge autopsy — **B-leg bracket pricing bug fixed**)
+
+## Maintenance notes (2026-07-21, edge/calibration deep-dive) — **CRITICAL model geometry fix shipped**
+
+- Branch: `fix/edge-measurement-integrity`
+- **Root cause of YES bias / fake trade_yes:** technical agent priced Kalshi **B-legs as P(S>K)** but B-legs are **range/bracket** contracts (`floor < S < cap`). Live API confirmed (e.g. `KXBTC-…-B73250` = $73,200–73,299.99). On lower bins with spot above the bin this emitted tech≈0.99 vs mkt≈0.03 — the entire `trade_yes` 1–6 track record was poisoned by this.
+- **Autopsy (live DB, fee-aware mid entry, $1 payout):** papered ledger `trade_yes` PnL **−0.026** (1W/6L); mean(p_model−y)=**+0.248**; λ≈0.20 slightly best on thin sample; high-mkt “edge” was mostly sports longshot tape not a real book.
+- **Shipped:**
+  1. `fincept-sidecar/agents/technical.py` — `infer_contract_spec` + `binary_bracket_prob` / above / below; API `floor_strike`/`cap_strike` preferred; ticker `-B#` → bracket, `-T#` → one-sided
+  2. `scripts/live_forecast_pipeline.py` — pass real API geometry; **stop fabricating** `[mid]*5` tape; Rust-parity **trade_yes/trade_no** + min_confidence; rank near-spot brackets first; load real snapshots when present
+  3. Tests: bracket≪call regression + geometry parsers — **21** fincept tests green
+  4. `scripts/_edge_autopsy.py` — read-only counterfactual / bias / λ sweep on predictions.db
+- **How to capitalize largest real edges next:**
+  1. Re-run live pipeline under fincept venv → new `p_model` on near-ATM brackets + T-thresholds only
+  2. Prefer **density near spot** (mids 8–40¢ brackets) and one-sided T legs; avoid lottery deep OTM bins
+  3. Open **small paper lots** on post-fix `trade_yes`/`trade_no` (still 0 lots — PnL gate unmet)
+  4. Point price_tracker at preferred series so contract_tape gets real mids (0 snaps on all prior trade_yes tickers)
+  5. Do **not** live-trade until eligible≥200 + paper PnL>0
+- **Ops:** `fincept-sidecar/.venv/Scripts/python.exe scripts/live_forecast_pipeline.py` (scrub Hermes PYTHONPATH)
+- **No live execution flip** — gate still LOCKED
 
 ## Maintenance notes (2026-07-21, evening cron) — health green; **+12 resolves, +12 p_model, eligible 23/200**
 

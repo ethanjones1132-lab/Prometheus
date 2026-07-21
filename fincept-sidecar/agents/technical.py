@@ -106,8 +106,200 @@ def binary_call_prob(spot: float, strike: float, sigma: float, tau_years: float,
     return _norm_cdf(numer / denom)
 
 
+def binary_put_prob(spot: float, strike: float, sigma: float, tau_years: float, mu: float = 0.0) -> float:
+    """P(S_T < K) under the same lognormal model as binary_call_prob."""
+    return 1.0 - binary_call_prob(spot, strike, sigma, tau_years, mu=mu)
+
+
+def binary_bracket_prob(
+    spot: float,
+    floor: float,
+    cap: float,
+    sigma: float,
+    tau_years: float,
+    mu: float = 0.0,
+) -> float:
+    """P(floor < S_T < cap) = P(S>floor) − P(S>cap) under lognormal dynamics.
+
+    Kalshi B-leg hourlies are **range** contracts (between floor and cap), not
+    cumulative above the B-number. Pricing them as P(S>K) massively overstates
+    YES on every lower bin when spot sits above that bin.
+    """
+    if cap <= floor:
+        raise ValueError("cap must exceed floor")
+    # Survival difference; clamp tiny negatives from float noise.
+    return max(0.0, binary_call_prob(spot, floor, sigma, tau_years, mu=mu) - binary_call_prob(spot, cap, sigma, tau_years, mu=mu))
+
+
 def clamp_prob(p: float) -> float:
     return max(0.01, min(0.99, p))
+
+
+# Contract geometry for Kalshi price-level markets.
+# B-legs = bracket/range; T-legs = one-sided threshold (above OR below).
+STYLE_ABOVE = "above"
+STYLE_BELOW = "below"
+STYLE_BRACKET = "bracket"
+
+
+def _fnum(val: Any) -> float | None:
+    if isinstance(val, (int, float)) and float(val) > 0:
+        return float(val)
+    if isinstance(val, str):
+        try:
+            f = float(val.replace(",", "").replace("$", "").strip())
+            return f if f > 0 else None
+        except ValueError:
+            return None
+    return None
+
+
+def _bracket_bounds_from_center(center: float) -> tuple[float, float]:
+    """Best-effort floor/cap when API bounds are missing.
+
+    Observed Kalshi conventions (2026-07):
+      - crypto / high NDX B-centers (≥10_000): $100-wide bins, center = mid
+      - SPX-style (~1_000–9_999): $25-wide bins
+      - else: $1-wide
+    """
+    if center >= 10_000:
+        half = 50.0
+    elif center >= 1_000:
+        half = 12.5
+    else:
+        half = 0.5
+    floor = center - half
+    cap = center + half - 0.01
+    return floor, cap
+
+
+def infer_contract_spec(req: MarketOpinionRequest) -> dict[str, Any] | None:
+    """Infer {style, floor, cap, label} for price-level YES resolution.
+
+    Priority:
+      1. context.floor_strike / context.cap_strike (from Kalshi API — preferred)
+      2. context.contract_style + strike
+      3. ticker suffix -B# (bracket) / -T# (threshold; direction from rules/title)
+      4. free-text between/above/below in title+rules
+    """
+    ctx = req.context or {}
+    floor = _fnum(ctx.get("floor_strike"))
+    cap = _fnum(ctx.get("cap_strike"))
+    style_ctx = ctx.get("contract_style")
+    if isinstance(style_ctx, str):
+        style_ctx = style_ctx.strip().lower()
+    else:
+        style_ctx = None
+
+    # Explicit API bounds win.
+    if floor is not None and cap is not None and cap > floor:
+        return {
+            "style": STYLE_BRACKET,
+            "floor": floor,
+            "cap": cap,
+            "label": f"bracket[{floor:g},{cap:g}]",
+        }
+    if floor is not None and cap is None:
+        return {
+            "style": STYLE_ABOVE,
+            "floor": floor,
+            "cap": None,
+            "label": f"above {floor:g}",
+        }
+    if cap is not None and floor is None:
+        return {
+            "style": STYLE_BELOW,
+            "floor": None,
+            "cap": cap,
+            "label": f"below {cap:g}",
+        }
+
+    if style_ctx in (STYLE_ABOVE, STYLE_BELOW, STYLE_BRACKET):
+        k = _fnum(ctx.get("strike") or ctx.get("threshold") or ctx.get("level") or ctx.get("K"))
+        if style_ctx == STYLE_ABOVE and k is not None:
+            return {"style": STYLE_ABOVE, "floor": k, "cap": None, "label": f"above {k:g}"}
+        if style_ctx == STYLE_BELOW and k is not None:
+            return {"style": STYLE_BELOW, "floor": None, "cap": k, "label": f"below {k:g}"}
+        if style_ctx == STYLE_BRACKET and k is not None:
+            f, c = _bracket_bounds_from_center(k)
+            return {"style": STYLE_BRACKET, "floor": f, "cap": c, "label": f"bracket~{k:g}"}
+
+    text = f"{req.title} {req.resolution_rules} {req.market_ticker}"
+    text_l = text.lower()
+
+    # Ticker geometry: -B73250 (range) vs -T73299.99 (threshold).
+    m_b = re.search(r"(?i)[-_]B(\d+(?:\.\d+)?)(?:\b|$)", req.market_ticker)
+    m_t = re.search(r"(?i)[-_]T(\d+(?:\.\d+)?)(?:\b|$)", req.market_ticker)
+    if m_b:
+        center = float(m_b.group(1))
+        f, c = _bracket_bounds_from_center(center)
+        return {
+            "style": STYLE_BRACKET,
+            "floor": f,
+            "cap": c,
+            "label": f"B{center:g}→[{f:g},{c:g}]",
+        }
+    if m_t:
+        k = float(m_t.group(1))
+        # Direction from rules/title; default above for "T" when ambiguous is wrong
+        # for low tails — require lexical cue, else treat large-K as above / small as below
+        # only when text is silent.
+        if re.search(r"\b(below|under|less than|or below)\b", text_l):
+            return {"style": STYLE_BELOW, "floor": None, "cap": k, "label": f"T{k:g} below"}
+        if re.search(r"\b(above|over|greater than|or above)\b", text_l):
+            return {"style": STYLE_ABOVE, "floor": k, "cap": None, "label": f"T{k:g} above"}
+        # No cue: high absolute levels are usually the upper tail ("or above").
+        return {"style": STYLE_ABOVE, "floor": k, "cap": None, "label": f"T{k:g} above(default)"}
+
+    m_between = re.search(
+        r"between\s+\$?\s*([0-9]{1,3}(?:,[0-9]{3})*(?:\.\d+)?)\s+and\s+\$?\s*([0-9]{1,3}(?:,[0-9]{3})*(?:\.\d+)?)",
+        text_l,
+    )
+    if m_between:
+        a = float(m_between.group(1).replace(",", ""))
+        b = float(m_between.group(2).replace(",", ""))
+        lo, hi = (a, b) if a < b else (b, a)
+        return {"style": STYLE_BRACKET, "floor": lo, "cap": hi, "label": f"between {lo:g}-{hi:g}"}
+
+    m_above = re.search(
+        r"(?:above|over|greater than|exceed(?:s|ing)?)\s+\$?\s*([0-9]{1,3}(?:,[0-9]{3})*(?:\.\d+)?)",
+        text_l,
+    )
+    if m_above:
+        k = float(m_above.group(1).replace(",", ""))
+        return {"style": STYLE_ABOVE, "floor": k, "cap": None, "label": f"above {k:g}"}
+
+    m_below = re.search(
+        r"(?:below|under|less than)\s+\$?\s*([0-9]{1,3}(?:,[0-9]{3})*(?:\.\d+)?)",
+        text_l,
+    )
+    if m_below:
+        k = float(m_below.group(1).replace(",", ""))
+        return {"style": STYLE_BELOW, "floor": None, "cap": k, "label": f"below {k:g}"}
+
+    # Legacy single-strike fallback (ambiguous geometry → refuse rather than
+    # silently treat as call). Callers that only have a strike must set style.
+    return None
+
+
+def price_contract_prob(
+    spot: float,
+    spec: dict[str, Any],
+    sigma: float,
+    tau_years: float,
+    mu: float = 0.0,
+) -> float:
+    """P(YES) for a Kalshi-style price-level contract under lognormal S_T."""
+    style = spec["style"]
+    if style == STYLE_ABOVE:
+        return binary_call_prob(spot, float(spec["floor"]), sigma, tau_years, mu=mu)
+    if style == STYLE_BELOW:
+        return binary_put_prob(spot, float(spec["cap"]), sigma, tau_years, mu=mu)
+    if style == STYLE_BRACKET:
+        return binary_bracket_prob(
+            spot, float(spec["floor"]), float(spec["cap"]), sigma, tau_years, mu=mu
+        )
+    raise ValueError(f"unknown contract style {style}")
 
 
 def infer_underlying_ticker(req: MarketOpinionRequest) -> str | None:
@@ -132,47 +324,27 @@ def infer_underlying_ticker(req: MarketOpinionRequest) -> str | None:
 
 
 def infer_strike(req: MarketOpinionRequest) -> float | None:
-    """Parse a strike level from context or free text.
+    """Legacy single-level helper.
 
-    Accepts context.strike / context.threshold, else patterns like
-    'above 5500', 'over $300', 'exceed 3.0' (last is often CPI — rejected if < 50
-    for equity-like underlyings via caller confidence).
+    Prefer :func:`infer_contract_spec` — B-legs are brackets, not a single K.
+    Returns a representative level (bracket mid, or the one-sided threshold)
+    for display / moneyness only.
     """
     ctx = req.context or {}
     for key in ("strike", "threshold", "level", "K"):
-        val = ctx.get(key)
-        if isinstance(val, (int, float)) and val > 0:
-            return float(val)
-        if isinstance(val, str):
-            try:
-                f = float(val.replace(",", "").replace("$", ""))
-                if f > 0:
-                    return f
-            except ValueError:
-                pass
+        val = _fnum(ctx.get(key))
+        if val is not None:
+            return val
 
-    # Kalshi barrier tickers: KXBTCD-26JUL15-B100000 / -T95000
-    m_tick = re.search(r"(?i)[-_](?:B|T|C)(\d{3,7})(?:\b|$)", req.market_ticker)
-    if m_tick:
-        try:
-            return float(m_tick.group(1))
-        except ValueError:
-            pass
-
-    text = f"{req.title} {req.resolution_rules}"
-    patterns = [
-        r"(?:above|over|exceed(?:s|ing)?|greater than|below|under|less than|>\s*|<\s*)\$?\s*([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]+)?)",
-        r"(?:close\s+(?:at|above|below)|settle\s+(?:above|below))\s+\$?\s*([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]+)?)",
-        r"\$\s*([0-9]{2,6}(?:\.[0-9]+)?)",
-    ]
-    for pat in patterns:
-        m = re.search(pat, text, re.IGNORECASE)
-        if m:
-            try:
-                return float(m.group(1).replace(",", ""))
-            except ValueError:
-                continue
-    return None
+    spec = infer_contract_spec(req)
+    if spec is None:
+        return None
+    if spec["style"] == STYLE_ABOVE:
+        return float(spec["floor"]) if spec.get("floor") is not None else None
+    if spec["style"] == STYLE_BELOW:
+        return float(spec["cap"]) if spec.get("cap") is not None else None
+    # bracket mid
+    return 0.5 * (float(spec["floor"]) + float(spec["cap"]))
 
 
 def years_to_close(close_time: datetime, horizon_days: float | None = None) -> float | None:
@@ -238,16 +410,16 @@ async def estimate(req: MarketOpinionRequest) -> AgentSignal:
             )
 
     yf_ticker = infer_underlying_ticker(req)
-    strike = infer_strike(req)
+    spec = infer_contract_spec(req)
     h_days = _horizon_days_from_context(req.context or {})
     tau = years_to_close(req.close_time, horizon_days=h_days)
 
-    if yf_ticker is None or strike is None or tau is None:
+    if yf_ticker is None or spec is None or tau is None:
         missing = []
         if yf_ticker is None:
             missing.append("underlying")
-        if strike is None:
-            missing.append("strike")
+        if spec is None:
+            missing.append("contract_geometry")
         if tau is None:
             missing.append("horizon")
         return AgentSignal(
@@ -257,7 +429,9 @@ async def estimate(req: MarketOpinionRequest) -> AgentSignal:
             rationale=(
                 "Cannot form a distributional price forecast: missing "
                 + ", ".join(missing)
-                + ". Refusing to invent a probability."
+                + ". Refusing to invent a probability. "
+                "Note: Kalshi B-legs are range/bracket contracts — a bare strike "
+                "without style/bounds is not enough."
             ),
             inputs_used=[],
             caveats=[f"missing:{m}" for m in missing],
@@ -292,12 +466,33 @@ async def estimate(req: MarketOpinionRequest) -> AgentSignal:
         )
 
     mu = _momentum_mu(closes)
-    raw_p = binary_call_prob(spot, strike, sigma, tau, mu=mu)
+    try:
+        raw_p = price_contract_prob(spot, spec, sigma, tau, mu=mu)
+    except ValueError as e:
+        return AgentSignal(
+            agent="technical",
+            probability=None,
+            confidence=0.0,
+            rationale=f"Invalid contract geometry for {yf_ticker}: {e}",
+            inputs_used=[],
+            caveats=["invalid_contract_geometry"],
+        )
     p = clamp_prob(raw_p)
+
+    # Representative level for moneyness / confidence.
+    if spec["style"] == STYLE_BRACKET:
+        strike_ref = 0.5 * (float(spec["floor"]) + float(spec["cap"]))
+        caveats.append("bracket_range_contract")
+    elif spec["style"] == STYLE_BELOW:
+        strike_ref = float(spec["cap"])
+        caveats.append("below_threshold_contract")
+    else:
+        strike_ref = float(spec["floor"])
+        caveats.append("above_threshold_contract")
 
     # Confidence: higher when more bars, moderate moneyness, and longer but not multi-year horizon.
     n_bars = len(closes)
-    moneyness = abs(math.log(spot / strike))
+    moneyness = abs(math.log(spot / strike_ref)) if strike_ref > 0 else 1.0
     conf = 0.35
     conf += min(0.25, n_bars / 200.0)
     if moneyness < 0.08:
@@ -308,9 +503,15 @@ async def estimate(req: MarketOpinionRequest) -> AgentSignal:
     if tau < 1 / 365:  # < 1 day
         conf -= 0.15
         caveats.append("very_short_horizon")
+        # Daily realized vol is a poor short-horizon estimator; haircut confidence harder.
+        conf -= 0.10
+        caveats.append("daily_vol_on_intraday_horizon")
     if tau > 1.0:
         conf -= 0.10
         caveats.append("horizon_gt_1y")
+    # Bracket bins are narrow — density is sensitive to vol; keep conf modest.
+    if spec["style"] == STYLE_BRACKET:
+        conf -= 0.05
     conf = max(0.05, min(0.85, conf))
 
     fetched_hist = datetime.fromtimestamp(float(history.get("fetched_at", 0)), tz=timezone.utc)
@@ -321,9 +522,11 @@ async def estimate(req: MarketOpinionRequest) -> AgentSignal:
         probability=p,
         confidence=conf,
         rationale=(
-            f"Lognormal binary P(S_T>{strike:g}) for {yf_ticker}: spot={spot:.4g}, "
+            f"Lognormal P(YES|{spec['label']}) for {yf_ticker}: spot={spot:.4g}, "
             f"σ_realized={sigma:.3f} (daily closes), τ={tau*365.25:.1f}d, μ_mom={mu:.3f}. "
-            f"Raw Φ-prob={raw_p:.4f} → clamped {p:.4f}. Source: yfinance history+quote."
+            f"Raw Φ-prob={raw_p:.4f} → clamped {p:.4f}. "
+            f"Style={spec['style']} (B=bracket range, T=one-sided). "
+            "Source: yfinance history+quote."
         ),
         inputs_used=[
             DataRef(source=f"yfinance:{yf_ticker}:quote", fetched_at=fetched_quote),
