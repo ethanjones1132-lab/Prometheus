@@ -1,6 +1,34 @@
 # Kalshi Monster — Priority Roadmap
 
-Last updated: 2026-07-23 (morning cron — ops cadence + paper settle path)
+Last updated: 2026-07-23 (afternoon cron — ops cadence flywheel)
+
+## Maintenance notes (2026-07-23, afternoon cron) — ops cadence; eligible 25/200; INX lot still open
+
+- Health: `cargo check`, `tsc` clean, **308** lib tests (0 failed, 9 ignored); working tree clean at start
+- Branch: `master` @ `f7689f6`
+- Auto-remediation: none (clean tree)
+- KB-1: still 🟡 — code path fixed; live credential/UI acceptance still required on user machine
+- KB-2: ✅ complete
+- **Ops cadence run:**
+  1. `scripts/snap_preferred_series.py` → **454** snapshots (KXBTC/ETH 100, INX/NASDAQ 60, WTI 100, TSLA 34)
+  2. `kalshi-monster/scripts/resolve_settled_forecasts.py` → **+4** outcomes (KXBTC-26JUL2309 B65250/65450/65550/65650 all No)
+  3. `scripts/settle_paper_lots.py --execute` → **0 settled** (open INX NO lot still `status=active` / no result; closes ~20:00Z)
+  4. `scripts/live_forecast_pipeline.py` → **+12** p_model rows (KXBTC×7 Jul23 14:00Z + KXINX×5); all `verdict=pass`
+  5. `scripts/open_paper_lots_from_forecasts.py --dry-run` → **0 candidates** (honest — no fee-aware edge above theta)
+- **Ledger / gate:**
+  - total **490** / resolved **411** / unresolved **79** (after pipeline; pre-pipeline resolve saw 478/411/67)
+  - [raw] Brier p_final **0.1448** vs p_market **0.1446** vs p_model **0.2113**
+  - **eligible = 25/200 (12.5%) — LOCKED** (was 24 morning; +1 clean eligible from BTC 09:00Z model-bearing resolves)
+  - Eligible Brier p_final **0.3111** ≤ p_market **0.3169** (still beats market on thin clean sample)
+- **Paper book:**
+  - Closed: **2W/0L**, realized PnL **+$7.90**, balance **$9997.78** (unchanged this pass)
+  - Still **1 Open**: KXINX-26JUL23H1600-B7412 NO (stake $10.12, entry 83.5¢) — settle after H1600 result prints
+  - Do **not** flip live execution (eligible 25/200; paper n=2 closed)
+- **Autopsy (read-only):** pre-fix trade_yes papered PnL still **−0.85** (n=12); fade-model |Δ|≥0.25 still **+0.60** (n=15) — do not promote either counterfactual
+- **Next cron:** resolve INX Jul23 H1600 (~20:00Z) + BTC 14:00Z hourlies; `settle_paper_lots.py --execute` on INX NO; snap + pipeline; open lots only on post-fix trade_*; leave app running for preferred-series loop
+- **Blocked next (ops):** operator AGPL public push; KB-1 live Markets UI acceptance; eligible n→200 on **clean** sample + larger paper PnL track record
+- **No Phase 1+ / Phase 5 code advancement** — gate correctly LOCKED (eligible 25/200)
+- **Script path note:** ops scripts live at repo-root `scripts/` except `resolve_settled_forecasts.py` under `kalshi-monster/scripts/`
 
 ## Maintenance notes (2026-07-23, morning cron) — first paper PnL + settle script
 
