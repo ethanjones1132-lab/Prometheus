@@ -1,6 +1,40 @@
 # Kalshi Monster — Priority Roadmap
 
-Last updated: 2026-07-21 (late afternoon cron — preferred-series tape + legacy B-leg gate filter)
+Last updated: 2026-07-23 (morning cron — ops cadence + paper settle path)
+
+## Maintenance notes (2026-07-23, morning cron) — first paper PnL + settle script
+
+- Health: `cargo check`, `tsc` clean, **308** lib tests (0 failed, 9 ignored); working tree clean at start
+- Branch: `master` @ `9d4854c`
+- Auto-remediation: none (clean tree)
+- KB-1: still 🟡 — code path fixed; live credential/UI acceptance still required on user machine
+- KB-2: ✅ complete
+- **Ops cadence run:**
+  1. `scripts/snap_preferred_series.py` → **454** snapshots (KXBTC/ETH 100, INX/NASDAQ 60, WTI 100, TSLA 34)
+  2. `resolve_settled_forecasts.py` → **+40** outcomes (BTC 04:00Z + 17:00Z, ETH 17:00Z, INX H1600 Jul22, WTI T-legs)
+  3. `live_forecast_pipeline.py` → **+12** p_model rows (KXBTC×4 + KXINX×8); 1× `trade_no` (KXINX-26JUL23H1600-B7412)
+  4. `open_paper_lots_from_forecasts.py --execute` → opened NO lot on that INX bracket (stake $10.12, edge≈0.069)
+- **Ledger / gate:**
+  - total **466** / resolved **407** / unresolved **71** (after pipeline)
+  - [raw] Brier p_final **0.1458** vs p_market **0.1455** vs p_model **0.2186**
+  - **eligible = 24/200 (12.0%) — LOCKED** (was 19; +5 clean eligible from model-bearing resolves)
+  - Eligible Brier p_final **0.3239** ≤ p_market **0.3298** (still beats market on thin clean sample)
+- **Paper PnL leg UNBLOCKED (partial):**
+  - Prior cron left 2 open BTC NO lots unsettled after markets printed (no cron settle path)
+  - **Shipped:** `scripts/settle_paper_lots.py` + `scripts/test_settle_paper_lots.py` (6 tests) — mirrors Rust held-side exit + balance credit; ledger-first, optional `--fetch-api`
+  - Settled **2W/0L** on KXBTC-26JUL2204-B66350/B66450 NO → **realized PnL +$7.90**; balance **$9997.78**
+  - Still **1 Open** lot: KXINX-26JUL23H1600-B7412 NO (closes ~20:00Z) — settle next cron after resolve
+  - Closed paper PnL > 0 is real but sample is tiny (n=2). Do **not** flip live execution.
+- **Autopsy (read-only):** historical pre-fix trade_yes still −0.85 if papered; fade-model counterfactual still +0.60 on |Δ|≥0.25 — do not promote
+- **Next cron:** resolve INX Jul23 H1600 + open crypto hourlies; `settle_paper_lots.py --execute`; snap + pipeline; open lots only on post-fix trade_*; leave app running for preferred-series loop
+- **Ops cadence (updated):**
+  1. `snap_preferred_series.py`
+  2. `resolve_settled_forecasts.py`
+  3. `settle_paper_lots.py --execute`  ← **new**
+  4. `live_forecast_pipeline.py`
+  5. `open_paper_lots_from_forecasts.py --dry-run` then `--execute` if candidates > 0
+- **Blocked next (ops):** operator AGPL public push; KB-1 live Markets UI acceptance; eligible n→200 on **clean** sample + larger paper PnL track record
+- **No Phase 1+ / Phase 5 code advancement** — gate correctly LOCKED (eligible 24/200)
 
 ## Maintenance notes (2026-07-21, late afternoon cron) — preferred-series snapshots + honest gate filter
 
